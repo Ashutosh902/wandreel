@@ -1,9 +1,10 @@
 ﻿import { useMemo, useState } from "react";
-import { Bell } from "lucide-react";
+import { ArrowLeft, Bell } from "lucide-react";
 import { motion } from "framer-motion";
 import { BottomNav } from "./BottomNav";
 import { BucketlistSummary } from "./BucketlistSummary";
 import { CategoryDetailPage } from "./CategoryDetailPage";
+import { AddScreen } from "./AddScreen";
 import { HeroCard } from "./HeroCard";
 import { LocationSelector } from "./LocationSelector";
 import { RecentlyAddedCarousel } from "./RecentlyAddedCarousel";
@@ -38,14 +39,14 @@ function PlaceholderPage({
 function DiscoverPage({
   activeCategory,
   onSelectCategory,
-  onBackCategory,
+  onViewMap,
 }: {
   activeCategory: CategoryLabel | null;
   onSelectCategory: (category: CategoryLabel) => void;
-  onBackCategory: () => void;
+  onViewMap: (category: CategoryLabel) => void;
 }) {
   if (activeCategory) {
-    return <CategoryDetailPage category={activeCategory} onBack={onBackCategory} />;
+    return <CategoryDetailPage category={activeCategory} onViewMap={onViewMap} />;
   }
 
   return (
@@ -60,7 +61,10 @@ function DiscoverPage({
 export function HomeScreen() {
   const [activeTab, setActiveTab] = useState<NavLabel>("Discover");
   const [activeCategory, setActiveCategory] = useState<CategoryLabel | null>(null);
+  const [mapFocusedCategory, setMapFocusedCategory] = useState<CategoryLabel | null>(null);
   const isMapTab = activeTab === "Map";
+  const isAddTab = activeTab === "Add";
+  const isCategoryView = activeTab === "Discover" && activeCategory !== null;
 
   const page = useMemo(() => {
     if (activeTab === "Discover") {
@@ -68,23 +72,33 @@ export function HomeScreen() {
         <DiscoverPage
           activeCategory={activeCategory}
           onSelectCategory={setActiveCategory}
-          onBackCategory={() => setActiveCategory(null)}
+          onViewMap={(category) => {
+            setMapFocusedCategory(category);
+            setActiveCategory(null);
+            setActiveTab("Map");
+          }}
         />
       );
     }
 
     if (activeTab === "Map") {
-      return <MapScreen />;
+      return (
+        <MapScreen
+          focusedCategory={mapFocusedCategory}
+          onBack={() => {
+            setActiveTab("Discover");
+            if (mapFocusedCategory) {
+              setActiveCategory(mapFocusedCategory);
+            } else {
+              setActiveCategory(null);
+            }
+          }}
+        />
+      );
     }
 
     if (activeTab === "Add") {
-      return (
-        <PlaceholderPage
-          title="Add"
-          message="Paste or share links here to create new Wandreel saves."
-          fullHeight
-        />
-      );
+      return <AddScreen />;
     }
 
     if (activeTab === "Connect") {
@@ -108,14 +122,25 @@ export function HomeScreen() {
         transition={{ duration: 0.45 }}
         className={`wr-phone-shell ${isMapTab ? "wr-phone-shell-map" : ""}`}
       >
-        <div className={`wr-home-surface ${isMapTab ? "wr-home-surface-map" : ""}`}>
+        <div className={`wr-home-surface ${isMapTab ? "wr-home-surface-map" : ""} ${isCategoryView ? "is-category-view" : ""} ${isAddTab ? "is-add-view" : ""}`}>
           {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob one" /> : null}
           {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob two" /> : null}
           {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob three" /> : null}
 
-          {activeTab !== "Login" && activeTab !== "Map" ? (
+          {activeTab !== "Login" && activeTab !== "Map" && activeTab !== "Add" ? (
             <header className="wr-home-header">
-              <div className="wr-brand" aria-hidden="true" />
+              {isCategoryView ? (
+                <button
+                  type="button"
+                  className="wr-header-back"
+                  aria-label="Back"
+                  onClick={() => setActiveCategory(null)}
+                >
+                  <ArrowLeft size={18} />
+                </button>
+              ) : (
+                <div className="wr-brand" aria-hidden="true" />
+              )}
               <LocationSelector inline />
               <button
                 type="button"
@@ -131,9 +156,15 @@ export function HomeScreen() {
           <BottomNav
             activeTab={activeTab}
             onTabChange={(nextTab) => {
+              if (activeTab === "Map" && mapFocusedCategory && nextTab === "Discover") {
+                setActiveTab("Discover");
+                setActiveCategory(mapFocusedCategory);
+                return;
+              }
               setActiveTab(nextTab);
-              if (nextTab !== "Discover") {
-                setActiveCategory(null);
+              setActiveCategory(null);
+              if (nextTab !== "Map") {
+                setMapFocusedCategory(null);
               }
             }}
           />

@@ -13,6 +13,21 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
 - Discover top bar is compacted: wordmark/tagline removed and location pill centered between logo mark and notifications.
 - Discover category tiles (`Taste`, `Activity`, `Stay`, `Explore`) now open dedicated drill-down pages while keeping bottom navigation intact.
 - Category drill-down pages now include dummy highlights and sample saved places for visibility testing.
+- Discover readability pass applied: hero/bucketlist/category/recent text contrast and spacing improved without redesign.
+- Recently added section now follows premium horizontal peek-carousel behavior with controlled clipping and snap scrolling.
+- Final micro-polish pass completed for international-standard readability and spacing while preserving the existing visual direction.
+- Taste category detail now uses a compact, nearest-first, location-aware list layout (with reusable category-detail scaffolding for future category rollouts).
+- Taste category detail refinement pass: darker compact header, simplified utility copy/chips/cards, and `View map` now opens Map with Taste-only filtering context.
+- Taste category screen is now list-first: hero/utility text removed, chips+`View map` prioritized, and card tap opens a bottom-sheet place preview with address, directions, and video link.
+- Taste listing pass now adds in-list search, expanded food filter chips, and compact thumbnail-led rows for faster saved-restaurant scanning.
+- Taste spacing polish pass improves top-stack hierarchy (search, title/action, chips, first list row) for cleaner premium readability.
+- Taste micro-polish pass removes thumbnail text artifacts and tightens list row/title alignment for cleaner scan quality.
+- Category list system is now unified across Taste/Activity/Stay/Explore with category-specific search, chips, themed accents, and shared bottom-sheet details.
+- Add tab now implements the approved Wandreel capture UI (quick-capture header, paste-link card, branded analyze loader, detected chips, preview card, and local save feedback).
+- Map tab now includes a visual radius coverage overlay, in-range pin emphasis, and nearby count feedback linked to the distance slider.
+- Map visuals were further refined toward Pinshort-style restaurant map clarity (softer base, subtler radius, clearer in-range hierarchy).
+- Map top area now follows a cleaner two-row hierarchy: simplified single-line location bar and better-spaced secondary category pill row.
+- Map pins now open a bottom-sheet preview with image, title, address, category-relevant details, and quick directions.
 - PWA manifest and service worker registration wired (`vite-plugin-pwa`).
 - Installable shell metadata configured (name/theme/start URL/display).
 - Unified extraction pipeline centralized under `server/extraction`.

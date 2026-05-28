@@ -35,6 +35,7 @@ This folder owns all Wandreel frontend architecture and components.
 - `home/CategoryDetailPage.tsx`: per-category drill-down page rendered from Discover.
 - `home/RecentlyAddedCarousel.tsx`: horizontal recently-added cards and view-all card.
 - `home/BottomNav.tsx`: 5-item bottom navigation with active state.
+- `home/AddScreen.tsx`: Add tab capture flow (paste, analyze, detect, preview, save).
 
 ## Home navigation behavior
 
@@ -42,7 +43,8 @@ This folder owns all Wandreel frontend architecture and components.
 - `Discover` renders the full home feed.
 - `Login` renders the login/profile screen module.
 - `Map` renders the interactive category-toggle map module.
-- `Add` and `Connect` render their own page panels.
+- `Add` renders a branded capture flow screen with local mock analyze/detect states.
+- `Connect` renders its own page panel.
 - Active tab is indicated by the orange top bar on the selected nav item.
 
 ## Phase note: bucketlist tile crop refinement
@@ -69,3 +71,75 @@ This folder owns all Wandreel frontend architecture and components.
 
 - Each category page now includes dummy highlights and sample saved-place rows for better visibility during UI evaluation.
 - Data is local/static and prepared for later API-backed replacement.
+
+## Phase note: readability refinement pass
+
+- Improved hero title readability with a subtle bottom image gradient overlay and stronger text legibility treatment.
+- Increased contrast and legibility for bucketlist summary labels/counts and category tile labels/counts.
+- Refined recently-added card text contrast and line-height for cleaner scanability without layout redesign.
+
+## Phase note: recently-added carousel polish
+
+- Recently added cards now use intentional mobile peek-scroll behavior with snap alignment, controlled card width, and consistent side padding/gaps.
+- Card text and container boundaries remain fully readable while only the card container peeks off-screen.
+
+## Phase note: final micro-polish pass
+
+- Applied final readability/spacing tuning across hero, location pill, bucketlist copy hierarchy, recently-added typography, and bottom-nav label legibility.
+- Layout, color theme, images, navigation behaviors, and carousel interaction pattern remain unchanged.
+
+## Phase note: Taste compact list redesign
+
+- Category detail architecture is reusable, but compact utility-first redesign is applied only to `Taste` in this pass.
+- Taste now uses compact header, nearest-first utility row, horizontal filter chips, richer restaurant cards, and a `View map` affordance.
+
+## Phase note: Taste refinement tweak pass
+
+- Taste compact header is simplified to a single `Taste` title with darker premium warm gradient styling and subtle watermark treatment.
+- Utility row copy is reduced to `18 saved places` and `Nearest first`; chips are simplified to `All 18`, `Trending`, and `Visited`.
+- Taste cards are cleaned up by removing source/status text lines while preserving distance-first scanability and map action affordance.
+- `View map` now switches to Map with Taste-only active filtering; navigating back to Discover returns to the same Taste category context.
+
+## Phase note: Taste list-first interaction pass
+
+- Taste header/utility summary blocks are removed to prioritize immediate list scanning.
+- Taste filter strip now leads with `All 18`, `Trending`, `Visited`, `Date-night`, `Budget`, with `View map` kept in the same utility row.
+- Tapping a Taste card opens a bottom-sheet place preview (image, full address, `Directions`, `Watch video`) while keeping navigation and app context intact.
+
+## Phase note: Taste top-controls layout fix
+
+- Taste top controls are now split into two clean rows: `Taste + View map` on row one, horizontal filter chips on row two.
+- `View map` is kept fixed/visible and no longer competes with chip scrolling, preventing overlap/crowding.
+
+## Phase note: Taste searchable list refinement
+
+- Taste now includes a compact `Search saved restaurants...` input below the location bar that filters saved Taste rows in-place.
+- Filter chips expanded to `All`, `Trending`, `Visited`, `Date-night`, `Budget`, `Street-style`, `Iconic` with horizontal scroll.
+- Restaurant rows are now compact thumbnail-led list cards with distance aligned top-right and metadata below; source/status remain hidden from list view and continue inside the bottom sheet only.
+
+## Phase note: Taste top-stack spacing polish
+
+- Refined vertical rhythm between search, title/action row, chips, and first list card for cleaner hierarchy without layout redesign.
+- `View map` alignment, chip reachability, and list-start spacing were tuned to reduce crowding while preserving compactness.
+
+## Phase note: Taste micro-alignment cleanup
+
+- Removed visible clipped text artifacts from Taste list thumbnails by tightening thumbnail crop framing.
+- Refined row-card padding/alignment so thumbnail, title, distance, and metadata align more consistently.
+- Slightly strengthened `Taste` title prominence while keeping the same minimal row pattern.
+
+## Phase note: Unified category list rollout
+
+- Extended the successful Taste list pattern to `Activity`, `Stay`, and `Explore` using one shared category-detail structure.
+- Each category now has its own search placeholder, chip set, accent theme, and nearest-first mock item dataset.
+- All category items now use consistent compact thumbnail rows and open the same bottom-sheet detail interaction (`image`, `address`, `Directions`, `Watch video`).
+- Category accent tokens were normalized across all four pages so title bar/chips/`View map`/distance/action colors stay consistent per category family.
+
+## Phase note: Map radius coverage feedback
+
+- Map now renders a translucent radius coverage circle centered on the active search center and smoothly scales it with the vertical km slider.
+- Pins outside selected radius are de-emphasized, while in-range pins stay fully readable.
+- Added a subtle in-map count pill showing how many visible places are currently inside radius.
+- Applied a Pinshort-inspired restaurant map polish: calmer base tones, cleaner road contrast, and refined radius/pin emphasis hierarchy.
+- Map top controls were simplified to a single-line primary location bar with clearer separation from the secondary category chip row for cleaner hierarchy.
+- Tapping any map pin now opens a bottom-sheet place preview (image, name, address, category-relevant timing/meta, and `Directions`) with outside-tap dismiss behavior.

@@ -187,7 +187,7 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
 
       {showBottomSheet ? (
         <>
-          <div className="wr-login-sheet-backdrop" aria-hidden="true" />
+          <button type="button" className="wr-login-sheet-backdrop" aria-label="Close login sheet backdrop" onClick={closeSheet} />
           <div className="wr-login-sheet" role="dialog" aria-modal="false" aria-label="Join Wandreel login sheet">
             <div className="wr-login-sheet-handle" />
             <button type="button" aria-label="Close login sheet" className="wr-login-sheet-close" onClick={closeSheet}>

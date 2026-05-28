@@ -153,11 +153,15 @@
   left: 0;
   right: 0;
   top: 0;
-  bottom: 3.7rem;
+  bottom: var(--wr-bottom-nav-offset, 4.3rem);
   background: rgba(21, 33, 50, 0.32);
   backdrop-filter: blur(1.5px);
   z-index: 2;
-  pointer-events: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+  cursor: pointer;
   animation: wrSheetBackdropIn 220ms ease-out both;
 }
 
@@ -165,7 +169,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 3.7rem;
+  bottom: var(--wr-bottom-nav-offset, 4.3rem);
   background: #f6f2ea;
   border-radius: 1.35rem 1.35rem 0 0;
   padding: 0.8rem 0.95rem 0.9rem;

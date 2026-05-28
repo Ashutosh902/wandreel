@@ -1,25 +1,56 @@
-﻿import { useMemo, useState } from "react";
-import { LocateFixed, MapPin, Navigation, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowLeft, LocateFixed, MapPin, Search, X } from "lucide-react";
 import { mapCategories, runMapDataChecks, type MapCategoryLabel, type MapCategoryPin } from "./map.data";
 import "./map.css";
 
 runMapDataChecks();
 
-function MapPinMarker({ pin }: { pin: MapCategoryPin }) {
+const MAP_CENTER = { x: 51, y: 56 };
+const MAX_RADIUS_VISUAL_RATIO = 0.44;
+
+function pinDistanceFromCenter(pin: MapCategoryPin): number {
+  const px = Number(pin.x.replace("%", ""));
+  const py = Number(pin.y.replace("%", ""));
+  const dx = px - MAP_CENTER.x;
+  const dy = py - MAP_CENTER.y;
+  return Math.hypot(dx, dy);
+}
+
+function MapPinMarker({
+  pin,
+  inRange,
+  onSelect,
+}: {
+  pin: MapCategoryPin;
+  inRange: boolean;
+  onSelect: (pin: MapCategoryPin) => void;
+}) {
   const Icon = pin.icon;
 
   return (
-    <div className="wr-map-pin" style={{ left: pin.x, top: pin.y }}>
+    <button
+      type="button"
+      className={`wr-map-pin ${inRange ? "" : "is-out-of-range"}`}
+      style={{ left: pin.x, top: pin.y }}
+      onClick={() => onSelect(pin)}
+      aria-label={`Open ${pin.label} place details`}
+    >
       <div className="wr-map-pin-core" style={{ backgroundColor: pin.color }}>
         <Icon size={13} strokeWidth={2.2} />
       </div>
       <div className="wr-map-pin-tail" style={{ borderTopColor: pin.color }} />
       <div className="wr-map-pin-tooltip">{pin.label}</div>
-    </div>
+    </button>
   );
 }
 
-export function MapScreen() {
+export function MapScreen({
+  focusedCategory = null,
+  onBack,
+}: {
+  focusedCategory?: MapCategoryLabel | null;
+  onBack?: () => void;
+}) {
   const [activeMapCategories, setActiveMapCategories] = useState<MapCategoryLabel[]>([
     "Taste",
     "Activity",
@@ -27,6 +58,31 @@ export function MapScreen() {
     "Explore",
   ]);
   const [radiusKm, setRadiusKm] = useState(12);
+  const [mapMinDimensionPx, setMapMinDimensionPx] = useState(320);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const [activePinPreview, setActivePinPreview] = useState<MapCategoryPin | null>(null);
+
+  useEffect(() => {
+    if (focusedCategory) {
+      setActiveMapCategories([focusedCategory]);
+      return;
+    }
+    setActiveMapCategories(["Taste", "Activity", "Stay", "Explore"]);
+  }, [focusedCategory]);
+
+  useEffect(() => {
+    const node = canvasRef.current;
+    if (!node) return;
+    const updateSize = () => {
+      const rect = node.getBoundingClientRect();
+      const minDim = Math.max(1, Math.min(rect.width, rect.height));
+      setMapMinDimensionPx(minDim);
+    };
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
 
   const toggleMapCategory = (label: MapCategoryLabel) => {
     setActiveMapCategories((current) =>
@@ -39,18 +95,43 @@ export function MapScreen() {
     [activeMapCategories],
   );
   const sliderPercent = ((radiusKm - 2) / 98) * 100;
+  const isCategoryLockActive = focusedCategory !== null;
+  const radiusProgress = (radiusKm - 2) / 98;
+  const radiusVisualPx = radiusProgress * mapMinDimensionPx * MAX_RADIUS_VISUAL_RATIO;
+  const radiusVisualPercentForLogic = radiusProgress * 44;
+
+  const pinsWithRangeState = useMemo(
+    () =>
+      visiblePins.map((pin) => ({
+        pin,
+        inRange: pinDistanceFromCenter(pin) <= radiusVisualPercentForLogic,
+      })),
+    [visiblePins, radiusVisualPercentForLogic],
+  );
+  const inRangeCount = pinsWithRangeState.filter((item) => item.inRange).length;
+  const inRangeNoun = inRangeCount === 1 ? "place" : "places";
+  const closePinPreview = () => setActivePinPreview(null);
 
   return (
     <section className="wr-map" aria-label="Map tab">
       <div className="wr-map-topbar">
-        <div className="wr-map-search">
+        <div className="wr-map-top-row">
+          <button
+            type="button"
+            className="wr-map-back-btn"
+            aria-label="Back"
+            onClick={() => onBack?.()}
+          >
+            <ArrowLeft size={18} />
+          </button>
+          <div className="wr-map-search">
           <MapPin size={15} className="wr-map-search-pin" />
           <div className="wr-map-search-texts">
             <span className="wr-map-search-main">Patna, Bihar</span>
-            <span className="wr-map-search-sub">55 saved places nearby</span>
           </div>
           <button type="button" className="wr-map-search-change">Change</button>
           <Search size={14} className="wr-map-search-icon" />
+          </div>
         </div>
 
         <div className="wr-map-chips" role="group" aria-label="Map categories">
@@ -64,7 +145,11 @@ export function MapScreen() {
                 key={category.label}
                 aria-pressed={isActive}
                 aria-label={`${isActive ? "Hide" : "Show"} ${category.label} places`}
-                onClick={() => toggleMapCategory(category.label)}
+                onClick={() => {
+                  if (isCategoryLockActive) return;
+                  toggleMapCategory(category.label);
+                }}
+                disabled={isCategoryLockActive && !isActive}
                 className={`wr-map-chip ${isActive ? "is-active" : "is-disabled"}`}
               >
                 <span className="wr-map-chip-icon" style={isActive ? { backgroundColor: category.color } : undefined}>
@@ -77,7 +162,17 @@ export function MapScreen() {
         </div>
       </div>
 
-      <div className="wr-map-canvas" aria-label="Map canvas">
+      <div className="wr-map-canvas" aria-label="Map canvas" ref={canvasRef}>
+        <div
+          className="wr-map-radius-overlay"
+          aria-hidden="true"
+          style={{
+            width: `${radiusVisualPx * 2}px`,
+            height: `${radiusVisualPx * 2}px`,
+            left: `${MAP_CENTER.x}%`,
+            top: `${MAP_CENTER.y}%`,
+          }}
+        />
         <div className="wr-map-base" />
         <div className="wr-map-road wr-map-road-a" />
         <div className="wr-map-road wr-map-road-b" />
@@ -90,17 +185,18 @@ export function MapScreen() {
         <span className="wr-map-locality wr-map-locality-d">Jalalpur</span>
         <span className="wr-map-locality wr-map-locality-e">Patna</span>
 
-        {visiblePins.map((pin) => (
-          <MapPinMarker key={pin.label} pin={pin} />
+        {pinsWithRangeState.map(({ pin, inRange }) => (
+          <MapPinMarker key={pin.label} pin={pin} inRange={inRange} onSelect={setActivePinPreview} />
         ))}
 
         <div className="wr-map-current-location">
           <LocateFixed size={11} />
         </div>
 
-        <button type="button" className="wr-map-recenter-btn" aria-label="Recenter map">
-          <Navigation size={16} />
-        </button>
+        <div className="wr-map-in-range-pill" aria-live="polite">
+          <span className="wr-map-in-range-count">{inRangeCount}</span>
+          <span className="wr-map-in-range-label">{inRangeNoun}</span>
+        </div>
         <div className="wr-map-radius-vertical" aria-label="Map search radius control">
           <p className="wr-map-radius-value">{radiusKm} km</p>
           <div className="wr-map-radius-vertical-body">
@@ -120,6 +216,32 @@ export function MapScreen() {
           </div>
         </div>
       </div>
+      {activePinPreview ? (
+        <div className="wr-map-sheet-layer" onClick={closePinPreview} role="presentation">
+          <article className="wr-map-sheet" onClick={(event) => event.stopPropagation()} aria-label={`${activePinPreview.previewTitle} details`}>
+            <button type="button" className="wr-map-sheet-close" aria-label="Close map place details" onClick={closePinPreview}>
+              <X size={16} />
+            </button>
+            <img src={activePinPreview.imageUrl} alt={activePinPreview.previewTitle} className="wr-map-sheet-image" />
+            <h3 className="wr-map-sheet-title">{activePinPreview.previewTitle}</h3>
+            <p className="wr-map-sheet-meta">{activePinPreview.previewSubtitle}</p>
+            <p className="wr-map-sheet-address">{activePinPreview.address}</p>
+            <p className="wr-map-sheet-timing">{activePinPreview.timing}</p>
+            <div className="wr-map-sheet-actions">
+              <a
+                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activePinPreview.address)}`}
+                target="_blank"
+                rel="noreferrer"
+                className="wr-map-sheet-action-btn"
+              >
+                Directions
+              </a>
+            </div>
+          </article>
+        </div>
+      ) : null}
     </section>
   );
 }
+
+
