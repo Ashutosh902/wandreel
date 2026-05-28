@@ -802,6 +802,7 @@
   right: 0;
   bottom: 0;
   height: var(--wr-bottom-nav-height);
+  box-sizing: border-box;
   z-index: 80;
   display: flex;
   align-items: center;
