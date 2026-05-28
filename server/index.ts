@@ -12,10 +12,13 @@ import {
   getSessionCookieName,
   isPostgresConfigured,
   issueEmailOtp,
+  listSavedPlaces,
   revokeSession,
   upsertGoogleVerifiedUser,
+  upsertSavedPlace,
   updateDisplayName,
   verifyEmailOtp,
+  deleteSavedPlace,
 } from "./auth/postgresAuth";
 
 const app = express();
@@ -297,6 +300,49 @@ app.post("/api/auth/logout", async (req, res) => {
     return res.json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not logout";
+    return res.status(400).json({ ok: false, error: message });
+  }
+});
+
+app.get("/api/saved-places", requireAuth, async (req, res) => {
+  try {
+    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+    const items = await listSavedPlaces(authUser!.userId);
+    return res.json({ ok: true, items });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not fetch saved places";
+    return res.status(400).json({ ok: false, error: message });
+  }
+});
+
+app.post("/api/saved-places", requireAuth, async (req, res) => {
+  try {
+    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+    const placeId = String(req.body?.placeId || "").trim();
+    const title = String(req.body?.title || "").trim();
+    const category = req.body?.category ? String(req.body.category).trim() : null;
+    const metadata = req.body?.metadata ?? {};
+
+    const item = await upsertSavedPlace(authUser!.userId, {
+      placeId,
+      title,
+      category,
+      metadata,
+    });
+    return res.status(201).json({ ok: true, item });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not save place";
+    return res.status(400).json({ ok: false, error: message });
+  }
+});
+
+app.delete("/api/saved-places/:placeId", requireAuth, async (req, res) => {
+  try {
+    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+    const result = await deleteSavedPlace(authUser!.userId, String(req.params.placeId || ""));
+    return res.json({ ok: true, ...result });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not delete saved place";
     return res.status(400).json({ ok: false, error: message });
   }
 });

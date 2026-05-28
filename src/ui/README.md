@@ -209,3 +209,8 @@ This folder owns all Wandreel frontend architecture and components.
 - Login tab now resolves signed-in state from backend `/api/auth/session/me` (HttpOnly cookie session), replacing local-only identity state.
 - Email login now uses backend OTP request/verify endpoints; typed email is only trusted after OTP verification.
 - Profile completion now calls authenticated display-name endpoint and logout revokes backend session.
+
+## Phase note: Protected saved-place ownership API
+
+- Added authenticated saved-place endpoints (`GET/POST/DELETE /api/saved-places`) that always scope rows to server-resolved session `user_id`.
+- Backend ignores any client-provided identity fields and enforces ownership from verified session only.

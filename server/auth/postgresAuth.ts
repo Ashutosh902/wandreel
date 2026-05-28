@@ -26,6 +26,17 @@ type SessionRecord = {
   created_at: string;
 };
 
+type SavedPlaceRecord = {
+  id: string;
+  user_id: string;
+  place_id: string;
+  title: string;
+  category: string | null;
+  metadata_json: unknown;
+  created_at: string;
+  updated_at: string;
+};
+
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const SESSION_COOKIE_NAME = "wr_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
@@ -90,6 +101,24 @@ export async function ensureAuthSchema() {
 
   await pool.query(`
     create index if not exists idx_auth_email_otps_email_created on auth_email_otps(email, created_at desc);
+  `);
+
+  await pool.query(`
+    create table if not exists user_saved_places (
+      id uuid primary key default gen_random_uuid(),
+      user_id uuid not null references users(id) on delete cascade,
+      place_id text not null,
+      title text not null,
+      category text,
+      metadata_json jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (user_id, place_id)
+    );
+  `);
+
+  await pool.query(`
+    create index if not exists idx_user_saved_places_user_created on user_saved_places(user_id, created_at desc);
   `);
 
   schemaReady = true;
@@ -368,4 +397,60 @@ export function buildSessionCookie(token: string) {
 export function buildClearSessionCookie() {
   const secure = process.env.NODE_ENV === "production";
   return `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`;
+}
+
+function toSavedPlaceDTO(row: SavedPlaceRecord) {
+  return {
+    id: row.id,
+    placeId: row.place_id,
+    title: row.title,
+    category: row.category,
+    metadata: row.metadata_json,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function listSavedPlaces(userId: string) {
+  const result = await pool.query<SavedPlaceRecord>(
+    "select * from user_saved_places where user_id = $1 order by created_at desc",
+    [userId],
+  );
+  return result.rows.map(toSavedPlaceDTO);
+}
+
+export async function upsertSavedPlace(userId: string, input: { placeId: string; title: string; category?: string | null; metadata?: unknown }) {
+  const placeId = String(input.placeId || "").trim();
+  const title = String(input.title || "").trim();
+  const category = input.category ? String(input.category).trim() : null;
+  const metadata = input.metadata ?? {};
+
+  if (!placeId) throw new Error("placeId is required");
+  if (!title) throw new Error("title is required");
+
+  const result = await pool.query<SavedPlaceRecord>(
+    `
+      insert into user_saved_places (id, user_id, place_id, title, category, metadata_json, created_at, updated_at)
+      values ($1, $2, $3, $4, $5, $6::jsonb, now(), now())
+      on conflict (user_id, place_id)
+      do update set
+        title = excluded.title,
+        category = excluded.category,
+        metadata_json = excluded.metadata_json,
+        updated_at = now()
+      returning *
+    `,
+    [randomUUID(), userId, placeId, title, category, JSON.stringify(metadata)],
+  );
+  return toSavedPlaceDTO(result.rows[0]);
+}
+
+export async function deleteSavedPlace(userId: string, placeIdRaw: string) {
+  const placeId = String(placeIdRaw || "").trim();
+  if (!placeId) throw new Error("placeId is required");
+  const result = await pool.query(
+    "delete from user_saved_places where user_id = $1 and place_id = $2 returning id",
+    [userId, placeId],
+  );
+  return { deleted: Number(result.rowCount || 0) > 0 };
 }

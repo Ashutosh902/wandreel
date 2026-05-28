@@ -121,6 +121,15 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
 - `POST /api/auth/logout`
 - revokes session and clears session cookie
 
+- `GET /api/saved-places`
+- authenticated list endpoint; resolves `user_id` from verified session only
+
+- `POST /api/saved-places`
+- authenticated upsert endpoint; ignores client identity and binds row ownership to session `user_id`
+
+- `DELETE /api/saved-places/:placeId`
+- authenticated delete endpoint scoped to session `user_id`
+
 ### Google OAuth setup
 
 - Add these env vars before using real Google login:
