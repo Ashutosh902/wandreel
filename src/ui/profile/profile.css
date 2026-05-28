@@ -337,3 +337,17 @@
     padding-right: 0.9rem;
   }
 }
+
+.wr-profile-screen {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.wr-profile-screen::-webkit-scrollbar { display: none; }
+
+.wr-login-sheet {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.wr-login-sheet::-webkit-scrollbar { display: none; }

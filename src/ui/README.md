@@ -150,6 +150,10 @@ This folder owns all Wandreel frontend architecture and components.
 - Non-map screens now scroll internally with shared bottom-safe padding, while the map surface remains non-scrollable and keeps floating controls above nav.
 - Login bottom sheet/backdrop now stop above the persistent bottom nav and no longer cover it.
 
+## Phase note: Scrollbar chrome hidden
+
+- Hidden vertical scrollbar chrome across app scroll surfaces (home/add/category/profile/login-sheet) while preserving touch/mouse scrolling behavior.
+
 ## Phase note: Unified screen frame sizing (safe pass)
 
 - Standardized the phone shell to a fixed viewport-height frame for consistent perceived height across tabs.

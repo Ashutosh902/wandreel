@@ -50,7 +50,10 @@
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
 }
+.wr-home-surface:not(.wr-home-surface-map)::-webkit-scrollbar { display: none; }
 
 .wr-home-surface-map {
   height: 100%;
