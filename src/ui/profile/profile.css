@@ -1,0 +1,333 @@
+﻿.wr-profile-screen {
+  position: relative;
+  z-index: 1;
+  margin: 0 -1.25rem;
+  padding: 0 0 5.4rem;
+  color: #10213f;
+  background: #f7f4ee;
+}
+
+.wr-profile-header {
+  padding: 0 1rem;
+  margin-top: 0.2rem;
+  margin-bottom: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.wr-profile-header h2 {
+  margin: 0;
+  font-size: 2rem;
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.wr-profile-user-btn {
+  border: 1px solid #e5e7eb;
+  background: #fff;
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #10213f;
+  box-shadow: 0 6px 16px rgba(17, 24, 39, 0.12);
+}
+
+.wr-profile-greeting-block {
+  text-align: center;
+  padding: 1.2rem 1rem 1.3rem;
+  border-top: 1px solid #dadde2;
+}
+
+.wr-profile-greeting-block h3 {
+  margin: 0;
+  font-size: 1.08rem;
+  line-height: 1.25;
+}
+
+.wr-profile-greeting-block p {
+  margin: 0.6rem auto 0;
+  max-width: 17.5rem;
+  font-size: 0.76rem;
+  color: #627083;
+  line-height: 1.5;
+}
+
+.wr-profile-login-signup {
+  margin-top: 1rem;
+  border: none;
+  border-radius: 999px;
+  background: #1f7cf0;
+  color: #fff;
+  padding: 0.7rem 1.25rem;
+  font-size: 0.86rem;
+  font-weight: 800;
+  box-shadow: 0 10px 22px rgba(31, 124, 240, 0.3);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.wr-profile-inline-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.wr-profile-name-input {
+  width: 8.5rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.65rem;
+  background: #fff;
+  color: #10213f;
+  font: inherit;
+  font-size: 0.8rem;
+  padding: 0.4rem 0.55rem;
+}
+
+.wr-profile-mini-btn,
+.wr-profile-edit-name-btn {
+  border: 1px solid #d1d5db;
+  border-radius: 0.65rem;
+  background: #fff;
+  color: #10213f;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0.42rem 0.6rem;
+}
+
+.wr-profile-edit-name-btn {
+  margin-top: 0.75rem;
+}
+
+.wr-profile-section {
+  margin-top: 0.55rem;
+}
+
+.wr-profile-section-title,
+.wr-profile-version {
+  margin: 0;
+  background: #dce1e7;
+  color: #667182;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0.68rem 1rem;
+}
+
+.wr-profile-row {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid #d8dde3;
+  background: rgba(255, 255, 255, 0.55);
+  color: #10213f;
+  padding: 0.9rem 1rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-align: left;
+}
+
+.wr-profile-row-right {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: #6b7280;
+}
+
+.wr-profile-row-value {
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.wr-profile-logout {
+  color: #9f1239;
+}
+
+.wr-login-sheet-backdrop {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  bottom: 3.7rem;
+  background: rgba(21, 33, 50, 0.32);
+  backdrop-filter: blur(1.5px);
+  z-index: 2;
+  pointer-events: none;
+  animation: wrSheetBackdropIn 220ms ease-out both;
+}
+
+.wr-login-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 3.7rem;
+  background: #f6f2ea;
+  border-radius: 1.35rem 1.35rem 0 0;
+  padding: 0.8rem 0.95rem 0.9rem;
+  box-shadow: 0 -14px 30px rgba(17, 24, 39, 0.22);
+  border-top: 1px solid #e5e7eb;
+  z-index: 3;
+  animation: wrSheetIn 280ms cubic-bezier(0.2, 0.75, 0.2, 1) both;
+}
+
+.wr-login-sheet-handle {
+  width: 2.5rem;
+  height: 0.23rem;
+  border-radius: 999px;
+  margin: 0 auto;
+  background: #cfc4b8;
+}
+
+.wr-login-sheet-close {
+  position: absolute;
+  right: 0.9rem;
+  top: 1.05rem;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid #d5d9de;
+  border-radius: 999px;
+  background: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #10213f;
+}
+
+.wr-login-sheet-kicker {
+  margin: 0.8rem 0 0;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.2em;
+  color: #9f1239;
+}
+
+.wr-login-sheet h4 {
+  margin: 0.5rem 0 0;
+  max-width: 14rem;
+  font-size: 2rem;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+}
+
+.wr-login-sheet-desc {
+  margin: 0.7rem 0 0;
+  color: #617186;
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
+.wr-login-sheet-actions {
+  margin-top: 0.9rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.wr-login-sheet-primary,
+.wr-login-sheet-secondary {
+  border-radius: 0.9rem;
+  border: 1px solid transparent;
+  padding: 0.7rem 0.9rem;
+  font-size: 0.87rem;
+  font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}
+
+.wr-login-sheet-primary {
+  background: #102a57;
+  color: #fff;
+  box-shadow: 0 10px 18px rgba(16, 42, 87, 0.28);
+}
+
+.wr-login-sheet-secondary {
+  background: #fff;
+  color: #10213f;
+  border-color: #d6dce3;
+}
+
+.wr-login-sheet-input {
+  margin-top: 0.8rem;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid #cfd6de;
+  border-radius: 0.85rem;
+  padding: 0.68rem 0.8rem;
+  font: inherit;
+  font-size: 0.84rem;
+  background: #fff;
+}
+
+.wr-login-sheet-phone-grid {
+  margin-top: 0.8rem;
+  display: grid;
+  grid-template-columns: 70px 1fr;
+  gap: 0.45rem;
+}
+
+.wr-login-sheet-prefix {
+  border: 1px solid #cfd6de;
+  border-radius: 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.wr-login-sheet-note {
+  margin-top: 0.8rem;
+  border-radius: 0.85rem;
+  background: #eef3f0;
+  padding: 0.65rem 0.7rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.4rem;
+  color: #4d647f;
+  font-size: 0.67rem;
+  line-height: 1.4;
+}
+
+@keyframes wrSheetBackdropIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes wrSheetIn {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (max-width: 360px) {
+  .wr-profile-screen {
+    margin-left: -1rem;
+    margin-right: -1rem;
+  }
+
+  .wr-profile-header,
+  .wr-profile-greeting-block,
+  .wr-profile-section-title,
+  .wr-profile-row,
+  .wr-profile-version,
+  .wr-login-sheet {
+    padding-left: 0.9rem;
+    padding-right: 0.9rem;
+  }
+}

@@ -1,0 +1,194 @@
+.app-shell-root {
+  min-height: 100vh;
+  position: relative;
+  overflow: hidden;
+}
+
+.splash-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  transition: opacity 260ms ease, transform 260ms ease;
+}
+
+.splash-layer.is-active { opacity: 1; transform: translateY(0); }
+.splash-layer.is-exit { opacity: 0; transform: translateY(-8px); pointer-events: none; }
+
+.main-layer { min-height: 100vh; transition: opacity 220ms ease; }
+.main-layer.is-hidden { opacity: 0; }
+.main-layer.is-visible { opacity: 1; }
+
+.opening-splash {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  align-items: center;
+  justify-items: center;
+  background: linear-gradient(180deg, #f7f7f8 0%, #f0ece6 100%);
+}
+
+.splash-center {
+  margin-top: clamp(1.25rem, 8vh, 4rem);
+  display: grid;
+  justify-items: center;
+  gap: clamp(0.5rem, 1.4vh, 0.95rem);
+  animation: splashIn 560ms ease both;
+  width: min(90vw, 420px);
+}
+
+.brand-mark { width: clamp(88px, 24vw, 140px); height: auto; }
+.brand-wordmark { width: 100%; height: auto; }
+.brand-tagline { width: min(100%, 360px); height: auto; }
+.splash-scenery { width: 100%; align-self: end; }
+.scenery-svg { width: 100%; height: auto; display: block; }
+
+@keyframes splashIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: translateY(0); } }
+
+.home-screen {
+  min-height: 100vh;
+  padding: 1rem 1rem 1.5rem;
+  background:
+    radial-gradient(circle at 90% 10%, #ffd9c2 0%, transparent 36%),
+    radial-gradient(circle at 5% 28%, #ffe9d6 0%, transparent 35%),
+    linear-gradient(180deg, #fcfaf8 0%, #f5efe8 100%);
+  color: #1c212b;
+}
+
+.home-hero h1 {
+  margin: 0.2rem 0 0;
+  font-size: clamp(1.8rem, 8vw, 2.8rem);
+  line-height: 1.05;
+}
+
+.home-kicker {
+  margin: 0;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: #ff5e2a;
+  font-weight: 700;
+  font-size: 0.78rem;
+}
+
+.home-sub {
+  margin: 0.6rem 0 0;
+  color: #4d5561;
+  max-width: 34ch;
+}
+
+.capture-panel {
+  margin-top: 1rem;
+  background: #ffffffd6;
+  border: 1px solid #eadfd4;
+  border-radius: 14px;
+  padding: 0.85rem;
+  backdrop-filter: blur(4px);
+}
+
+.capture-panel label {
+  display: block;
+  font-size: 0.82rem;
+  margin-bottom: 0.5rem;
+  color: #3d4654;
+}
+
+.capture-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.55rem;
+}
+
+.capture-row input {
+  border: 1px solid #dbcbbd;
+  border-radius: 10px;
+  padding: 0.72rem 0.8rem;
+  font: inherit;
+  background: #fff;
+}
+
+.capture-row button {
+  border: none;
+  border-radius: 10px;
+  padding: 0.72rem 0.95rem;
+  background: linear-gradient(180deg, #ff7a00 0%, #ff4d1f 100%);
+  color: #fff;
+  font-weight: 700;
+}
+
+.category-grid {
+  margin-top: 1rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.7rem;
+}
+
+.category-card {
+  border-radius: 14px;
+  padding: 0.9rem;
+  border: 1px solid #eadfd4;
+  background: #fff;
+}
+
+.category-card h2 { margin: 0; font-size: 1.05rem; }
+.category-card p { margin: 0.35rem 0 0; color: #5f6772; font-size: 0.84rem; }
+.category-card.eat { background: linear-gradient(180deg, #fff6f0 0%, #fff 100%); }
+.category-card.do { background: linear-gradient(180deg, #fffaf3 0%, #fff 100%); }
+.category-card.stay { background: linear-gradient(180deg, #f8fbff 0%, #fff 100%); }
+.category-card.see { background: linear-gradient(180deg, #f5fff9 0%, #fff 100%); }
+
+.recent-section { margin-top: 1rem; }
+.section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.section-head h3 { margin: 0; font-size: 1rem; }
+.section-head a {
+  color: #ff5e2a;
+  text-decoration: none;
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.recent-list {
+  margin-top: 0.65rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.recent-card {
+  background: #fff;
+  border: 1px solid #eadfd4;
+  border-radius: 14px;
+  padding: 0.75rem 0.85rem;
+}
+
+.pill {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: #ff5e2a;
+  background: #fff0e8;
+  border-radius: 999px;
+  padding: 0.2rem 0.5rem;
+}
+
+.recent-card h4 { margin: 0.45rem 0 0.1rem; font-size: 1rem; }
+.recent-card p { margin: 0; color: #5f6772; font-size: 0.84rem; }
+
+@media (min-width: 860px) {
+  .home-screen {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 1.4rem 1.2rem 2rem;
+  }
+
+  .capture-panel { padding: 1rem; }
+
+  .category-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .recent-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
