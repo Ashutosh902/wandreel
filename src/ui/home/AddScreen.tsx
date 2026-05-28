@@ -161,7 +161,7 @@ export function AddScreen() {
             <p>Instagram, YouTube, TikToks.</p>
           </div>
           <button type="button" className="wr-add-refresh-btn" aria-label="Refresh link input">
-            <RefreshCw size={13} />
+            <RefreshCw size={15} />
           </button>
         </div>
 

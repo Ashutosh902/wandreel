@@ -24,6 +24,7 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
 - Taste micro-polish pass removes thumbnail text artifacts and tightens list row/title alignment for cleaner scan quality.
 - Category list system is now unified across Taste/Activity/Stay/Explore with category-specific search, chips, themed accents, and shared bottom-sheet details.
 - Add tab now implements the approved Wandreel capture UI (quick-capture header, paste-link card, branded analyze loader, detected chips, preview card, and local save feedback).
+- Add tab polish pass refined paste-card spacing/alignment, improved refresh-button placement, and tightened empty detected placeholder proximity while preserving existing analyze flow.
 - Map tab now includes a visual radius coverage overlay, in-range pin emphasis, and nearby count feedback linked to the distance slider.
 - Map visuals were further refined toward Pinshort-style restaurant map clarity (softer base, subtler radius, clearer in-range hierarchy).
 - Map top area now follows a cleaner two-row hierarchy: simplified single-line location bar and better-spaced secondary category pill row.
