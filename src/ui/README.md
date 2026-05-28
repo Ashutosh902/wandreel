@@ -143,3 +143,12 @@ This folder owns all Wandreel frontend architecture and components.
 - Applied a Pinshort-inspired restaurant map polish: calmer base tones, cleaner road contrast, and refined radius/pin emphasis hierarchy.
 - Map top controls were simplified to a single-line primary location bar with clearer separation from the secondary category chip row for cleaner hierarchy.
 - Tapping any map pin now opens a bottom-sheet place preview (image, name, address, category-relevant timing/meta, and `Directions`) with outside-tap dismiss behavior.
+
+## Phase note: Unified screen frame sizing (safe pass)
+
+- Standardized the phone shell to a fixed viewport-height frame for consistent perceived height across tabs.
+- Enabled internal scrolling only on non-map surfaces to preserve existing map interaction and overlay behavior.
+
+## Phase note: Add-only frame height stabilization
+
+- Applied an Add-tab-only minimum surface height so the Add screen keeps a full mobile frame feel without changing shared shell behavior used by Discover/Map/category screens.
