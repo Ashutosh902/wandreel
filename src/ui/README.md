@@ -164,6 +164,12 @@ This folder owns all Wandreel frontend architecture and components.
 - Desktop keeps the centered rounded phone mockup shell for design preview.
 - Mobile viewport (`<=640px`) now always renders a full-screen edge-to-edge app shell with safe-area-aware viewport/nav behavior.
 
+## Phase note: Phone OTP integration (XLSX-backed)
+
+- Login phone flow now calls API endpoints to request and verify OTP instead of local-only mock completion.
+- OTP and user records are persisted to `database/tables/auth_otp.xlsx` and `database/tables/users.xlsx` as the initial table-backed auth layer.
+- Login onboarding now applies provider-aware identity flow: Google/Facebook reuse provider name/email/avatar when present, Apple prompts name only if missing, and email follows passwordless link-first then name collection.
+
 ## Phase note: Unified screen frame sizing (safe pass)
 
 - Standardized the phone shell to a fixed viewport-height frame for consistent perceived height across tabs.
@@ -172,3 +178,34 @@ This folder owns all Wandreel frontend architecture and components.
 ## Phase note: Add-only frame height stabilization
 
 - Applied an Add-tab-only minimum surface height so the Add screen keeps a full mobile frame feel without changing shared shell behavior used by Discover/Map/category screens.
+
+## Phase note: Login compact social row
+
+- Login join sheet now uses a compact social icon row (`Google`, `Apple`, `Facebook`) instead of large stacked provider rows.
+- Email entry is now inline on the same join step with `Continue with email`, and phone auth is reduced to a secondary `Use phone instead` link.
+
+## Phase note: Login social icon fidelity + validation polish
+
+- Replaced placeholder social letters with proper brand-style inline SVG icons for Google, Apple, and Facebook.
+- Email validation now shows a clean inline error (`Please enter a valid email address.`) only after invalid submit attempts.
+
+## Phase note: Login sheet sizing polish
+
+- Reduced join-sheet headline size slightly and relaxed line-height for calmer scanability.
+- Social provider buttons were resized to a tighter 50px-class height, with icon centering preserved.
+- Tightened reassurance note density and slightly increased input-to-email-CTA spacing.
+
+## Phase note: Login error-state polish
+
+- Technical network failures (for example `Failed to fetch`) are now mapped to a user-friendly inline login error: `Couldn’t connect. Please try again.`
+
+## Phase note: Real Google OAuth wiring
+
+- Google icon now launches real Google account chooser via Google Identity Services, then verifies profile through backend `/api/auth/google/verify`.
+- Login is no longer mocked for Google; missing OAuth config now surfaces `Google login is not configured yet.`.
+
+## Phase note: Real Auth Identity v1 session wiring
+
+- Login tab now resolves signed-in state from backend `/api/auth/session/me` (HttpOnly cookie session), replacing local-only identity state.
+- Email login now uses backend OTP request/verify endpoints; typed email is only trusted after OTP verification.
+- Profile completion now calls authenticated display-name endpoint and logout revokes backend session.

@@ -31,6 +31,12 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
 - Map pins now open a bottom-sheet preview with image, title, address, category-relevant details, and quick directions.
 - Global shell stabilization applied: shared fixed phone frame, bottom-nav-outside-scroll architecture, internal non-map scrolling, non-scrollable map surface, and login sheet anchoring above persistent nav.
 - Responsive shell split applied: desktop keeps centered rounded mock phone preview, while mobile (`<=640px`) uses full-screen edge-to-edge shell with safe-area-aware nav/content spacing.
+- Phone auth now uses XLSX-backed OTP generation/verification (`database/tables/auth_otp.xlsx`, `database/tables/users.xlsx`) as the starting persistence layer.
+- Login onboarding now supports provider-aware profile handling: Google/Facebook use provider profile when available, Apple falls back to post-auth name collection, and email uses passwordless link-first then name collection.
+- Login sheet UI now follows a compact GetYourGuide-style auth entry: icon-only social row (`Google`, `Apple`, `Facebook`) plus inline email input and `Continue with email`.
+- Social auth icons now render with brand-style SVG marks (not text placeholders), and email validation uses a styled inline error message.
+- Google icon login now uses real Google account chooser flow (GIS OAuth), server-side profile verification, and XLSX profile upsert (no mock success).
+- Real Auth Identity v1 phases are now active with Postgres-backed users/sessions/email-OTP and HttpOnly cookie sessions for verified identity.
 - PWA manifest and service worker registration wired (`vite-plugin-pwa`).
 - Installable shell metadata configured (name/theme/start URL/display).
 - Unified extraction pipeline centralized under `server/extraction`.
@@ -83,6 +89,50 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
 
 - `GET /api/intelligence/jobs/:jobId`
 - returns async job status/result
+
+### Auth (Real Identity v1 + transitional XLSX)
+
+- `POST /api/auth/phone/request-otp`
+- body: `{ "phone": "9876543210" }`
+- generates OTP row in `database/tables/auth_otp.xlsx` and ensures user in `database/tables/users.xlsx`
+
+- `POST /api/auth/phone/verify-otp`
+- body: `{ "phone": "9876543210", "otp": "123456" }`
+- verifies latest unconsumed OTP and returns resolved user identity
+
+- `POST /api/auth/google/verify`
+- body: `{ "accessToken": "<google_access_token>" }`
+- validates Google profile (`openid email profile`), upserts user in Postgres, creates HttpOnly session cookie
+
+- `POST /api/auth/email/request-otp`
+- body: `{ "email": "you@example.com" }`
+- creates email OTP challenge (typed email is not trusted until verification)
+
+- `POST /api/auth/email/verify-otp`
+- body: `{ "email": "you@example.com", "otp": "123456" }`
+- verifies OTP, creates/reuses user by verified email, creates HttpOnly session cookie
+
+- `GET /api/auth/session/me`
+- resolves logged-in user from verified session cookie only
+
+- `POST /api/auth/profile/display-name`
+- authenticated endpoint to set missing display name
+
+- `POST /api/auth/logout`
+- revokes session and clears session cookie
+
+### Google OAuth setup
+
+- Add these env vars before using real Google login:
+  - `VITE_GOOGLE_CLIENT_ID` (frontend GIS client id)
+  - `GOOGLE_CLIENT_ID` (backend audience verification; same value as OAuth client id for this flow)
+- Add session/email auth env vars:
+  - `DATABASE_URL` (Postgres connection string; canonical auth store)
+  - `CLIENT_ORIGIN` (frontend origin for credentialed CORS, e.g. `http://localhost:5173`)
+  - `EMAIL_OTP_DEV_MODE=true` (dev-only OTP preview in response; disable in production)
+- In Google Cloud Console:
+  - Enable Google Identity Services/OAuth consent
+  - Add authorized JavaScript origins for local + production app URLs
 
 ## Run
 

@@ -28,11 +28,19 @@ create type source_type as enum (
 create table users (
   user_id uuid primary key default gen_random_uuid(),
   email text unique,
+  email_verified boolean not null default false,
   phone text unique,
+  phone_verified boolean not null default false,
   username text,
-  password_hash text not null,
+  display_name text,
+  avatar_url text,
+  auth_provider text,
+  provider_id text,
+  password_hash text,
   created_at timestamptz not null default now(),
-  status text not null default 'active'
+  updated_at timestamptz not null default now(),
+  status text not null default 'active',
+  unique (auth_provider, provider_id)
 );
 
 create table auth_otp (
@@ -48,6 +56,25 @@ create table auth_otp (
   lockout_until timestamptz,
   consumed_at timestamptz,
   is_verified boolean not null default false,
+  created_at timestamptz not null default now()
+);
+
+create table auth_sessions (
+  session_id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references users(user_id) on delete cascade,
+  token_hash text not null unique,
+  expires_at timestamptz not null,
+  revoked_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create table auth_email_otps (
+  email_otp_id uuid primary key default gen_random_uuid(),
+  email text not null,
+  otp_hash text not null,
+  expires_at timestamptz not null,
+  consumed_at timestamptz,
+  attempt_count integer not null default 0,
   created_at timestamptz not null default now()
 );
 

@@ -45,3 +45,37 @@ This folder holds interim table-like storage using Excel sheets until a full DB 
 - This is temporary modeling for fast iteration.
 - IDs are string-based placeholders; move to UUID/DB constraints in next phase.
 - Keep this workbook as a contract reference when moving to PostgreSQL.
+
+## Auth integration (current phase)
+
+The app now uses Postgres as canonical auth identity store, while XLSX OTP/user tables remain transitional for legacy phone flow until full cutover.
+
+- Canonical (Postgres): `users`, `auth_sessions`, `auth_email_otps`
+- Transitional (XLSX): `users.xlsx`, `auth_otp.xlsx` for legacy phone OTP only
+
+Current API flow:
+
+1. `POST /api/auth/phone/request-otp` (transitional)
+   - validates 10-digit phone
+   - appends OTP row to `auth_otp.xlsx`
+   - creates user row in `users.xlsx` if missing
+2. `POST /api/auth/phone/verify-otp` (transitional)
+   - checks latest unconsumed phone OTP
+   - marks OTP verified/consumed
+   - resolves user identity from `users.xlsx`
+3. `POST /api/auth/google/verify`
+   - verifies Google token/profile
+   - creates/reuses user in Postgres by verified email
+   - issues HttpOnly session cookie
+
+4. `POST /api/auth/email/request-otp`
+   - creates email OTP challenge in Postgres
+
+5. `POST /api/auth/email/verify-otp`
+   - verifies OTP, creates/reuses user by verified email
+   - issues HttpOnly session cookie
+
+6. `GET /api/auth/session/me`
+   - resolves current authenticated user from server session
+
+This keeps identity safe/scalable while allowing a low-risk phased migration off XLSX.

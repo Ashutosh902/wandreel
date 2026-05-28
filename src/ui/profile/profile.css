@@ -241,8 +241,8 @@
 .wr-login-sheet h4 {
   margin: 0.5rem 0 0;
   max-width: 14rem;
-  font-size: 2rem;
-  line-height: 1.05;
+  font-size: 1.84rem;
+  line-height: 1.14;
   letter-spacing: -0.03em;
 }
 
@@ -254,9 +254,47 @@
 }
 
 .wr-login-sheet-actions {
-  margin-top: 0.9rem;
+  margin-top: 1rem;
   display: grid;
   gap: 0.5rem;
+}
+
+.wr-login-social-row {
+  margin-top: 0.95rem;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.wr-login-social-btn {
+  height: 3.15rem;
+  border-radius: 999px;
+  border: 1px solid #d6dce3;
+  background: #fff;
+  color: #10213f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.wr-login-social-icon {
+  width: 1.2rem;
+  height: 1.2rem;
+}
+
+.wr-login-social-google {
+  color: #ea4335;
+}
+
+.wr-login-social-apple {
+  color: #111827;
+}
+
+.wr-login-social-facebook {
+  color: #1877f2;
 }
 
 .wr-login-sheet-primary,
@@ -282,6 +320,44 @@
   background: #fff;
   color: #10213f;
   border-color: #d6dce3;
+}
+
+.wr-login-sheet-phone-link {
+  margin-top: 0.7rem;
+  border: none;
+  background: transparent;
+  color: #6f7f93;
+  font-size: 0.72rem;
+  font-weight: 650;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.wr-login-sheet-error {
+  margin: 0.45rem 0 0;
+  color: #b42318;
+  font-size: 0.75rem;
+  line-height: 1.3;
+  font-weight: 700;
+}
+
+.wr-login-sheet-legal {
+  margin: 0.75rem 0 0;
+  color: #657790;
+  font-size: 0.68rem;
+  line-height: 1.4;
+}
+
+.wr-login-sheet-legal button {
+  border: none;
+  background: transparent;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: #102a57;
+  font-weight: 800;
+  text-decoration: underline;
 }
 
 .wr-login-sheet-input {
@@ -318,12 +394,12 @@
   margin-top: 0.8rem;
   border-radius: 0.85rem;
   background: #eef3f0;
-  padding: 0.65rem 0.7rem;
+  padding: 0.56rem 0.64rem;
   display: flex;
   align-items: flex-start;
   gap: 0.4rem;
   color: #4d647f;
-  font-size: 0.67rem;
+  font-size: 0.64rem;
   line-height: 1.4;
 }
 
