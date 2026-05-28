@@ -153,22 +153,22 @@ export function HomeScreen() {
           ) : null}
 
           {page}
-          <BottomNav
-            activeTab={activeTab}
-            onTabChange={(nextTab) => {
-              if (activeTab === "Map" && mapFocusedCategory && nextTab === "Discover") {
-                setActiveTab("Discover");
-                setActiveCategory(mapFocusedCategory);
-                return;
-              }
-              setActiveTab(nextTab);
-              setActiveCategory(null);
-              if (nextTab !== "Map") {
-                setMapFocusedCategory(null);
-              }
-            }}
-          />
         </div>
+        <BottomNav
+          activeTab={activeTab}
+          onTabChange={(nextTab) => {
+            if (activeTab === "Map" && mapFocusedCategory && nextTab === "Discover") {
+              setActiveTab("Discover");
+              setActiveCategory(mapFocusedCategory);
+              return;
+            }
+            setActiveTab(nextTab);
+            setActiveCategory(null);
+            if (nextTab !== "Map") {
+              setMapFocusedCategory(null);
+            }
+          }}
+        />
       </motion.div>
     </div>
   );

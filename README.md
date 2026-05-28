@@ -29,6 +29,7 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
 - Map visuals were further refined toward Pinshort-style restaurant map clarity (softer base, subtler radius, clearer in-range hierarchy).
 - Map top area now follows a cleaner two-row hierarchy: simplified single-line location bar and better-spaced secondary category pill row.
 - Map pins now open a bottom-sheet preview with image, title, address, category-relevant details, and quick directions.
+- Global shell stabilization applied: shared fixed phone frame, bottom-nav-outside-scroll architecture, internal non-map scrolling, non-scrollable map surface, and login sheet anchoring above persistent nav.
 - PWA manifest and service worker registration wired (`vite-plugin-pwa`).
 - Installable shell metadata configured (name/theme/start URL/display).
 - Unified extraction pipeline centralized under `server/extraction`.

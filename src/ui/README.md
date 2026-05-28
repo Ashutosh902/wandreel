@@ -144,6 +144,12 @@ This folder owns all Wandreel frontend architecture and components.
 - Map top controls were simplified to a single-line primary location bar with clearer separation from the secondary category chip row for cleaner hierarchy.
 - Tapping any map pin now opens a bottom-sheet place preview (image, name, address, category-relevant timing/meta, and `Directions`) with outside-tap dismiss behavior.
 
+## Phase note: Global shell stabilization
+
+- Bottom navigation is now anchored as a direct shell layer (outside page scroll containers) for consistent visibility across Discover, Add, Map, Login/Profile, and category pages.
+- Non-map screens now scroll internally with shared bottom-safe padding, while the map surface remains non-scrollable and keeps floating controls above nav.
+- Login bottom sheet/backdrop now stop above the persistent bottom nav and no longer cover it.
+
 ## Phase note: Unified screen frame sizing (safe pass)
 
 - Standardized the phone shell to a fixed viewport-height frame for consistent perceived height across tabs.
