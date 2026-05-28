@@ -157,6 +157,12 @@ This folder owns all Wandreel frontend architecture and components.
 ## Phase note: Add typography hierarchy polish
 
 - Refined Add-only type scale and spacing so `Add a Wandreel` is the dominant headline, paste-card copy is clearly secondary, and `Analyze link` remains strong without oversized visual weight.
+- Tightened Add typography to match Home/Taste voice more closely: stronger dark-navy headline contrast, calmer helper text, and cleaner CTA/input type rhythm without structural or logic changes.
+
+## Phase note: Desktop preview vs mobile fullscreen shell
+
+- Desktop keeps the centered rounded phone mockup shell for design preview.
+- Mobile viewport (`<=640px`) now always renders a full-screen edge-to-edge app shell with safe-area-aware viewport/nav behavior.
 
 ## Phase note: Unified screen frame sizing (safe pass)
 
