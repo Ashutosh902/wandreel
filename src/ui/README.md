@@ -154,6 +154,10 @@ This folder owns all Wandreel frontend architecture and components.
 
 - Hidden vertical scrollbar chrome across app scroll surfaces (home/add/category/profile/login-sheet) while preserving touch/mouse scrolling behavior.
 
+## Phase note: Add typography hierarchy polish
+
+- Refined Add-only type scale and spacing so `Add a Wandreel` is the dominant headline, paste-card copy is clearly secondary, and `Analyze link` remains strong without oversized visual weight.
+
 ## Phase note: Unified screen frame sizing (safe pass)
 
 - Standardized the phone shell to a fixed viewport-height frame for consistent perceived height across tabs.
