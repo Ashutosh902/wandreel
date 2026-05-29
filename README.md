@@ -37,6 +37,7 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
 - Social auth icons now render with brand-style SVG marks (not text placeholders), and email validation uses a styled inline error message.
 - Google icon login now uses real Google account chooser flow (GIS OAuth), server-side profile verification, and XLSX profile upsert (no mock success).
 - Real Auth Identity v1 phases are now active with Postgres-backed users/sessions/email-OTP and HttpOnly cookie sessions for verified identity.
+- Login sheet auto-open is now session-aware: it never auto-opens for authenticated users, while logged-out users retain default auto-open on the Login tab.
 - PWA manifest and service worker registration wired (`vite-plugin-pwa`).
 - Installable shell metadata configured (name/theme/start URL/display).
 - Unified extraction pipeline centralized under `server/extraction`.

@@ -48,6 +48,10 @@
   line-height: 1.25;
 }
 
+.wr-profile-greeting-block h3 strong {
+  font-weight: 900;
+}
+
 .wr-profile-greeting-block p {
   margin: 0.6rem auto 0;
   max-width: 17.5rem;
@@ -204,6 +208,7 @@
     transform: none;
     width: 100%;
     max-height: calc(100dvh - var(--wr-bottom-nav-height, 82px) - var(--wr-safe-top, 0px) - 14px);
+    animation: wrSheetInMobile 280ms cubic-bezier(0.2, 0.75, 0.2, 1) both;
   }
 }
 
@@ -413,6 +418,17 @@
 }
 
 @keyframes wrSheetIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(24px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0) scale(1);
+  }
+}
+
+@keyframes wrSheetInMobile {
   from {
     opacity: 0;
     transform: translateY(24px) scale(0.985);

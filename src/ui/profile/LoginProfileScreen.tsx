@@ -115,7 +115,8 @@ async function apiFetch(path: string, init?: RequestInit) {
 export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScreenProps) {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
-  const [showBottomSheet, setShowBottomSheet] = useState(openSheetOnMount);
+  const [showBottomSheet, setShowBottomSheet] = useState(false);
+  const [isSessionResolved, setIsSessionResolved] = useState(false);
   const [sheetMode, setSheetMode] = useState<SheetMode>("join");
 
   const [phoneAuthMessage, setPhoneAuthMessage] = useState("");
@@ -151,25 +152,32 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
   };
 
   const openSheet = () => {
+    if (isLoggedIn) return;
     setShowBottomSheet(true);
     resetToJoinStep();
   };
 
-  const syncSession = async () => {
+  const syncSession = async ({ applyLoggedOutDefault = false }: { applyLoggedOutDefault?: boolean } = {}) => {
     try {
       const payload = await apiFetch("/api/auth/session/me");
       setSessionUser(payload.user as SessionUser);
       setIsLoggedIn(true);
       setDraftName(String(payload?.user?.displayName || "Stroller"));
+      setShowBottomSheet(false);
     } catch {
       setSessionUser(null);
       setIsLoggedIn(false);
       setDraftName("Stroller");
+      if (applyLoggedOutDefault) {
+        setShowBottomSheet(openSheetOnMount);
+      }
+    } finally {
+      setIsSessionResolved(true);
     }
   };
 
   useEffect(() => {
-    void syncSession();
+    void syncSession({ applyLoggedOutDefault: true });
   }, []);
 
   const continueWithGoogle = async () => {
@@ -341,6 +349,8 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
       setIsLoggedIn(false);
       setDraftName("Stroller");
       setIsEditingName(false);
+      setShowBottomSheet(openSheetOnMount);
+      resetToJoinStep();
     }
   };
 
@@ -362,7 +372,9 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
             </button>
           </div>
         ) : (
-          <h3>{`Hi, ${greetingName}`}</h3>
+          <h3>
+            Hi, <strong>{greetingName}</strong>
+          </h3>
         )}
         <p>Turn Reels, Shorts, TikToks and videos into your personal bucketlist.</p>
 
@@ -398,7 +410,7 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
 
       <footer className="wr-profile-version">Version 0.1.0</footer>
 
-      {showBottomSheet ? (
+      {isSessionResolved && showBottomSheet ? (
         <>
           <button type="button" className="wr-login-sheet-backdrop" aria-label="Close login sheet backdrop" onClick={closeSheet} />
           <div className="wr-login-sheet" role="dialog" aria-modal="false" aria-label="Join Wandreel login sheet">
@@ -517,4 +529,3 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
     </section>
   );
 }
-

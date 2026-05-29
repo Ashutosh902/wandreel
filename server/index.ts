@@ -1,3 +1,4 @@
+import "dotenv/config";
 import express from "express";
 import { runExtractionPipeline, type ExtractionMode } from "./extraction";
 import { intelligenceJobStore, runIntelligencePipeline, type IntelligenceMode } from "./intelligence";

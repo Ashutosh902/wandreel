@@ -210,6 +210,11 @@ This folder owns all Wandreel frontend architecture and components.
 - Email login now uses backend OTP request/verify endpoints; typed email is only trusted after OTP verification.
 - Profile completion now calls authenticated display-name endpoint and logout revokes backend session.
 
+## Phase note: Session-aware login sheet auto-open
+
+- Login sheet auto-open is now gated by resolved backend session state to prevent showing auth prompts for already signed-in users.
+- Logged-out users keep the existing default behavior: join sheet auto-opens on Login tab entry.
+
 ## Phase note: Protected saved-place ownership API
 
 - Added authenticated saved-place endpoints (`GET/POST/DELETE /api/saved-places`) that always scope rows to server-resolved session `user_id`.
