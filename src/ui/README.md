@@ -243,3 +243,9 @@ This folder owns all Wandreel frontend architecture and components.
 - Added reduced-motion-safe interaction defaults and lightweight press feedback across tappable controls.
 - Added swipe-down bottom-sheet dismissal for login, map pin preview, and category place detail sheets.
 - Added pull-to-refresh affordance on non-map scroll surfaces and polished empty/loading states for category/map/add/profile.
+
+## Phase note: Add flow QA hardening
+
+- Add analyze now validates URL shape/protocol before processing and returns friendly failures for invalid links.
+- Refresh action now resets Add capture state cleanly (input, analysis state, preview state, chips, save feedback).
+- Save action now avoids duplicate local saves in a single analysis pass and shows clear user feedback.

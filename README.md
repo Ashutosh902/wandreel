@@ -42,6 +42,7 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
 - Profile settings now include an interactive notification toggle (`ON` green / `OFF` red) in place of the old static notifications row.
 - Added iOS-style edge swipe back navigation and subtle left-right micro transitions between major app screens/tabs.
 - Added market-polish interaction layer: global toast + offline status, reduced-motion-safe transitions, pull-to-refresh affordance (non-map), bottom-sheet swipe-down dismiss, and polished empty/loading states for category/map/add/profile flows.
+- Add capture flow QA hardening: URL validation before analyze, deterministic refresh reset behavior, and duplicate-save guard with friendly feedback.
 - PWA manifest and service worker registration wired (`vite-plugin-pwa`).
 - Installable shell metadata configured (name/theme/start URL/display).
 - Unified extraction pipeline centralized under `server/extraction`.

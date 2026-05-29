@@ -76,6 +76,7 @@ export function AddScreen() {
   const [detectedPlaces, setDetectedPlaces] = useState<DetectedPlace[]>([]);
   const [isPreviewVisible, setIsPreviewVisible] = useState(true);
   const [saveMessage, setSaveMessage] = useState("");
+  const [savedPlaceIds, setSavedPlaceIds] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (!saveMessage) return;
@@ -110,10 +111,23 @@ export function AddScreen() {
       showToast({ message: "This link could not be analyzed.", variant: "error" });
       return;
     }
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(linkInput.trim());
+    } catch {
+      showToast({ message: "This link could not be analyzed.", variant: "error" });
+      return;
+    }
+    if (!/^https?:$/i.test(parsedUrl.protocol)) {
+      showToast({ message: "This link could not be analyzed.", variant: "error" });
+      return;
+    }
     setIsAnalyzing(true);
     setHasAnalyzed(false);
     setIsPreviewVisible(true);
     setDetectedPlaces([]);
+    setSaveMessage("");
+    setSavedPlaceIds(new Set());
     setSelectedDetectedCategory("Auto-detect");
     setSelectedPreviewIndex(0);
 
@@ -136,8 +150,29 @@ export function AddScreen() {
 
   const handleSavePlace = () => {
     if (!selectedPreview) return;
+    if (savedPlaceIds.has(selectedPreview.id)) {
+      showToast({ message: "Place already saved", variant: "info" });
+      return;
+    }
+    setSavedPlaceIds((current) => {
+      const next = new Set(current);
+      next.add(selectedPreview.id);
+      return next;
+    });
     setSaveMessage(`Saved to ${selectedPreview.category}`);
     showToast({ message: `Saved to ${selectedPreview.category}`, variant: "success" });
+  };
+
+  const handleRefreshInput = () => {
+    setLinkInput("");
+    setIsAnalyzing(false);
+    setHasAnalyzed(false);
+    setDetectedPlaces([]);
+    setSelectedDetectedCategory("Auto-detect");
+    setSelectedPreviewIndex(0);
+    setIsPreviewVisible(true);
+    setSaveMessage("");
+    setSavedPlaceIds(new Set());
   };
 
   const getChipCount = (chip: "Auto-detect" | DetectedCategory) => {
@@ -168,7 +203,7 @@ export function AddScreen() {
             <h3>Paste your link</h3>
             <p>Instagram, YouTube, TikToks.</p>
           </div>
-          <button type="button" className="wr-add-refresh-btn" aria-label="Refresh link input">
+          <button type="button" className="wr-add-refresh-btn" aria-label="Refresh link input" onClick={handleRefreshInput}>
             <RefreshCw size={15} />
           </button>
         </div>
@@ -246,7 +281,11 @@ export function AddScreen() {
                 </div>
               </div>
             </article>
-          ) : null}
+          ) : (
+            <article className="wr-add-empty-state" aria-label="No preview for selected category">
+              No places in this category yet.
+            </article>
+          )}
 
           {saveMessage ? <p className="wr-add-save-toast">{saveMessage}</p> : null}
         </section>
