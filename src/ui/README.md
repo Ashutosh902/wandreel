@@ -214,8 +214,32 @@ This folder owns all Wandreel frontend architecture and components.
 
 - Login sheet auto-open is now gated by resolved backend session state to prevent showing auth prompts for already signed-in users.
 - Logged-out users keep the existing default behavior: join sheet auto-opens on Login tab entry.
+- Profile inline `Edit name -> Save` now persists display name through authenticated backend profile update and immediately refreshes greeting state.
 
 ## Phase note: Protected saved-place ownership API
 
 - Added authenticated saved-place endpoints (`GET/POST/DELETE /api/saved-places`) that always scope rows to server-resolved session `user_id`.
 - Backend ignores any client-provided identity fields and enforces ownership from verified session only.
+
+## Phase note: Legal pages wired in Profile
+
+- `Terms and conditions`, `Privacy Policy`, and `Open-source libraries` rows now open dedicated in-app legal pages with back navigation.
+- Login-sheet legal links (`Terms`, `Privacy Policy`) now route to the same in-app legal pages for consistent access.
+
+## Phase note: Profile notification toggle
+
+- Replaced static `Notifications` settings row with an interactive on/off switch in Profile settings.
+- Toggle uses color state: `ON` = green and `OFF` = red.
+
+## Phase note: iOS-style back gesture + micro screen transitions
+
+- Added left-edge swipe-right back gesture at app-shell level for primary back paths (category -> Discover, Map -> Discover, other tabs -> Discover).
+- Added optional right-edge swipe-left back gesture for symmetry on large-screen one-hand usage.
+- Added subtle horizontal slide transition when switching tabs/screens to improve perceived polish without redesign.
+
+## Phase note: Market-ready interaction polish layer
+
+- Added shared UX provider with global toasts (`success/error/info`) and online/offline status feedback.
+- Added reduced-motion-safe interaction defaults and lightweight press feedback across tappable controls.
+- Added swipe-down bottom-sheet dismissal for login, map pin preview, and category place detail sheets.
+- Added pull-to-refresh affordance on non-map scroll surfaces and polished empty/loading states for category/map/add/profile.

@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { ChevronRight, LogIn, Mail, ShieldCheck, UserRound, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { ArrowLeft, ChevronRight, LogIn, Mail, ShieldCheck, UserRound, X } from "lucide-react";
+import { useUx } from "../layout/UxProvider";
 import {
   feedbackRows,
   legalRows,
@@ -18,6 +19,7 @@ type LoginProfileScreenProps = {
 
 type SheetMode = "join" | "phone" | "collectName";
 type Provider = "PHONE" | "EMAIL" | "GOOGLE" | "FACEBOOK" | "APPLE";
+type LegalDocKey = "terms" | "privacy" | "oss";
 type SessionUser = {
   userId: string;
   customerId: string;
@@ -64,12 +66,12 @@ function FacebookBrandIcon() {
   );
 }
 
-function SettingSection({ title, rows }: { title: string; rows: ProfileSettingRow[] }) {
+function SettingSection({ title, rows, onRowPress }: { title: string; rows: ProfileSettingRow[]; onRowPress?: (row: ProfileSettingRow) => void }) {
   return (
     <section className="wr-profile-section" aria-label={title}>
       <h3 className="wr-profile-section-title">{title}</h3>
       {rows.map((row) => (
-        <button type="button" key={`${title}-${row.label}`} className="wr-profile-row">
+        <button type="button" key={`${title}-${row.label}`} className="wr-profile-row" onClick={() => onRowPress?.(row)}>
           <span>{row.label}</span>
           <span className="wr-profile-row-right">
             {row.value ? <span className="wr-profile-row-value">{row.value}</span> : null}
@@ -113,7 +115,9 @@ async function apiFetch(path: string, init?: RequestInit) {
 }
 
 export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScreenProps) {
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const { isOffline, showToast } = useUx();
+  const screenRef = useRef<HTMLElement | null>(null);
+  const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
   const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
   const [showBottomSheet, setShowBottomSheet] = useState(false);
   const [isSessionResolved, setIsSessionResolved] = useState(false);
@@ -132,8 +136,116 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [draftName, setDraftName] = useState("Stroller");
+  const [isSavingName, setIsSavingName] = useState(false);
+  const [notificationsEnabled, setNotificationsEnabled] = useState(true);
+  const [activeLegalDoc, setActiveLegalDoc] = useState<LegalDocKey | null>(null);
+  const sheetTouchStartYRef = useRef<number | null>(null);
+  const isAuthHydrating = !isSessionResolved;
 
   const greetingName = isLoggedIn ? sessionUser?.displayName || "Stroller" : "Stroller";
+
+  const openLegalDoc = (doc: LegalDocKey) => {
+    setActiveLegalDoc(doc);
+    setShowBottomSheet(false);
+  };
+
+  const resolveLegalDocFromLabel = (label: string): LegalDocKey | null => {
+    const normalized = label.toLowerCase();
+    if (normalized.includes("terms")) return "terms";
+    if (normalized.includes("privacy")) return "privacy";
+    if (normalized.includes("open-source")) return "oss";
+    return null;
+  };
+
+  const activeLegalContent: Record<LegalDocKey, { title: string; effectiveDate: string; sections: Array<{ heading: string; body: string[] }> }> = {
+    terms: {
+      title: "Terms and Conditions",
+      effectiveDate: "Effective date: May 29, 2026",
+      sections: [
+        {
+          heading: "1. Acceptance of Terms",
+          body: [
+            "By accessing or using Wandreel, you agree to follow these terms and all applicable laws.",
+            "If you do not agree, please stop using the service.",
+          ],
+        },
+        {
+          heading: "2. Account and Eligibility",
+          body: [
+            "You are responsible for maintaining accurate account information and safeguarding your login access.",
+            "You must use Wandreel lawfully and must not misuse, reverse engineer, or disrupt the service.",
+          ],
+        },
+        {
+          heading: "3. User Content",
+          body: [
+            "You retain ownership of links, notes, and saved place metadata you provide to Wandreel.",
+            "You grant Wandreel a limited right to process this data to deliver core product functionality.",
+          ],
+        },
+        {
+          heading: "4. Service Availability",
+          body: [
+            "We continuously improve Wandreel and may update, suspend, or discontinue specific features with reasonable notice when possible.",
+            "Wandreel is provided on an 'as available' basis without guaranteed uninterrupted uptime.",
+          ],
+        },
+      ],
+    },
+    privacy: {
+      title: "Privacy Policy",
+      effectiveDate: "Effective date: May 29, 2026",
+      sections: [
+        {
+          heading: "1. Information We Collect",
+          body: [
+            "We collect account details (for example: email, display name, avatar) and app data required to save and organize places.",
+            "Authentication and session cookies are used to securely identify you across app sessions.",
+          ],
+        },
+        {
+          heading: "2. How We Use Data",
+          body: [
+            "Your information is used to provide login, synchronization, personalization, and core Wandreel features.",
+            "We do not sell your personal data.",
+          ],
+        },
+        {
+          heading: "3. Security and Retention",
+          body: [
+            "We use secure session handling and server-side identity checks for protected user operations.",
+            "Data is retained only as needed for product operations, legal obligations, or your account lifecycle.",
+          ],
+        },
+        {
+          heading: "4. Contact",
+          body: ["For privacy-related requests, contact support via the in-app Help Center."],
+        },
+      ],
+    },
+    oss: {
+      title: "Open-source Libraries",
+      effectiveDate: "Updated: May 29, 2026",
+      sections: [
+        {
+          heading: "Core Frontend",
+          body: ["React, React DOM, Vite, TypeScript, Lucide React, Framer Motion."],
+        },
+        {
+          heading: "Backend and Data",
+          body: ["Express, PostgreSQL client (pg), Zod, XLSX, Dotenv, OpenAI SDK."],
+        },
+        {
+          heading: "Build and Tooling",
+          body: ["ESLint, Wrangler, Vite PWA, TSX and related TypeScript tooling."],
+        },
+        {
+          heading: "Licenses",
+          body: ["Each dependency remains under its respective open-source license. Full attribution is available in project dependency manifests."],
+        },
+      ],
+    },
+  };
 
   const resetToJoinStep = () => {
     setSheetMode("join");
@@ -152,7 +264,7 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
   };
 
   const openSheet = () => {
-    if (isLoggedIn) return;
+    if (isLoggedIn !== false) return;
     setShowBottomSheet(true);
     resetToJoinStep();
   };
@@ -180,10 +292,28 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
     void syncSession({ applyLoggedOutDefault: true });
   }, []);
 
+  useEffect(() => {
+    if (!activeLegalDoc) return;
+    const resetScrollTop = () => {
+      screenRef.current?.scrollTo({ top: 0, behavior: "auto" });
+      const scrollSurface = screenRef.current?.closest(".wr-home-surface, .wr-page-scroll") as HTMLElement | null;
+      scrollSurface?.scrollTo({ top: 0, behavior: "auto" });
+      window.scrollTo({ top: 0, behavior: "auto" });
+    };
+    resetScrollTop();
+    requestAnimationFrame(resetScrollTop);
+  }, [activeLegalDoc]);
+
   const continueWithGoogle = async () => {
     const googleClientId = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
     if (!googleClientId) {
       setEmailAuthMessage("Google login is not configured yet.");
+      showToast({ message: "Google login is not configured yet.", variant: "error" });
+      return;
+    }
+    if (isOffline) {
+      setEmailAuthMessage("Couldn’t connect to Google. Please try again.");
+      showToast({ message: "Couldn’t connect. Please try again.", variant: "error" });
       return;
     }
 
@@ -251,7 +381,9 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
       await syncSession();
       closeSheet();
     } catch (error) {
-      setEmailAuthMessage(toFriendlyGoogleError(error));
+      const message = toFriendlyGoogleError(error);
+      setEmailAuthMessage(message);
+      showToast({ message, variant: "error" });
     } finally {
       setIsSocialLoading(false);
     }
@@ -282,6 +414,12 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
       setEmailAuthMessage("");
       return;
     }
+    if (isOffline) {
+      const message = "Couldn’t connect. Please try again.";
+      setEmailAuthMessage(message);
+      showToast({ message, variant: "error" });
+      return;
+    }
     setEmailValidationError("");
     setIsEmailLoading(true);
     try {
@@ -293,13 +431,21 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
       setIsEmailOtpRequested(true);
       setEmailAuthMessage(payload?.otpPreview ? `OTP generated for testing: ${payload.otpPreview}` : `OTP sent to ${nextEmail}.`);
     } catch (error) {
-      setEmailAuthMessage(toFriendlyAuthError(error, "Could not send email OTP"));
+      const message = toFriendlyAuthError(error, "Couldn’t connect. Please try again.");
+      setEmailAuthMessage(message);
+      showToast({ message, variant: "error" });
     } finally {
       setIsEmailLoading(false);
     }
   };
 
   const verifyEmailOtpAndLogin = async () => {
+    if (isOffline) {
+      const message = "Couldn’t connect. Please try again.";
+      setEmailAuthMessage(message);
+      showToast({ message, variant: "error" });
+      return;
+    }
     setIsEmailLoading(true);
     try {
       const payload = await apiFetch("/api/auth/email/verify-otp", {
@@ -316,7 +462,9 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
       await syncSession();
       closeSheet();
     } catch (error) {
-      setEmailAuthMessage(toFriendlyAuthError(error, "Could not verify email OTP"));
+      const message = toFriendlyAuthError(error, "Invalid or expired code.");
+      setEmailAuthMessage(message);
+      showToast({ message, variant: "error" });
     } finally {
       setIsEmailLoading(false);
     }
@@ -341,6 +489,26 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
     }
   };
 
+  const saveInlineDisplayName = async () => {
+    const name = draftName.trim();
+    if (!name || isLoggedIn !== true) {
+      setIsEditingName(false);
+      return;
+    }
+    setIsSavingName(true);
+    try {
+      await apiFetch("/api/auth/profile/display-name", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ displayName: name }),
+      });
+      await syncSession();
+      setIsEditingName(false);
+    } finally {
+      setIsSavingName(false);
+    }
+  };
+
   const logout = async () => {
     try {
       await apiFetch("/api/auth/logout", { method: "POST" });
@@ -349,13 +517,37 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
       setIsLoggedIn(false);
       setDraftName("Stroller");
       setIsEditingName(false);
+      setIsSavingName(false);
       setShowBottomSheet(openSheetOnMount);
       resetToJoinStep();
     }
   };
 
   return (
-    <section className="wr-profile-screen" aria-label="Profile page">
+    <section ref={screenRef} className="wr-profile-screen" aria-label="Profile page">
+      {activeLegalDoc ? (
+        <section className="wr-legal-screen" aria-label={activeLegalContent[activeLegalDoc].title}>
+          <header className="wr-legal-header">
+            <button type="button" className="wr-legal-back-btn" onClick={() => setActiveLegalDoc(null)} aria-label="Back to profile legal section">
+              <ArrowLeft size={18} />
+            </button>
+            <h2>{activeLegalContent[activeLegalDoc].title}</h2>
+          </header>
+          <section className="wr-legal-content">
+            <p className="wr-legal-effective">{activeLegalContent[activeLegalDoc].effectiveDate}</p>
+            {activeLegalContent[activeLegalDoc].sections.map((section) => (
+              <article className="wr-legal-section" key={section.heading}>
+                <h3>{section.heading}</h3>
+                {section.body.map((line) => (
+                  <p key={line}>{line}</p>
+                ))}
+              </article>
+            ))}
+          </section>
+        </section>
+      ) : null}
+      {!activeLegalDoc ? (
+        <>
       <header className="wr-profile-header">
         <h2>Profile</h2>
         <button type="button" className="wr-profile-user-btn" aria-label="Profile user options">
@@ -363,41 +555,75 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
         </button>
       </header>
 
-      <section className="wr-profile-greeting-block">
+      <section className={`wr-profile-greeting-block${isAuthHydrating ? " is-hydrating" : ""}`}>
         {isEditingName ? (
           <div className="wr-profile-inline-edit">
             <input value={draftName} onChange={(event) => setDraftName(event.target.value)} className="wr-profile-name-input" aria-label="Edit profile name" />
-            <button type="button" className="wr-profile-mini-btn" onClick={() => setIsEditingName(false)}>
-              Save
+            <button type="button" className="wr-profile-mini-btn" onClick={() => void saveInlineDisplayName()} disabled={isSavingName}>
+              {isSavingName ? "Saving..." : "Save"}
             </button>
           </div>
+        ) : isAuthHydrating ? (
+          <div className="wr-profile-skeleton-wrap" aria-hidden="true">
+            <span className="wr-profile-skeleton title" />
+            <span className="wr-profile-skeleton copy" />
+            <span className="wr-profile-skeleton copy short" />
+          </div>
         ) : (
-          <h3>
+          <h3 className={isAuthHydrating ? "wr-profile-greeting-title" : undefined}>
             Hi, <strong>{greetingName}</strong>
           </h3>
         )}
-        <p>Turn Reels, Shorts, TikToks and videos into your personal bucketlist.</p>
+        <p className={isAuthHydrating ? "wr-profile-greeting-copy" : undefined}>Turn Reels, Shorts, TikToks and videos into your personal bucketlist.</p>
 
-        {!isLoggedIn && !showBottomSheet ? (
+        {isLoggedIn === false && isSessionResolved && !showBottomSheet ? (
           <button type="button" className="wr-profile-login-signup" onClick={openSheet}>
             <LogIn size={15} />
             Log in or sign up
           </button>
         ) : null}
 
-        {isLoggedIn && !isEditingName ? (
+        {isLoggedIn === true && !isEditingName ? (
           <button type="button" className="wr-profile-edit-name-btn" onClick={() => setIsEditingName(true)}>
             Edit name
           </button>
+        ) : isAuthHydrating ? (
+          <span className="wr-profile-edit-name-placeholder" aria-hidden="true" />
         ) : null}
       </section>
 
       <SettingSection title="Settings" rows={settingsRows} />
+      <section className="wr-profile-section" aria-label="Settings notifications toggle">
+        <button
+          type="button"
+          className="wr-profile-row wr-profile-row-toggle"
+          onClick={() => setNotificationsEnabled((current) => !current)}
+          aria-pressed={notificationsEnabled}
+          aria-label={`Notifications ${notificationsEnabled ? "on" : "off"}`}
+        >
+          <span>Notifications</span>
+          <span className="wr-profile-row-right">
+            <span className={`wr-notification-state ${notificationsEnabled ? "is-on" : "is-off"}`}>
+              {notificationsEnabled ? "ON" : "OFF"}
+            </span>
+            <span className={`wr-notification-switch ${notificationsEnabled ? "is-on" : "is-off"}`} aria-hidden="true">
+              <span className="wr-notification-switch-thumb" />
+            </span>
+          </span>
+        </button>
+      </section>
       <SettingSection title="Support" rows={supportRows} />
       <SettingSection title="Feedback" rows={feedbackRows} />
-      <SettingSection title="Legal" rows={legalRows} />
+      <SettingSection
+        title="Legal"
+        rows={legalRows}
+        onRowPress={(row) => {
+          const doc = resolveLegalDocFromLabel(row.label);
+          if (doc) openLegalDoc(doc);
+        }}
+      />
 
-      {isLoggedIn ? (
+      {isLoggedIn === true ? (
         <section className="wr-profile-section" aria-label="Account actions">
           <button type="button" className="wr-profile-row wr-profile-logout" onClick={logout}>
             <span>Log out</span>
@@ -410,10 +636,22 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
 
       <footer className="wr-profile-version">Version 0.1.0</footer>
 
-      {isSessionResolved && showBottomSheet ? (
+      {isSessionResolved && isLoggedIn === false && showBottomSheet ? (
         <>
           <button type="button" className="wr-login-sheet-backdrop" aria-label="Close login sheet backdrop" onClick={closeSheet} />
           <div className="wr-login-sheet" role="dialog" aria-modal="false" aria-label="Join Wandreel login sheet">
+          <div
+            className="wr-login-sheet-gesture-zone"
+            onTouchStart={(event) => {
+              sheetTouchStartYRef.current = event.touches[0].clientY;
+            }}
+            onTouchEnd={(event) => {
+              if (sheetTouchStartYRef.current === null) return;
+              const deltaY = event.changedTouches[0].clientY - sheetTouchStartYRef.current;
+              sheetTouchStartYRef.current = null;
+              if (deltaY > 72) closeSheet();
+            }}
+          />
             <div className="wr-login-sheet-handle" />
             <button type="button" aria-label="Close login sheet" className="wr-login-sheet-close" onClick={closeSheet}>
               <X size={18} />
@@ -516,7 +754,15 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
             ) : null}
 
             <p className="wr-login-sheet-legal">
-              By continuing, you agree to our <button type="button">Terms</button> and <button type="button">Privacy Policy</button>.
+              By continuing, you agree to our{" "}
+              <button type="button" onClick={() => openLegalDoc("terms")}>
+                Terms
+              </button>{" "}
+              and{" "}
+              <button type="button" onClick={() => openLegalDoc("privacy")}>
+                Privacy Policy
+              </button>
+              .
             </p>
 
             <div className="wr-login-sheet-note">
@@ -524,6 +770,8 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
               <span>We'll only use login to keep your saved places private and synced.</span>
             </div>
           </div>
+        </>
+      ) : null}
         </>
       ) : null}
     </section>

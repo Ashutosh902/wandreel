@@ -1,12 +1,15 @@
 import "./App.css";
 import { AppShell } from "./ui/layout/AppShell";
+import { UxProvider } from "./ui/layout/UxProvider";
 import { HomeScreen } from "./ui/home/HomeScreen";
 
 function App() {
   return (
-    <AppShell>
-      <HomeScreen />
-    </AppShell>
+    <UxProvider>
+      <AppShell>
+        <HomeScreen />
+      </AppShell>
+    </UxProvider>
   );
 }
 

@@ -7,6 +7,73 @@
   background: #f7f4ee;
 }
 
+.wr-legal-screen {
+  min-height: 100%;
+  background: #f7f4ee;
+  padding-bottom: 5.4rem;
+}
+
+.wr-legal-header {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.35rem 1rem 0.85rem;
+  border-bottom: 1px solid #dadde2;
+}
+
+.wr-legal-back-btn {
+  border: 1px solid #d8dde3;
+  background: #fff;
+  color: #10213f;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.72rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wr-legal-header h2 {
+  margin: 0;
+  font-size: 1.1rem;
+  line-height: 1.2;
+  color: #10213f;
+  letter-spacing: -0.01em;
+}
+
+.wr-legal-content {
+  padding: 1rem;
+}
+
+.wr-legal-effective {
+  margin: 0 0 1rem;
+  font-size: 0.74rem;
+  color: #6b7280;
+  font-weight: 700;
+}
+
+.wr-legal-section {
+  margin-bottom: 1rem;
+  padding: 0.8rem 0.85rem;
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid #e2e8f0;
+}
+
+.wr-legal-section h3 {
+  margin: 0 0 0.5rem;
+  font-size: 0.86rem;
+  color: #10213f;
+  font-weight: 800;
+}
+
+.wr-legal-section p {
+  margin: 0.45rem 0 0;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  color: #4b5563;
+}
+
 .wr-profile-header {
   padding: 0 1rem;
   margin-top: 0.2rem;
@@ -42,6 +109,10 @@
   border-top: 1px solid #dadde2;
 }
 
+.wr-profile-greeting-block.is-hydrating {
+  min-height: 9.25rem;
+}
+
 .wr-profile-greeting-block h3 {
   margin: 0;
   font-size: 1.08rem;
@@ -58,6 +129,44 @@
   font-size: 0.76rem;
   color: #627083;
   line-height: 1.5;
+}
+
+.wr-profile-greeting-title,
+.wr-profile-greeting-copy {
+  visibility: hidden;
+}
+
+.wr-profile-skeleton-wrap {
+  display: grid;
+  justify-items: center;
+  gap: 0.34rem;
+}
+
+.wr-profile-skeleton {
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #e7edf4 0%, #f6f9fc 50%, #e7edf4 100%);
+  background-size: 200% 100%;
+  animation: wrProfileSkeleton 1.2s linear infinite;
+}
+
+.wr-profile-skeleton.title {
+  width: 9.8rem;
+  height: 1rem;
+}
+
+.wr-profile-skeleton.copy {
+  width: 14rem;
+  height: 0.56rem;
+}
+
+.wr-profile-skeleton.copy.short {
+  width: 10rem;
+}
+
+@keyframes wrProfileSkeleton {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 .wr-profile-login-signup {
@@ -107,6 +216,13 @@
   margin-top: 0.75rem;
 }
 
+.wr-profile-edit-name-placeholder {
+  display: inline-block;
+  margin-top: 0.75rem;
+  width: 5.1rem;
+  height: 1.95rem;
+}
+
 .wr-profile-section {
   margin-top: 0.55rem;
 }
@@ -143,6 +259,61 @@
   color: #6b7280;
 }
 
+.wr-profile-row-toggle {
+  cursor: pointer;
+}
+
+.wr-notification-switch {
+  width: 2.55rem;
+  height: 1.45rem;
+  border-radius: 999px;
+  padding: 0.12rem;
+  display: inline-flex;
+  align-items: center;
+  transition: background-color 180ms ease;
+}
+
+.wr-notification-state {
+  min-width: 1.95rem;
+  text-align: right;
+  font-size: 0.66rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+}
+
+.wr-notification-state.is-on {
+  color: #16a34a;
+}
+
+.wr-notification-state.is-off {
+  color: #dc2626;
+}
+
+.wr-notification-switch.is-on {
+  background: #22c55e;
+}
+
+.wr-notification-switch.is-off {
+  background: #ef4444;
+}
+
+.wr-notification-switch-thumb {
+  width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 2px 6px rgba(17, 24, 39, 0.24);
+  transition: transform 180ms ease;
+}
+
+.wr-notification-switch.is-on .wr-notification-switch-thumb {
+  transform: translateX(1.1rem);
+}
+
+.wr-notification-switch.is-off .wr-notification-switch-thumb {
+  transform: translateX(0);
+}
+
 .wr-profile-row-value {
   font-size: 0.76rem;
   font-weight: 700;
@@ -150,6 +321,7 @@
 
 .wr-profile-logout {
   color: #9f1239;
+  font-size: 0.94rem;
 }
 
 .wr-login-sheet-backdrop {
@@ -186,6 +358,14 @@
   border-top: 1px solid #e5e7eb;
   z-index: 70;
   animation: wrSheetIn 280ms cubic-bezier(0.2, 0.75, 0.2, 1) both;
+}
+
+.wr-login-sheet-gesture-zone {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2rem;
 }
 
 @supports not (height: 100dvh) {

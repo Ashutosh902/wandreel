@@ -7,7 +7,6 @@ export const settingsRows: ProfileSettingRow[] = [
   { label: "Currency", value: "INR (₹)" },
   { label: "Language", value: "English" },
   { label: "Appearance", value: "System default" },
-  { label: "Notifications" },
 ];
 
 export const supportRows: ProfileSettingRow[] = [
@@ -24,8 +23,8 @@ export const legalRows: ProfileSettingRow[] = [
 ];
 
 export function runProfileDataChecks(): void {
-  if (settingsRows.length !== 4) {
-    throw new Error("Profile settings section must include 4 rows.");
+  if (settingsRows.length !== 3) {
+    throw new Error("Profile settings section must include 3 rows.");
   }
 
   if (supportRows.length !== 2) {

@@ -85,6 +85,7 @@
   font-size: 0.71rem;
   font-weight: 800;
   white-space: nowrap;
+  transition: transform 140ms ease, box-shadow 180ms ease, opacity 180ms ease;
 }
 
 .wr-map-chip.is-active {
@@ -136,7 +137,7 @@
     0 0 0 1px rgba(255, 255, 255, 0.28) inset,
     0 6px 24px rgba(41, 121, 255, 0.09);
   z-index: 1;
-  transition: width 180ms ease-out, height 180ms ease-out;
+  transition: width 180ms ease-out, height 180ms ease-out, opacity 180ms ease-out;
   pointer-events: none;
 }
 
@@ -188,6 +189,10 @@
   z-index: 3;
   transition: opacity 180ms ease, filter 180ms ease;
   cursor: pointer;
+}
+
+.wr-map-pin.is-selected {
+  filter: drop-shadow(0 8px 12px rgba(17, 24, 39, 0.24));
 }
 
 .wr-map-pin.is-out-of-range {
@@ -242,6 +247,11 @@
   align-items: center;
   justify-content: center;
   box-shadow: 0 0 0 6px rgba(43, 119, 245, 0.2);
+  transition: transform 120ms ease;
+}
+
+.wr-map-current-location:active {
+  transform: translate(-50%, -50%) scale(0.97);
 }
 
 .wr-map-recenter-btn {
@@ -280,6 +290,11 @@
   line-height: 1;
   text-align: center;
   pointer-events: none;
+  transition: transform 160ms ease;
+}
+
+.wr-map-in-range-pill.is-bump {
+  transform: scale(1.04);
 }
 
 .wr-map-in-range-count {
@@ -295,6 +310,55 @@
   font-weight: 800;
   color: #64748b;
   text-transform: lowercase;
+}
+
+.wr-map-empty-state {
+  position: absolute;
+  left: 0.9rem;
+  right: 4.35rem;
+  bottom: calc(var(--wr-bottom-nav-offset, 4.3rem) + 1rem);
+  z-index: 4;
+  border: 1px solid #e2e8f0;
+  background: rgba(255, 255, 255, 0.92);
+  border-radius: 0.92rem;
+  box-shadow: 0 8px 18px rgba(17, 24, 39, 0.1);
+  padding: 0.56rem 0.64rem;
+}
+
+.wr-map-empty-title {
+  margin: 0;
+  font-size: 0.74rem;
+  font-weight: 900;
+  color: #10213f;
+}
+
+.wr-map-empty-copy {
+  margin: 0.24rem 0 0;
+  font-size: 0.66rem;
+  font-weight: 700;
+  color: #607084;
+}
+
+.wr-map-empty-actions {
+  margin-top: 0.45rem;
+  display: flex;
+  gap: 0.42rem;
+}
+
+.wr-map-empty-btn {
+  border: 1px solid #dbe3ec;
+  background: #fff;
+  color: #10213f;
+  border-radius: 0.62rem;
+  padding: 0.36rem 0.45rem;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.wr-map-empty-btn.is-primary {
+  border-color: #f97316;
+  color: #9a3412;
+  background: #fff7ed;
 }
 
 .wr-map-radius-vertical {
@@ -398,6 +462,7 @@
   padding: 0.62rem 0.9rem 1rem;
   animation: wrMapSheetIn 280ms cubic-bezier(0.2, 0.75, 0.2, 1) both;
   position: relative;
+  touch-action: pan-y;
 }
 
 .wr-map-sheet::before {
@@ -494,5 +559,15 @@
   to {
     opacity: 1;
     transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wr-map-radius-overlay,
+  .wr-map-chip,
+  .wr-map-pin,
+  .wr-map-current-location,
+  .wr-map-in-range-pill {
+    transition: none;
   }
 }

@@ -48,6 +48,29 @@
   padding: calc(1.75rem + var(--wr-safe-top)) 1.25rem var(--wr-page-bottom-safe);
 }
 
+.wr-pull-refresh-indicator {
+  position: sticky;
+  top: calc(-1rem - var(--wr-safe-top));
+  z-index: 3;
+  margin: 0 auto 0.45rem;
+  width: max-content;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.85);
+  color: #607084;
+  border: 1px solid #e2e8f0;
+  font-size: 0.64rem;
+  font-weight: 800;
+  padding: 0.24rem 0.55rem;
+  box-shadow: 0 6px 12px rgba(17, 24, 39, 0.08);
+  opacity: 0.78;
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.wr-pull-refresh-indicator.is-active {
+  opacity: 1;
+  transform: translateY(2px);
+}
+
 .wr-home-surface:not(.wr-home-surface-map) {
   height: 100%;
   overflow-y: auto;
@@ -75,7 +98,20 @@
 .wr-bucketlist-wrap,
 .wr-recent-wrap { position: relative; z-index: 1; }
 
-.wr-home-header { display: flex; align-items: center; justify-content: flex-start; }
+.wr-home-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  position: sticky;
+  top: calc(-1rem - var(--wr-safe-top));
+  z-index: 4;
+  padding-top: 0.3rem;
+  padding-bottom: 0.35rem;
+}
+.wr-home-surface.is-scrolled .wr-home-header {
+  background: linear-gradient(180deg, rgba(248, 243, 234, 0.95) 0%, rgba(248, 243, 234, 0.78) 72%, rgba(248, 243, 234, 0) 100%);
+  backdrop-filter: blur(7px);
+}
 .wr-brand { width: 0; flex-shrink: 0; }
 .wr-home-header .wr-location-section-inline {
   flex: 1;
@@ -374,6 +410,34 @@
   gap: 0.62rem;
   padding-bottom: 6.35rem;
 }
+.wr-category-empty-state {
+  border-radius: 1rem;
+  border: 1px dashed #d6dde6;
+  background: rgba(255, 255, 255, 0.78);
+  padding: 0.95rem 0.9rem;
+}
+.wr-category-empty-state h3 {
+  margin: 0;
+  font-size: 0.9rem;
+  font-weight: 900;
+  color: #10213f;
+}
+.wr-category-empty-state p {
+  margin: 0.42rem 0 0;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  color: #5b6675;
+}
+.wr-category-empty-cta {
+  margin-top: 0.65rem;
+  border: 1px solid color-mix(in srgb, var(--wr-category-accent-2) 28%, #ffffff);
+  background: #fff;
+  color: var(--wr-category-accent-3);
+  border-radius: 0.72rem;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.74rem;
+  font-weight: 800;
+}
 .wr-taste-row-card {
   border: 1px solid #eadfda;
   background: rgba(255, 255, 255, 0.95);
@@ -456,6 +520,7 @@
   box-shadow: 0 -18px 30px rgba(15, 23, 42, 0.22);
   padding: 0.62rem 0.9rem 1rem;
   animation: wrTasteSheetIn 280ms cubic-bezier(0.2, 0.75, 0.2, 1) both;
+  touch-action: pan-y;
 }
 .wr-taste-sheet-layer.is-closing .wr-taste-sheet {
   animation: wrTasteSheetOut 190ms ease-in both;
@@ -1242,6 +1307,55 @@
   font-weight: 650;
   line-height: 1.4;
   padding: 0.78rem 0.85rem;
+}
+
+.wr-add-detected-wrap.is-ready {
+  animation: wrAddDetectedIn 220ms ease-out both;
+}
+
+.wr-add-detected-wrap.is-ready .wr-add-chip {
+  animation: wrAddChipIn 180ms ease-out both;
+}
+
+.wr-add-detected-wrap.is-ready .wr-add-preview-card {
+  animation: wrAddPreviewIn 220ms ease-out both;
+}
+
+.wr-add-detected-wrap.is-skeleton {
+  margin-top: 1rem;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.wr-add-detected-skeleton {
+  border-radius: 0.95rem;
+  background: linear-gradient(90deg, #e7edf4 0%, #f6f9fc 50%, #e7edf4 100%);
+  background-size: 200% 100%;
+  animation: wrAddSkeleton 1.15s linear infinite;
+}
+
+.wr-add-detected-skeleton.head { height: 1.1rem; width: 45%; }
+.wr-add-detected-skeleton.chips { height: 2rem; width: 100%; border-radius: 999px; }
+.wr-add-detected-skeleton.card { height: 6.4rem; width: 100%; }
+
+@keyframes wrAddDetectedIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes wrAddPreviewIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes wrAddChipIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes wrAddSkeleton {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 
 @media (max-width: 360px) {

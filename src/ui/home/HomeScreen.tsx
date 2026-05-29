@@ -1,6 +1,6 @@
-﻿import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bell } from "lucide-react";
-import { motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { BottomNav } from "./BottomNav";
 import { BucketlistSummary } from "./BucketlistSummary";
 import { CategoryDetailPage } from "./CategoryDetailPage";
@@ -12,9 +12,11 @@ import type { CategoryLabel, NavLabel } from "./home.data";
 import { runHomeDataChecks } from "./home.data";
 import { LoginProfileScreen } from "../profile/LoginProfileScreen";
 import { MapScreen } from "../map/MapScreen";
+import { useUx } from "../layout/UxProvider";
 import "./home.css";
 
 runHomeDataChecks();
+const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Login"];
 
 function PlaceholderPage({
   title,
@@ -40,13 +42,15 @@ function DiscoverPage({
   activeCategory,
   onSelectCategory,
   onViewMap,
+  onAddLink,
 }: {
   activeCategory: CategoryLabel | null;
   onSelectCategory: (category: CategoryLabel) => void;
   onViewMap: (category: CategoryLabel) => void;
+  onAddLink: () => void;
 }) {
   if (activeCategory) {
-    return <CategoryDetailPage category={activeCategory} onViewMap={onViewMap} />;
+    return <CategoryDetailPage category={activeCategory} onViewMap={onViewMap} onAddLink={onAddLink} />;
   }
 
   return (
@@ -59,12 +63,49 @@ function DiscoverPage({
 }
 
 export function HomeScreen() {
+  const prefersReducedMotion = useReducedMotion();
+  const { showToast } = useUx();
   const [activeTab, setActiveTab] = useState<NavLabel>("Discover");
   const [activeCategory, setActiveCategory] = useState<CategoryLabel | null>(null);
   const [mapFocusedCategory, setMapFocusedCategory] = useState<CategoryLabel | null>(null);
+  const [transitionDirection, setTransitionDirection] = useState(1);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isScrolled, setIsScrolled] = useState(false);
+  const touchStartRef = useRef<{ x: number; y: number; edge: "left" | "right" } | null>(null);
+  const pullStartYRef = useRef<number | null>(null);
+  const pullDistanceRef = useRef(0);
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
   const isMapTab = activeTab === "Map";
   const isAddTab = activeTab === "Add";
   const isCategoryView = activeTab === "Discover" && activeCategory !== null;
+  const pageKey = activeTab === "Discover" && activeCategory ? `Discover-${activeCategory}` : activeTab;
+  const getTabOrderIndex = (tab: NavLabel) => NAV_ORDER.indexOf(tab);
+
+  const handleBackGesture = () => {
+    if (activeTab === "Discover" && activeCategory) {
+      setTransitionDirection(-1);
+      setActiveCategory(null);
+      return;
+    }
+
+    if (activeTab === "Map") {
+      setTransitionDirection(-1);
+      setActiveTab("Discover");
+      if (mapFocusedCategory) {
+        setActiveCategory(mapFocusedCategory);
+      } else {
+        setActiveCategory(null);
+      }
+      return;
+    }
+
+    if (activeTab !== "Discover") {
+      setTransitionDirection(-1);
+      setActiveTab("Discover");
+      setActiveCategory(null);
+      setMapFocusedCategory(null);
+    }
+  };
 
   const page = useMemo(() => {
     if (activeTab === "Discover") {
@@ -72,7 +113,13 @@ export function HomeScreen() {
         <DiscoverPage
           activeCategory={activeCategory}
           onSelectCategory={setActiveCategory}
+          onAddLink={() => {
+            setTransitionDirection(1);
+            setActiveCategory(null);
+            setActiveTab("Add");
+          }}
           onViewMap={(category) => {
+            setTransitionDirection(1);
             setMapFocusedCategory(category);
             setActiveCategory(null);
             setActiveTab("Map");
@@ -85,7 +132,13 @@ export function HomeScreen() {
       return (
         <MapScreen
           focusedCategory={mapFocusedCategory}
+          onAddLink={() => {
+            setTransitionDirection(1);
+            setActiveTab("Add");
+            setActiveCategory(null);
+          }}
           onBack={() => {
+            setTransitionDirection(-1);
             setActiveTab("Discover");
             if (mapFocusedCategory) {
               setActiveCategory(mapFocusedCategory);
@@ -112,7 +165,7 @@ export function HomeScreen() {
     }
 
     return <LoginProfileScreen />;
-  }, [activeCategory, activeTab]);
+  }, [activeCategory, activeTab, mapFocusedCategory]);
 
   return (
     <div className="wr-home-page">
@@ -122,7 +175,69 @@ export function HomeScreen() {
         transition={{ duration: 0.45 }}
         className={`wr-phone-shell ${isMapTab ? "wr-phone-shell-map" : ""}`}
       >
-        <div className={`wr-home-surface ${isMapTab ? "wr-home-surface-map" : ""} ${isCategoryView ? "is-category-view" : ""} ${isAddTab ? "is-add-view" : ""}`}>
+        <div
+          ref={surfaceRef}
+          className={`wr-home-surface ${isMapTab ? "wr-home-surface-map" : ""} ${isCategoryView ? "is-category-view" : ""} ${isAddTab ? "is-add-view" : ""} ${isScrolled ? "is-scrolled" : ""}`}
+          onScroll={(event) => {
+            const target = event.currentTarget;
+            setIsScrolled(target.scrollTop > 10);
+          }}
+          onTouchStart={(event) => {
+            const touch = event.touches[0];
+            const viewportWidth = window.innerWidth || 390;
+            const isLeftEdge = touch.clientX <= 28;
+            const isRightEdge = touch.clientX >= viewportWidth - 28;
+            if (isLeftEdge) {
+              touchStartRef.current = { x: touch.clientX, y: touch.clientY, edge: "left" };
+              return;
+            }
+            if (isRightEdge) {
+              touchStartRef.current = { x: touch.clientX, y: touch.clientY, edge: "right" };
+            } else {
+              touchStartRef.current = null;
+            }
+            const canPullRefresh =
+              !isMapTab &&
+              surfaceRef.current &&
+              surfaceRef.current.scrollTop <= 0 &&
+              touch.clientY <= 112;
+            pullStartYRef.current = canPullRefresh ? touch.clientY : null;
+            pullDistanceRef.current = 0;
+          }}
+          onTouchMove={(event) => {
+            if (pullStartYRef.current === null) return;
+            const deltaY = event.touches[0].clientY - pullStartYRef.current;
+            pullDistanceRef.current = Math.max(0, deltaY);
+          }}
+          onTouchEnd={(event) => {
+            if (touchStartRef.current) {
+              const touch = event.changedTouches[0];
+              const deltaX = touch.clientX - touchStartRef.current.x;
+              const deltaY = Math.abs(touch.clientY - touchStartRef.current.y);
+              const edge = touchStartRef.current.edge;
+              touchStartRef.current = null;
+              const isLeftEdgeBack = edge === "left" && deltaX > 56;
+              const isRightEdgeBack = edge === "right" && deltaX < -56;
+              if ((isLeftEdgeBack || isRightEdgeBack) && deltaY < 48) {
+                handleBackGesture();
+              }
+            }
+            if (pullStartYRef.current !== null && pullDistanceRef.current > 72 && !isRefreshing) {
+              setIsRefreshing(true);
+              window.setTimeout(() => {
+                setIsRefreshing(false);
+                showToast({ message: "Refreshed", variant: "success", durationMs: 1800 });
+              }, 650);
+            }
+            pullStartYRef.current = null;
+            pullDistanceRef.current = 0;
+          }}
+        >
+          {!isMapTab ? (
+            <div className={`wr-pull-refresh-indicator ${isRefreshing ? "is-active" : ""}`} aria-live="polite">
+              {isRefreshing ? "Refreshing..." : "Pull to refresh"}
+            </div>
+          ) : null}
           {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob one" /> : null}
           {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob two" /> : null}
           {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob three" /> : null}
@@ -134,7 +249,10 @@ export function HomeScreen() {
                   type="button"
                   className="wr-header-back"
                   aria-label="Back"
-                  onClick={() => setActiveCategory(null)}
+                  onClick={() => {
+                    setTransitionDirection(-1);
+                    setActiveCategory(null);
+                  }}
                 >
                   <ArrowLeft size={18} />
                 </button>
@@ -152,11 +270,34 @@ export function HomeScreen() {
             </header>
           ) : null}
 
-          {page}
+          <AnimatePresence mode="wait" initial={false} custom={transitionDirection}>
+            <motion.section
+              key={pageKey}
+              custom={transitionDirection}
+              variants={{
+                enter: (direction: number) =>
+                  prefersReducedMotion
+                    ? { opacity: 0.98 }
+                    : { x: direction > 0 ? 26 : -26, opacity: 0.9 },
+                center: { x: 0, opacity: 1 },
+                exit: (direction: number) =>
+                  prefersReducedMotion
+                    ? { opacity: 0.95 }
+                    : { x: direction > 0 ? -20 : 20, opacity: 0.9 },
+              }}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: prefersReducedMotion ? 0.16 : 0.22, ease: [0.22, 0.61, 0.36, 1] }}
+            >
+              {page}
+            </motion.section>
+          </AnimatePresence>
         </div>
         <BottomNav
           activeTab={activeTab}
           onTabChange={(nextTab) => {
+            setTransitionDirection(getTabOrderIndex(nextTab) >= getTabOrderIndex(activeTab) ? 1 : -1);
             if (activeTab === "Map" && mapFocusedCategory && nextTab === "Discover") {
               setActiveTab("Discover");
               setActiveCategory(mapFocusedCategory);
@@ -173,3 +314,4 @@ export function HomeScreen() {
     </div>
   );
 }
+

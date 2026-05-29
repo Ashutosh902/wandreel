@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Bell, Link2, RefreshCw, Sparkles, X } from "lucide-react";
+import { useUx } from "../layout/UxProvider";
 
 type DetectedCategory = "Taste" | "Activity" | "Stay" | "Explore";
 
@@ -66,6 +67,7 @@ const chipOrder: Array<"Auto-detect" | DetectedCategory> = [
 ];
 
 export function AddScreen() {
+  const { isOffline, showToast } = useUx();
   const [linkInput, setLinkInput] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
@@ -104,6 +106,10 @@ export function AddScreen() {
 
   const handleAnalyze = () => {
     if (!linkInput.trim() || isAnalyzing) return;
+    if (isOffline) {
+      showToast({ message: "This link could not be analyzed.", variant: "error" });
+      return;
+    }
     setIsAnalyzing(true);
     setHasAnalyzed(false);
     setIsPreviewVisible(true);
@@ -118,6 +124,7 @@ export function AddScreen() {
       setSelectedDetectedCategory("Auto-detect");
       setSelectedPreviewIndex(0);
       setIsPreviewVisible(true);
+      showToast({ message: "Link analyzed", variant: "success" });
     }, 1450);
   };
 
@@ -130,6 +137,7 @@ export function AddScreen() {
   const handleSavePlace = () => {
     if (!selectedPreview) return;
     setSaveMessage(`Saved to ${selectedPreview.category}`);
+    showToast({ message: `Saved to ${selectedPreview.category}`, variant: "success" });
   };
 
   const getChipCount = (chip: "Auto-detect" | DetectedCategory) => {
@@ -195,7 +203,7 @@ export function AddScreen() {
       </article>
 
       {hasAnalyzed ? (
-        <section className="wr-add-detected-wrap" aria-label="Detected places">
+        <section className="wr-add-detected-wrap is-ready" aria-label="Detected places">
           <div className="wr-add-detected-head">
             <p>Detected from this link</p>
             <span>{categoryCounts.total} places</span>
@@ -241,6 +249,12 @@ export function AddScreen() {
           ) : null}
 
           {saveMessage ? <p className="wr-add-save-toast">{saveMessage}</p> : null}
+        </section>
+      ) : isAnalyzing ? (
+        <section className="wr-add-detected-wrap is-skeleton" aria-label="Detected places loading">
+          <div className="wr-add-detected-skeleton head" />
+          <div className="wr-add-detected-skeleton chips" />
+          <div className="wr-add-detected-skeleton card" />
         </section>
       ) : (
         <section className="wr-add-empty-state" aria-label="Detected preview empty state">

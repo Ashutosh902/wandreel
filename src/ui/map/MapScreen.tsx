@@ -19,10 +19,12 @@ function pinDistanceFromCenter(pin: MapCategoryPin): number {
 function MapPinMarker({
   pin,
   inRange,
+  selected,
   onSelect,
 }: {
   pin: MapCategoryPin;
   inRange: boolean;
+  selected: boolean;
   onSelect: (pin: MapCategoryPin) => void;
 }) {
   const Icon = pin.icon;
@@ -30,7 +32,7 @@ function MapPinMarker({
   return (
     <button
       type="button"
-      className={`wr-map-pin ${inRange ? "" : "is-out-of-range"}`}
+      className={`wr-map-pin ${inRange ? "" : "is-out-of-range"} ${selected ? "is-selected" : ""}`}
       style={{ left: pin.x, top: pin.y }}
       onClick={() => onSelect(pin)}
       aria-label={`Open ${pin.label} place details`}
@@ -47,9 +49,11 @@ function MapPinMarker({
 export function MapScreen({
   focusedCategory = null,
   onBack,
+  onAddLink,
 }: {
   focusedCategory?: MapCategoryLabel | null;
   onBack?: () => void;
+  onAddLink?: () => void;
 }) {
   const [activeMapCategories, setActiveMapCategories] = useState<MapCategoryLabel[]>([
     "Taste",
@@ -61,6 +65,8 @@ export function MapScreen({
   const [mapMinDimensionPx, setMapMinDimensionPx] = useState(320);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [activePinPreview, setActivePinPreview] = useState<MapCategoryPin | null>(null);
+  const sheetTouchStartYRef = useRef<number | null>(null);
+  const [isCountBump, setIsCountBump] = useState(false);
 
   useEffect(() => {
     if (focusedCategory) {
@@ -111,6 +117,12 @@ export function MapScreen({
   const inRangeCount = pinsWithRangeState.filter((item) => item.inRange).length;
   const inRangeNoun = inRangeCount === 1 ? "place" : "places";
   const closePinPreview = () => setActivePinPreview(null);
+
+  useEffect(() => {
+    setIsCountBump(true);
+    const timer = window.setTimeout(() => setIsCountBump(false), 180);
+    return () => window.clearTimeout(timer);
+  }, [inRangeCount]);
 
   return (
     <section className="wr-map" aria-label="Map tab">
@@ -186,17 +198,31 @@ export function MapScreen({
         <span className="wr-map-locality wr-map-locality-e">Patna</span>
 
         {pinsWithRangeState.map(({ pin, inRange }) => (
-          <MapPinMarker key={pin.label} pin={pin} inRange={inRange} onSelect={setActivePinPreview} />
+          <MapPinMarker key={pin.label} pin={pin} inRange={inRange} selected={activePinPreview?.label === pin.label} onSelect={setActivePinPreview} />
         ))}
 
         <div className="wr-map-current-location">
           <LocateFixed size={11} />
         </div>
 
-        <div className="wr-map-in-range-pill" aria-live="polite">
+        <div className={`wr-map-in-range-pill ${isCountBump ? "is-bump" : ""}`} aria-live="polite">
           <span className="wr-map-in-range-count">{inRangeCount}</span>
           <span className="wr-map-in-range-label">{inRangeNoun}</span>
         </div>
+        {inRangeCount === 0 ? (
+          <div className="wr-map-empty-state" aria-live="polite">
+            <p className="wr-map-empty-title">No places in this radius</p>
+            <p className="wr-map-empty-copy">Increase distance or add your first Wandreel.</p>
+            <div className="wr-map-empty-actions">
+              <button type="button" className="wr-map-empty-btn" onClick={() => setRadiusKm((km) => Math.min(100, km + 8))}>
+                Increase radius
+              </button>
+              <button type="button" className="wr-map-empty-btn is-primary" onClick={() => onAddLink?.()}>
+                Add a link
+              </button>
+            </div>
+          </div>
+        ) : null}
         <div className="wr-map-radius-vertical" aria-label="Map search radius control">
           <p className="wr-map-radius-value">{radiusKm} km</p>
           <div className="wr-map-radius-vertical-body">
@@ -218,7 +244,20 @@ export function MapScreen({
       </div>
       {activePinPreview ? (
         <div className="wr-map-sheet-layer" onClick={closePinPreview} role="presentation">
-          <article className="wr-map-sheet" onClick={(event) => event.stopPropagation()} aria-label={`${activePinPreview.previewTitle} details`}>
+          <article
+            className="wr-map-sheet"
+            onClick={(event) => event.stopPropagation()}
+            onTouchStart={(event) => {
+              sheetTouchStartYRef.current = event.touches[0].clientY;
+            }}
+            onTouchEnd={(event) => {
+              if (sheetTouchStartYRef.current === null) return;
+              const deltaY = event.changedTouches[0].clientY - sheetTouchStartYRef.current;
+              sheetTouchStartYRef.current = null;
+              if (deltaY > 72) closePinPreview();
+            }}
+            aria-label={`${activePinPreview.previewTitle} details`}
+          >
             <button type="button" className="wr-map-sheet-close" aria-label="Close map place details" onClick={closePinPreview}>
               <X size={16} />
             </button>

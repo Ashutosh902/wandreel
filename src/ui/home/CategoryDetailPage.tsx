@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import type { CategoryLabel } from "./home.data";
 
@@ -115,13 +115,16 @@ const categoryConfigs: Record<CategoryLabel, CategoryScreenConfig> = {
 export function CategoryDetailPage({
   category,
   onViewMap,
+  onAddLink,
 }: {
   category: CategoryLabel;
   onViewMap: (category: CategoryLabel) => void;
+  onAddLink: () => void;
 }) {
   const config = categoryConfigs[category];
   const [activePlace, setActivePlace] = useState<CategoryPlaceRow | null>(null);
   const [isSheetClosing, setIsSheetClosing] = useState(false);
+  const sheetTouchStartYRef = useRef<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedChip, setSelectedChip] = useState<CategoryFilterChip>("All");
 
@@ -188,7 +191,23 @@ export function CategoryDetailPage({
         </div>
 
       <section className="wr-taste-list" aria-label={`${category} saved places nearest first`}>
-        {filteredPlaces.map((place) => (
+        {filteredPlaces.length === 0 ? (
+          <article className="wr-category-empty-state" aria-live="polite">
+            <h3>{category === "Taste" ? "No restaurants yet" : category === "Activity" ? "No activities yet" : category === "Stay" ? "No stays yet" : "No places yet"}</h3>
+            <p>
+              {category === "Taste"
+                ? "Paste a reel to save your first food spot."
+                : category === "Activity"
+                  ? "Save reels for things to do around you."
+                  : category === "Stay"
+                    ? "Save hotels, homestays, and stay ideas from reels."
+                    : "Save sights, hidden gems, and weekend spots."}
+            </p>
+            <button type="button" className="wr-category-empty-cta" onClick={onAddLink}>
+              Add a link
+            </button>
+          </article>
+        ) : filteredPlaces.map((place) => (
           <article
             key={place.title}
             className="wr-taste-row-card"
@@ -217,7 +236,20 @@ export function CategoryDetailPage({
 
       {activePlace ? (
         <div className={`wr-taste-sheet-layer ${isSheetClosing ? "is-closing" : ""}`} onClick={closeSheet} role="presentation">
-          <article className="wr-taste-sheet" onClick={(event) => event.stopPropagation()} aria-label={`${activePlace.title} details`}>
+          <article
+            className="wr-taste-sheet"
+            onClick={(event) => event.stopPropagation()}
+            onTouchStart={(event) => {
+              sheetTouchStartYRef.current = event.touches[0].clientY;
+            }}
+            onTouchEnd={(event) => {
+              if (sheetTouchStartYRef.current === null) return;
+              const deltaY = event.changedTouches[0].clientY - sheetTouchStartYRef.current;
+              sheetTouchStartYRef.current = null;
+              if (deltaY > 72) closeSheet();
+            }}
+            aria-label={`${activePlace.title} details`}
+          >
             <button type="button" className="wr-taste-sheet-close" aria-label="Close details" onClick={closeSheet}>
               <X size={16} />
             </button>
