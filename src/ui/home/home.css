@@ -80,6 +80,12 @@
 }
 .wr-home-surface:not(.wr-home-surface-map)::-webkit-scrollbar { display: none; }
 
+.wr-page-transition-layer {
+  position: relative;
+  min-height: 100%;
+  will-change: transform, opacity;
+}
+
 .wr-home-surface-map {
   height: 100%;
   padding: 0 0 var(--wr-bottom-nav-height);
