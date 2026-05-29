@@ -108,15 +108,8 @@
   display: flex;
   align-items: center;
   justify-content: flex-start;
-  position: sticky;
-  top: calc(-1rem - var(--wr-safe-top));
-  z-index: 4;
-  padding-top: 0.3rem;
-  padding-bottom: 0.35rem;
-}
-.wr-home-surface.is-scrolled .wr-home-header {
-  background: linear-gradient(180deg, rgba(248, 243, 234, 0.95) 0%, rgba(248, 243, 234, 0.78) 72%, rgba(248, 243, 234, 0) 100%);
-  backdrop-filter: blur(7px);
+  position: relative;
+  z-index: 1;
 }
 .wr-brand { width: 0; flex-shrink: 0; }
 .wr-home-header .wr-location-section-inline {
