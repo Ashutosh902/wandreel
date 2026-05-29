@@ -43,21 +43,47 @@ function DiscoverPage({
   onSelectCategory,
   onViewMap,
   onAddLink,
+  onBackCategory,
 }: {
   activeCategory: CategoryLabel | null;
   onSelectCategory: (category: CategoryLabel) => void;
   onViewMap: (category: CategoryLabel) => void;
   onAddLink: () => void;
+  onBackCategory: () => void;
 }) {
-  if (activeCategory) {
-    return <CategoryDetailPage category={activeCategory} onViewMap={onViewMap} onAddLink={onAddLink} />;
-  }
-
   return (
     <>
-      <HeroCard />
-      <BucketlistSummary onSelectCategory={onSelectCategory} />
-      <RecentlyAddedCarousel />
+      <header className="wr-home-header">
+        {activeCategory ? (
+          <button
+            type="button"
+            className="wr-header-back"
+            aria-label="Back"
+            onClick={onBackCategory}
+          >
+            <ArrowLeft size={18} />
+          </button>
+        ) : (
+          <div className="wr-brand" aria-hidden="true" />
+        )}
+        <LocationSelector inline />
+        <button
+          type="button"
+          aria-label="Notifications"
+          className="wr-notify-btn"
+        >
+          <Bell size={18} className="wr-notify-icon" />
+        </button>
+      </header>
+      {activeCategory ? (
+        <CategoryDetailPage category={activeCategory} onViewMap={onViewMap} onAddLink={onAddLink} />
+      ) : (
+        <>
+          <HeroCard />
+          <BucketlistSummary onSelectCategory={onSelectCategory} />
+          <RecentlyAddedCarousel />
+        </>
+      )}
     </>
   );
 }
@@ -113,6 +139,10 @@ export function HomeScreen() {
         <DiscoverPage
           activeCategory={activeCategory}
           onSelectCategory={setActiveCategory}
+          onBackCategory={() => {
+            setTransitionDirection(-1);
+            setActiveCategory(null);
+          }}
           onAddLink={() => {
             setTransitionDirection(1);
             setActiveCategory(null);
@@ -233,42 +263,14 @@ export function HomeScreen() {
             pullDistanceRef.current = 0;
           }}
         >
-          {!isMapTab ? (
+          {!isMapTab && isRefreshing ? (
             <div className={`wr-pull-refresh-indicator ${isRefreshing ? "is-active" : ""}`} aria-live="polite">
-              {isRefreshing ? "Refreshing..." : "Pull to refresh"}
+              Refreshing...
             </div>
           ) : null}
           {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob one" /> : null}
           {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob two" /> : null}
           {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob three" /> : null}
-
-          {activeTab !== "Login" && activeTab !== "Map" && activeTab !== "Add" ? (
-            <header className="wr-home-header">
-              {isCategoryView ? (
-                <button
-                  type="button"
-                  className="wr-header-back"
-                  aria-label="Back"
-                  onClick={() => {
-                    setTransitionDirection(-1);
-                    setActiveCategory(null);
-                  }}
-                >
-                  <ArrowLeft size={18} />
-                </button>
-              ) : (
-                <div className="wr-brand" aria-hidden="true" />
-              )}
-              <LocationSelector inline />
-              <button
-                type="button"
-                aria-label="Notifications"
-                className="wr-notify-btn"
-              >
-                <Bell size={18} className="wr-notify-icon" />
-              </button>
-            </header>
-          ) : null}
 
           <motion.section
             key={pageKey}
