@@ -276,12 +276,12 @@ export function HomeScreen() {
             key={pageKey}
             className="wr-page-transition-layer"
             initial={
-              prefersReducedMotion
+              prefersReducedMotion || activeTab === "Login"
                 ? { opacity: 0.98 }
                 : { x: transitionDirection > 0 ? 16 : -16, opacity: 0.94 }
             }
             animate={{ x: 0, opacity: 1 }}
-            transition={{ duration: prefersReducedMotion ? 0.14 : 0.2, ease: [0.22, 0.61, 0.36, 1] }}
+            transition={{ duration: prefersReducedMotion || activeTab === "Login" ? 0.01 : 0.2, ease: [0.22, 0.61, 0.36, 1] }}
           >
             {page}
           </motion.section>

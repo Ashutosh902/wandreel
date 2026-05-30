@@ -27,6 +27,41 @@ export type PlaceCollection = {
   confidence: number;
 };
 
+export type EntityConfidence = "high" | "medium" | "low";
+
+export type CategoryLevel2Metadata =
+  | {
+      category: "eat";
+      cuisineType: string | null;
+      mealType: string | null;
+      dietaryTags: string[];
+      vibeTags: string[];
+      priceTier: string | null;
+    }
+  | {
+      category: "do";
+      activityType: string | null;
+      timeTag: string | null;
+      audienceTags: string[];
+      vibeTags: string[];
+      priceTier: string | null;
+    }
+  | {
+      category: "stay";
+      stayType: string | null;
+      useCase: string | null;
+      amenities: string[];
+      locationTags: string[];
+      priceTier: string | null;
+    }
+  | {
+      category: "see";
+      placeType: string | null;
+      experienceTag: string | null;
+      vibeTags: string[];
+      entryFeeSignal: string | null;
+    };
+
 export type DiscoveryEntity = {
   category: SupportedCategory;
   name: string;
@@ -37,9 +72,23 @@ export type DiscoveryEntity = {
   locality: string | null;
   tags: string[];
   details: Record<string, unknown>;
+  level2: CategoryLevel2Metadata;
   googleMapsQuery: string | null;
   sourceEvidence: string;
-  confidence: number;
+  confidence: EntityConfidence;
+};
+
+export type StructuredEntity = {
+  name: string;
+  category: SupportedCategory;
+  locality: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  address: string | null;
+  confidence: EntityConfidence;
+  googleMapsQuery: string | null;
+  evidenceText: string | null;
 };
 
 export type IntelligenceOutput = {
@@ -52,7 +101,9 @@ export type IntelligenceOutput = {
   };
   placeCollections: PlaceCollection[];
   categoriesPresent: SupportedCategory[];
-  weakMentions: SupportedCategory[];
+  weakMentions: Array<{ text: string; reason: string }>;
+  showIn: Record<SupportedCategory, boolean>;
+  structuredEntities: StructuredEntity[];
   entities: DiscoveryEntity[];
   visibility: {
     showIn: string[];
@@ -66,7 +117,7 @@ export type IntelligenceRequest = {
   source: ExtractionResult;
 };
 
-export type IntelligenceMode = "sync" | "async";
+export type IntelligenceMode = "sync" | "async" | "draft_async";
 
 export type IntelligenceJobStatus = "queued" | "running" | "completed" | "failed";
 
@@ -83,4 +134,14 @@ export type IntelligencePipelineResult = {
   output: IntelligenceOutput;
   validationErrors: string[];
   fixed: boolean;
+  timingsMs?: {
+    total: number;
+    provider: number;
+    schemaFirstPass: number;
+    normalize: number;
+    schemaSecondPass: number;
+  };
+  providerMeta?: {
+    model: string;
+  };
 };

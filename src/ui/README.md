@@ -244,6 +244,11 @@ This folder owns all Wandreel frontend architecture and components.
 - Added swipe-down bottom-sheet dismissal for login, map pin preview, and category place detail sheets.
 - Added pull-to-refresh affordance on non-map scroll surfaces and polished empty/loading states for category/map/add/profile.
 
+## Phase note: Map top-controls spacing refinement
+
+- Shifted map location bar and category chip row slightly downward for cleaner visual hierarchy.
+- Increased map chip-row right padding/scroll-padding so the full chip set is visible and easier to scan.
+
 ## Phase note: Add flow QA hardening
 
 - Add analyze now validates URL shape/protocol before processing and returns friendly failures for invalid links.

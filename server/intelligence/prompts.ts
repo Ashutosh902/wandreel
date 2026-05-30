@@ -1,9 +1,6 @@
 import type { ExtractionResult } from "../extraction/types";
 
-const MAX_TITLE = 180;
-const MAX_DESCRIPTION = 1200;
-const MAX_TRANSCRIPT = 3000;
-const MAX_OCR = 1200;
+const MAX_COMBINED = 5000;
 
 function trimText(input: string | null | undefined, max: number): string {
   const clean = String(input || "").replace(/\s+/g, " ").trim();
@@ -23,6 +20,28 @@ Supported categories:
 - stay: named hotels, hostels, resorts, homestays, villas, guest houses
 - see: tourist attractions, landmarks, museums, monuments, temples, ghats, viewpoints, historical sites, religious places
 
+Return JSON only in this exact shape:
+{
+  "status": "ready" | "needs_review" | "no_supported_entity_found",
+  "entities": [
+    {
+      "name": string,
+      "category": "eat" | "do" | "stay" | "see",
+      "locality": string | null,
+      "city": string | null,
+      "state": string | null,
+      "country": string | null,
+      "address": string | null,
+      "confidence": "high" | "medium" | "low",
+      "googleMapsQuery": string | null,
+      "evidenceText": string | null
+    }
+  ],
+  "weakMentions": [{ "text": string, "reason": string }],
+  "placeCollections": [{ "name": string, "type": "city" | "locality" | "region" | "country" | "unknown", "city": string | null, "state": string | null, "country": string | null, "confidence": "high" | "medium" | "low" }],
+  "showIn": { "eat": boolean, "do": boolean, "stay": boolean, "see": boolean }
+}
+
 Hard rules:
 1. A source can belong to multiple categories.
 2. Do not choose a primary category.
@@ -35,27 +54,23 @@ Hard rules:
 9. If no supported entity is found, return status = "no_supported_entity_found".
 10. Create placeCollections from detected city/locality/region.
 11. Generate googleMapsQuery using entity name + locality + city + state + country when available.
-12. Put a source in showIn based on actual extracted entities only.
+12. Set showIn booleans based on actual extracted entities only.
 13. Never extract recipes or movies.`;
 }
 
 export function buildUserPrompt(source: ExtractionResult): string {
   const metadata = source.metadata;
-  const transcript = source.transcript?.text || "";
-  const ocr = source.ocr?.text || "";
+  const combinedText = source.combinedTextClean || source.combinedTextRaw || "";
 
   const payload = {
     url: metadata.canonicalUrl || metadata.sourceUrl,
     platform: metadata.platform,
-    title: trimText(metadata.title, MAX_TITLE),
-    creator: null,
-    description: trimText(metadata.description, MAX_DESCRIPTION),
-    transcript: trimText(transcript, MAX_TRANSCRIPT),
-    hashtags: [],
-    thumbnail: metadata.imageUrl,
-    ocrText: trimText(ocr, MAX_OCR),
+    combinedTextClean: trimText(combinedText, MAX_COMBINED),
     extractionMode: source.mode,
+    quality: {
+      isLowSignal: !String(combinedText || "").trim(),
+    },
   };
 
-  return `Process this extracted metadata for Wandreel. Return valid JSON only.\n\nInput:\n${JSON.stringify(payload, null, 2)}`;
+  return `Process this extracted combined text for Wandreel. Return valid JSON only.\n\nInput:\n${JSON.stringify(payload, null, 2)}`;
 }

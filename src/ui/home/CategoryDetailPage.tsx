@@ -20,9 +20,16 @@ type CategoryFilterChip =
   | "Couple-friendly"
   | "Workation"
   | "Pool"
+  | "Dorm"
   | "Heritage"
   | "Nature"
-  | "Photo spots";
+  | "Photo spots"
+  | "Veg-only"
+  | "Cafe"
+  | "Comedy"
+  | "Workshop"
+  | "Free"
+  | "Spiritual";
 
 type CategoryPlaceRow = {
   title: string;
@@ -57,10 +64,14 @@ const img = {
   expC: "https://images.unsplash.com/photo-1467269204594-9661b134dd2b?auto=format&fit=crop&q=80&w=1200",
 };
 
+const CATEGORY_LEVEL2_ENABLED = String(import.meta.env.VITE_CATEGORY_LEVEL2_ENABLED ?? "true").toLowerCase() !== "false";
+
 const categoryConfigs: Record<CategoryLabel, CategoryScreenConfig> = {
   Taste: {
     searchPlaceholder: "Search saved restaurants...",
-    chips: ["All", "Trending", "Visited", "Date-night", "Budget", "Street-style", "Iconic"],
+    chips: CATEGORY_LEVEL2_ENABLED
+      ? ["All", "Trending", "Visited", "Date-night", "Budget", "Street-style", "Iconic", "Veg-only", "Cafe"]
+      : ["All", "Trending", "Visited", "Date-night", "Budget"],
     places: [
       { title: "Litti Courtyard", distanceKm: 0.8, metaPrimary: "Local classic", metaSecondary: "Lunch", locality: "Patna City", fullAddress: "Near Ashok Rajpath, Patna City, Patna, Bihar 800008", videoUrl: "https://www.instagram.com/", imageUrl: img.tasteA, tags: ["Trending", "Iconic"] },
       { title: "Biryani by the Ganges", distanceKm: 1.2, metaPrimary: "Mughlai", metaSecondary: "Dinner", locality: "Boring Road", fullAddress: "Boring Canal Road, Boring Road Crossing, Patna, Bihar 800001", videoUrl: "https://www.youtube.com/", imageUrl: img.tasteB, tags: ["Date-night", "Iconic"] },
@@ -68,12 +79,14 @@ const categoryConfigs: Record<CategoryLabel, CategoryScreenConfig> = {
       { title: "Sattu & Spice House", distanceKm: 2.6, metaPrimary: "Bihari", metaSecondary: "Lunch", locality: "Rajendra Nagar", fullAddress: "Road No. 3, Rajendra Nagar, Patna, Bihar 800016", videoUrl: "https://www.youtube.com/shorts/", imageUrl: img.tasteA, tags: ["Budget"] },
       { title: "Tandoor & Tales", distanceKm: 3.4, metaPrimary: "North Indian", metaSecondary: "Date-night", locality: "Bailey Road", fullAddress: "Saguna More to Bailey Road stretch, Patna, Bihar 801503", videoUrl: "https://www.instagram.com/", imageUrl: img.tasteB, tags: ["Date-night", "Trending"] },
       { title: "Ghatside Chaat Studio", distanceKm: 4.1, metaPrimary: "Street food", metaSecondary: "Snacks", locality: "Gandhi Maidan", fullAddress: "Near Gandhi Maidan North Gate, Patna, Bihar 800001", videoUrl: "https://www.youtube.com/", imageUrl: img.tasteC, tags: ["Street-style", "Visited"] },
-      { title: "Mint Leaf Cafe", distanceKm: 5.3, metaPrimary: "Cafe", metaSecondary: "Brunch", locality: "Patliputra Colony", fullAddress: "Patliputra Colony Main Road, Patna, Bihar 800013", videoUrl: "https://www.instagram.com/", imageUrl: img.tasteA, tags: ["Visited", "Trending"] },
+      { title: "Mint Leaf Cafe", distanceKm: 5.3, metaPrimary: "Cafe", metaSecondary: "Brunch", locality: "Patliputra Colony", fullAddress: "Patliputra Colony Main Road, Patna, Bihar 800013", videoUrl: "https://www.instagram.com/", imageUrl: img.tasteA, tags: ["Visited", "Trending", "Cafe"] },
     ],
   },
   Activity: {
     searchPlaceholder: "Search saved activities...",
-    chips: ["All", "Trending", "Visited", "Outdoor", "Adventure", "Weekend", "Family", "Hidden gem"],
+    chips: CATEGORY_LEVEL2_ENABLED
+      ? ["All", "Trending", "Visited", "Weekend", "Outdoor", "Adventure", "Family", "Comedy", "Workshop", "Free", "Hidden gem"]
+      : ["All", "Trending", "Visited", "Weekend", "Outdoor", "Adventure"],
     places: [
       { title: "Eco Park Patna", distanceKm: 1.1, metaPrimary: "Outdoor", metaSecondary: "Cycling", locality: "Bailey Road", fullAddress: "Eco Park Gate 2, Rajbansi Nagar, Patna, Bihar 800015", videoUrl: "https://www.youtube.com/", imageUrl: img.actA, tags: ["Outdoor", "Family"] },
       { title: "Gandhi Maidan Walk", distanceKm: 1.7, metaPrimary: "Walking", metaSecondary: "Evening", locality: "Gandhi Maidan", fullAddress: "Gandhi Maidan Circular Road, Patna, Bihar 800001", videoUrl: "https://www.instagram.com/", imageUrl: img.actB, tags: ["Trending", "Weekend"] },
@@ -81,12 +94,14 @@ const categoryConfigs: Record<CategoryLabel, CategoryScreenConfig> = {
       { title: "Ganga Riverfront Cycling", distanceKm: 2.9, metaPrimary: "Outdoor", metaSecondary: "Adventure", locality: "Collectorate Ghat", fullAddress: "Riverfront Track, Near Collectorate Ghat, Patna, Bihar 800001", videoUrl: "https://www.instagram.com/", imageUrl: img.actA, tags: ["Outdoor", "Adventure"] },
       { title: "Patna Zoo", distanceKm: 3.3, metaPrimary: "Nature", metaSecondary: "Family", locality: "Raj Bhavan", fullAddress: "Sanjay Gandhi Biological Park, Raj Bhavan Road, Patna, Bihar 800015", videoUrl: "https://www.youtube.com/", imageUrl: img.actB, tags: ["Family", "Weekend"] },
       { title: "Indoor Climbing Studio", distanceKm: 4.4, metaPrimary: "Fitness", metaSecondary: "Adventure", locality: "Kankarbagh", fullAddress: "Near Main Road, Kankarbagh, Patna, Bihar 800020", videoUrl: "https://www.instagram.com/", imageUrl: img.actC, tags: ["Adventure"] },
-      { title: "Weekend Pottery Workshop", distanceKm: 5.1, metaPrimary: "Creative", metaSecondary: "Weekend", locality: "Patliputra", fullAddress: "Community Art Space, Patliputra Colony, Patna, Bihar 800013", videoUrl: "https://www.youtube.com/", imageUrl: img.actA, tags: ["Weekend", "Hidden gem"] },
+      { title: "Weekend Pottery Workshop", distanceKm: 5.1, metaPrimary: "Creative", metaSecondary: "Weekend", locality: "Patliputra", fullAddress: "Community Art Space, Patliputra Colony, Patna, Bihar 800013", videoUrl: "https://www.youtube.com/", imageUrl: img.actA, tags: ["Weekend", "Workshop", "Hidden gem"] },
     ],
   },
   Stay: {
     searchPlaceholder: "Search saved stays...",
-    chips: ["All", "Saved", "Visited", "Budget", "Premium", "Couple-friendly", "Workation", "Pool"],
+    chips: CATEGORY_LEVEL2_ENABLED
+      ? ["All", "Saved", "Visited", "Budget", "Premium", "Couple-friendly", "Workation", "Pool", "Dorm", "Family"]
+      : ["All", "Saved", "Visited", "Budget", "Premium", "Workation"],
     places: [
       { title: "The Panache", distanceKm: 1.8, metaPrimary: "Premium hotel", metaSecondary: "Business", locality: "Fraser Road", fullAddress: "The Panache, West Gandhi Maidan, Patna, Bihar 800001", videoUrl: "https://www.youtube.com/", imageUrl: img.stayA, tags: ["Premium", "Saved"] },
       { title: "Hotel Maurya", distanceKm: 2.1, metaPrimary: "Premium hotel", metaSecondary: "City center", locality: "South Gandhi Maidan", fullAddress: "Hotel Maurya, South Gandhi Maidan, Patna, Bihar 800001", videoUrl: "https://www.instagram.com/", imageUrl: img.stayB, tags: ["Premium", "Visited"] },
@@ -94,12 +109,14 @@ const categoryConfigs: Record<CategoryLabel, CategoryScreenConfig> = {
       { title: "Budget Stay Boring Road", distanceKm: 3.2, metaPrimary: "Budget hotel", metaSecondary: "Solo", locality: "Boring Road", fullAddress: "Near Boring Road Crossing, Patna, Bihar 800001", videoUrl: "https://www.instagram.com/", imageUrl: img.stayA, tags: ["Budget"] },
       { title: "Boutique Homestay Patliputra", distanceKm: 4.0, metaPrimary: "Homestay", metaSecondary: "Couple-friendly", locality: "Patliputra Colony", fullAddress: "Patliputra Colony Main Road, Patna, Bihar 800013", videoUrl: "https://www.youtube.com/", imageUrl: img.stayB, tags: ["Couple-friendly", "Saved"] },
       { title: "Riverside Guest House", distanceKm: 4.7, metaPrimary: "Guest house", metaSecondary: "Pool", locality: "Digha", fullAddress: "Near Digha Ghat, Patna, Bihar 800011", videoUrl: "https://www.instagram.com/", imageUrl: img.stayC, tags: ["Pool", "Visited"] },
-      { title: "Workation Stay Kankarbagh", distanceKm: 5.5, metaPrimary: "Apartment stay", metaSecondary: "Workation", locality: "Kankarbagh", fullAddress: "Road No. 7, Kankarbagh, Patna, Bihar 800020", videoUrl: "https://www.youtube.com/", imageUrl: img.stayA, tags: ["Workation", "Budget"] },
+      { title: "Workation Stay Kankarbagh", distanceKm: 5.5, metaPrimary: "Apartment stay", metaSecondary: "Workation", locality: "Kankarbagh", fullAddress: "Road No. 7, Kankarbagh, Patna, Bihar 800020", videoUrl: "https://www.youtube.com/", imageUrl: img.stayA, tags: ["Workation", "Budget", "Family"] },
     ],
   },
   Explore: {
     searchPlaceholder: "Search saved places...",
-    chips: ["All", "Trending", "Visited", "Heritage", "Nature", "Photo spots", "Hidden gem", "Weekend"],
+    chips: CATEGORY_LEVEL2_ENABLED
+      ? ["All", "Trending", "Visited", "Heritage", "Nature", "Photo spots", "Hidden gem", "Spiritual", "Iconic", "Free"]
+      : ["All", "Trending", "Visited", "Heritage", "Nature", "Photo spots"],
     places: [
       { title: "Golghar", distanceKm: 1.4, metaPrimary: "Heritage", metaSecondary: "Photo spot", locality: "Patna City", fullAddress: "Golghar, Gandhi Maidan, Patna, Bihar 800001", videoUrl: "https://www.youtube.com/", imageUrl: img.expA, tags: ["Heritage", "Photo spots"] },
       { title: "Patna Sahib Gurudwara", distanceKm: 2.3, metaPrimary: "Spiritual", metaSecondary: "Heritage", locality: "Patna Sahib", fullAddress: "Takht Sri Harmandir Sahib, Patna Sahib, Bihar 800008", videoUrl: "https://www.instagram.com/", imageUrl: img.expB, tags: ["Heritage", "Visited"] },

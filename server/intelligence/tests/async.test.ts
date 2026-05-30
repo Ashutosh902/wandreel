@@ -22,6 +22,9 @@ test("async store creates and transitions job states", async () => {
       },
       transcript: null,
       ocr: null,
+      source: "https://example.com",
+      platform: "web",
+      canonicalUrl: "https://example.com/",
     },
   });
 

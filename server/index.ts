@@ -1,7 +1,8 @@
 import "dotenv/config";
 import express from "express";
-import { runExtractionPipeline, type ExtractionMode } from "./extraction";
+import { extractionJobStore, runExtractionPipeline, type ExtractionMode } from "./extraction";
 import { intelligenceJobStore, runIntelligencePipeline, type IntelligenceMode } from "./intelligence";
+import { buildDraftIntelligenceOutput } from "./intelligence/draft";
 import { phoneOtpStore } from "./auth/phoneOtpStore";
 import {
   buildClearSessionCookie,
@@ -21,6 +22,7 @@ import {
   verifyEmailOtp,
   deleteSavedPlace,
 } from "./auth/postgresAuth";
+import { featureFlags } from "./featureFlags";
 
 const app = express();
 const clientOrigin = process.env.CLIENT_ORIGIN || "http://localhost:5173";
@@ -89,17 +91,62 @@ app.post("/api/metadata/extract", async (req, res) => {
     }
 
     const result = await runExtractionPipeline({ url, mode });
-    return res.json({ ok: true, ...result });
+    if (featureFlags.extractionV2) {
+      return res.json({ ok: true, ...result });
+    }
+    const { source, platform, canonicalUrl, stageStatus, stages, stageTimingsMs, stageFailures, sla, ...legacy } = result;
+    return res.json({ ok: true, ...legacy });
   } catch (error) {
     const message = error instanceof Error ? error.message : "extraction failed";
     return res.status(500).json({ ok: false, error: message });
   }
 });
 
+app.post("/api/metadata/extract/deep-async", async (req, res) => {
+  try {
+    const url = String(req.body?.url || "").trim();
+    if (!url) {
+      return res.status(400).json({ ok: false, error: "url is required" });
+    }
+
+    const quick = await runExtractionPipeline({ url, mode: "quick" });
+    const job = await extractionJobStore.createDeep(url);
+
+    return res.status(202).json({
+      ok: true,
+      mode: "deep_async",
+      quick,
+      jobId: job.id,
+      status: job.status,
+      createdAtIso: job.createdAtIso,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "deep async extraction failed";
+    return res.status(500).json({ ok: false, error: message });
+  }
+});
+
+app.get("/api/metadata/jobs/:jobId", async (req, res) => {
+  const jobId = String(req.params.jobId || "").trim();
+  if (!jobId) {
+    return res.status(400).json({ ok: false, error: "jobId is required" });
+  }
+  const job = await extractionJobStore.get(jobId);
+  if (!job) {
+    return res.status(404).json({ ok: false, error: "job not found" });
+  }
+  return res.json({ ok: true, job });
+});
+
 app.post("/api/intelligence/extract", async (req, res) => {
   try {
     const modeRaw = String(req.body?.mode || "sync").trim().toLowerCase();
-    const mode: IntelligenceMode = modeRaw === "async" ? "async" : "sync";
+    const mode: IntelligenceMode =
+      modeRaw === "async"
+        ? "async"
+        : modeRaw === "draft_async"
+          ? "draft_async"
+          : "sync";
     const source = req.body?.source;
 
     if (!source || typeof source !== "object") {
@@ -114,6 +161,53 @@ app.post("/api/intelligence/extract", async (req, res) => {
         jobId: job.id,
         status: job.status,
         createdAtIso: job.createdAtIso,
+      });
+    }
+
+    if (mode === "draft_async") {
+      const job = await intelligenceJobStore.create({ source });
+      const draftOutput = buildDraftIntelligenceOutput(source);
+      return res.status(202).json({
+        ok: true,
+        mode,
+        draft: true,
+        output: draftOutput,
+        validationErrors: [],
+        fixed: false,
+        timingsMs: {
+          total: 0,
+          provider: 0,
+          schemaFirstPass: 0,
+          normalize: 0,
+          schemaSecondPass: 0,
+        },
+        providerMeta: {
+          model: "heuristic-draft",
+        },
+        jobId: job.id,
+        status: job.status,
+        createdAtIso: job.createdAtIso,
+      });
+    }
+
+    if (!featureFlags.intelligenceStructured) {
+      const draftOutput = buildDraftIntelligenceOutput(source);
+      return res.json({
+        ok: true,
+        mode,
+        output: draftOutput,
+        validationErrors: [],
+        fixed: false,
+        timingsMs: {
+          total: 0,
+          provider: 0,
+          schemaFirstPass: 0,
+          normalize: 0,
+          schemaSecondPass: 0,
+        },
+        providerMeta: {
+          model: "heuristic-fallback",
+        },
       });
     }
 

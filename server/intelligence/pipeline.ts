@@ -2,22 +2,132 @@ import { intelligenceOutputSchema, formatZodErrors } from "./schema";
 import type { IntelligencePipelineResult, IntelligenceRequest } from "./types";
 import { normalizeIntelligenceOutput } from "./normalize";
 import { callOpenAiStructuredExtraction } from "./providers/openai";
+import { recordSla } from "../metrics/slaTracker";
 
-export async function runIntelligencePipeline(req: IntelligenceRequest): Promise<IntelligencePipelineResult> {
-  const raw = await callOpenAiStructuredExtraction(req.source);
-  const firstPass = intelligenceOutputSchema.safeParse(raw);
-  if (firstPass.success) {
-    return { output: firstPass.data, validationErrors: [], fixed: false };
+function adaptStructuredRaw(raw: unknown, req: IntelligenceRequest): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const candidate = raw as any;
+  if (!Array.isArray(candidate.entities) || !candidate.showIn || candidate.source) {
+    return raw;
   }
 
+  const metadata = req.source.metadata;
+  const entities = candidate.entities.map((entity: any) => {
+    const category = String(entity?.category || "").trim().toLowerCase();
+    const baseDetails = entity?.address ? { address: String(entity.address) } : {};
+    const level2 =
+      category === "eat"
+        ? { category: "eat", cuisineType: null, mealType: null, dietaryTags: [], vibeTags: [], priceTier: null }
+        : category === "do"
+          ? { category: "do", activityType: null, timeTag: null, audienceTags: [], vibeTags: [], priceTier: null }
+          : category === "stay"
+            ? { category: "stay", stayType: null, useCase: null, amenities: [], locationTags: [], priceTier: null }
+            : { category: "see", placeType: null, experienceTag: null, vibeTags: [], entryFeeSignal: null };
+
+    return {
+      category,
+      name: String(entity?.name || "").trim(),
+      entityType: "place",
+      city: entity?.city ?? null,
+      state: entity?.state ?? null,
+      country: entity?.country ?? null,
+      locality: entity?.locality ?? null,
+      tags: [],
+      details: baseDetails,
+      level2,
+      googleMapsQuery: entity?.googleMapsQuery ?? null,
+      sourceEvidence: entity?.evidenceText ?? "Derived from combined extraction text",
+      confidence: entity?.confidence ?? "low",
+    };
+  });
+
+  const weakMentions = Array.isArray(candidate.weakMentions) ? candidate.weakMentions : [];
+  const showIn = candidate.showIn ?? { eat: false, do: false, stay: false, see: false };
+  const categoriesPresent = (["eat", "do", "stay", "see"] as const).filter((cat) => Boolean(showIn[cat]));
+
+  return {
+    source: {
+      url: metadata.canonicalUrl || metadata.sourceUrl || null,
+      platform: metadata.platform === "web" ? "website" : metadata.platform,
+      title: metadata.title || null,
+      creator: null,
+      sourceType: "mixed_discovery",
+    },
+    placeCollections: Array.isArray(candidate.placeCollections)
+      ? candidate.placeCollections.map((item: any) => ({
+          name: String(item?.name || "").trim(),
+          type: item?.type || "unknown",
+          city: item?.city ?? null,
+          state: item?.state ?? null,
+          country: item?.country ?? null,
+          confidence: item?.confidence ?? "low",
+        }))
+      : [],
+    categoriesPresent,
+    weakMentions,
+    showIn,
+    structuredEntities: Array.isArray(candidate.entities) ? candidate.entities : [],
+    entities,
+    visibility: {
+      showIn: categoriesPresent,
+      doNotShowIn: (["eat", "do", "stay", "see"] as const).filter((cat) => !categoriesPresent.includes(cat)),
+      reason: "Derived from structured response.",
+    },
+    status: candidate?.status ?? "needs_review",
+  };
+}
+
+export async function runIntelligencePipeline(req: IntelligenceRequest): Promise<IntelligencePipelineResult> {
+  const totalStartedAt = Date.now();
+  const providerResult = await callOpenAiStructuredExtraction(req.source);
+  const raw = adaptStructuredRaw(providerResult.raw, req);
+  const schemaFirstStartedAt = Date.now();
+  const firstPass = intelligenceOutputSchema.safeParse(raw);
+  const schemaFirstPassMs = Date.now() - schemaFirstStartedAt;
+  if (firstPass.success) {
+    const agg = recordSla("intelligence.total", Date.now() - totalStartedAt);
+    if (Number(process.env.INTELLIGENCE_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.INTELLIGENCE_SLA_LOG_EVERY) === 0) {
+      console.info("[sla][intelligence.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
+    }
+    return {
+      output: firstPass.data,
+      validationErrors: [],
+      fixed: false,
+      timingsMs: {
+        total: Date.now() - totalStartedAt,
+        provider: providerResult.timingsMs.provider,
+        schemaFirstPass: schemaFirstPassMs,
+        normalize: 0,
+        schemaSecondPass: 0,
+      },
+      providerMeta: providerResult.providerMeta,
+    };
+  }
+
+  const normalizeStartedAt = Date.now();
   const normalized = normalizeIntelligenceOutput(raw);
+  const normalizeMs = Date.now() - normalizeStartedAt;
+  const schemaSecondStartedAt = Date.now();
   const secondPass = intelligenceOutputSchema.safeParse(normalized);
+  const schemaSecondPassMs = Date.now() - schemaSecondStartedAt;
 
   if (secondPass.success) {
+    const agg = recordSla("intelligence.total", Date.now() - totalStartedAt);
+    if (Number(process.env.INTELLIGENCE_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.INTELLIGENCE_SLA_LOG_EVERY) === 0) {
+      console.info("[sla][intelligence.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
+    }
     return {
       output: secondPass.data,
       validationErrors: formatZodErrors(firstPass.error),
       fixed: true,
+      timingsMs: {
+        total: Date.now() - totalStartedAt,
+        provider: providerResult.timingsMs.provider,
+        schemaFirstPass: schemaFirstPassMs,
+        normalize: normalizeMs,
+        schemaSecondPass: schemaSecondPassMs,
+      },
+      providerMeta: providerResult.providerMeta,
     };
   }
 
@@ -35,5 +145,13 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
       ...formatZodErrors(secondPass.error),
     ],
     fixed: true,
+    timingsMs: {
+      total: Date.now() - totalStartedAt,
+      provider: providerResult.timingsMs.provider,
+      schemaFirstPass: schemaFirstPassMs,
+      normalize: normalizeMs,
+      schemaSecondPass: schemaSecondPassMs,
+    },
+    providerMeta: providerResult.providerMeta,
   };
 }

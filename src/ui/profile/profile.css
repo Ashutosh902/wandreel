@@ -329,7 +329,7 @@
   left: 50%;
   transform: translateX(-50%);
   width: min(390px, 100vw);
-  top: calc(1rem + var(--wr-safe-top, 0px));
+  top: 0;
   bottom: var(--wr-bottom-nav-height, 82px);
   background: rgba(21, 33, 50, 0.32);
   backdrop-filter: blur(1.5px);
@@ -337,7 +337,6 @@
   border: none;
   padding: 0;
   margin: 0;
-  width: 100%;
   cursor: pointer;
   animation: wrSheetBackdropIn 220ms ease-out both;
 }

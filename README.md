@@ -46,12 +46,17 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
 - PWA manifest and service worker registration wired (`vite-plugin-pwa`).
 - Installable shell metadata configured (name/theme/start URL/display).
 - Unified extraction pipeline centralized under `server/extraction`.
+- Instagram extraction now supports Wandreel-local Python dependency layer (`server/extraction/pydeps`) and `/reels/` shortcode parsing in `fetch_instagram_metadata.py` (no Pinshort runtime coupling).
+- Transcript extraction now includes Instagram in deep mode via Whisper fallback (`fetch_youtube_whisper.py`) in addition to existing YouTube captions/Whisper flow.
+- Instagram metadata quality-gating added: generic low-signal responses (`title=Instagram`/empty login-like description) are retried and are not cached, preventing overwrite of previously high-quality captures.
 - Intelligence pipeline centralized under `server/intelligence`.
 
 ## Master Documentation Index
 
 - Product and setup overview: `README.md` (this file)
 - End-to-end pipeline test notebook: `server/pipeline_test.ipynb`
+- SLA + category-breakdown pipeline notebook: `server/pipeline_sla_test.ipynb`
+  - supports `INTELLIGENCE_MODE="compare"` to benchmark `draft_async` (fast path) vs `sync` (final path) in one run.
 - UI architecture and splash policy: `src/ui/README.md`
 - Home screen entry: `src/ui/home/HomeScreen.tsx`
 - Home screen data/invariants: `src/ui/home/home.data.ts`
@@ -85,13 +90,40 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
 
 - `POST /api/metadata/extract`
 - body: `{ "url": "https://example.com", "mode": "quick" | "deep" }`
+- returns optional extraction perf/cache telemetry:
+  - `perf`: `{ totalMs, metadataMs, transcriptMs, ocrMs }`
+  - `sla`: `{ totalMs, metadataMs, transcriptMs, ocrMs }`
+  - `cache`: `{ hit, key }`
+- returns deterministic merged text fields for intelligence:
+  - `combinedTextRaw`: raw merged `title + description + transcript + ocr`
+  - `combinedTextClean`: cleaned deterministic text (dedupe/normalize/boilerplate-trim)
+  - `cleanupStats`: cleanup metrics
+  - `stageStatus`: status per stage (`basicMetadata`,`caption`,`transcript`,`ocr`)
+  - `stages`: stage provider/reason/chars
+  - `stageTimingsMs`: stage timings for SLA analysis
+
+- `POST /api/metadata/extract/deep-async`
+- body: `{ "url": "https://example.com" }`
+- returns immediate `quick` extraction + `jobId` for background deep extraction
+
+- `GET /api/metadata/jobs/:jobId`
+- polls deep extraction async job status/result
 
 ### Intelligence (LLM)
 
 - `POST /api/intelligence/extract`
-- body: `{ "source": <extraction_result>, "mode": "sync" | "async" }`
+- body: `{ "source": <extraction_result>, "mode": "sync" | "async" | "draft_async" }`
 - sync: returns structured entities immediately
 - async: returns `jobId` and status envelope
+- draft_async: returns immediate heuristic draft + `jobId` for finalized async model output
+- LLM input contract now prioritizes `source.combinedTextClean` (minimal context) to reduce hallucination risk.
+- structured output now includes:
+  - `showIn`: `{ eat, do, stay, see }`
+  - `structuredEntities[]`: compact strict entities for product mapping
+  - `entities[]`: normalized detailed entities with category-specific level-2 metadata scaffold
+- includes internal profiling fields for SLA tuning:
+  - `timingsMs`: `{ total, provider, schemaFirstPass, normalize, schemaSecondPass }`
+  - `providerMeta`: `{ model }`
 
 - `GET /api/intelligence/jobs/:jobId`
 - returns async job status/result
@@ -145,6 +177,13 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
   - `DATABASE_URL` (Postgres connection string; canonical auth store)
   - `CLIENT_ORIGIN` (frontend origin for credentialed CORS, e.g. `http://localhost:5173`)
   - `EMAIL_OTP_DEV_MODE=true` (dev-only OTP preview in response; disable in production)
+- Add rollout feature flags:
+  - `EXTRACTION_V2_ENABLED=true`
+  - `INTELLIGENCE_STRUCTURED_ENABLED=true`
+  - `CATEGORY_LEVEL2_ENABLED=true`
+- Optional SLA rollup logging:
+  - `EXTRACTION_SLA_LOG_EVERY=20` (logs p50/p95 every N runs)
+  - `INTELLIGENCE_SLA_LOG_EVERY=20` (logs p50/p95 every N runs)
 - In Google Cloud Console:
   - Enable Google Identity Services/OAuth consent
   - Add authorized JavaScript origins for local + production app URLs
@@ -159,3 +198,10 @@ npm run typecheck:server
 npm run test:intelligence
 npm run build
 ```
+
+## Extraction SLA tuning env (optional)
+
+- `EXTRACTION_CACHE_TTL_MS` (default `600000`)
+- `EXTRACTION_METADATA_BUDGET_MS` (default `12000`)
+- `EXTRACTION_TRANSCRIPT_BUDGET_MS` (default `8000`)
+- `EXTRACTION_OCR_BUDGET_MS` (default `8000`)

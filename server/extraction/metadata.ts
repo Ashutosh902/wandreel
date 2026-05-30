@@ -41,42 +41,116 @@ async function extractViaHtml(canonicalUrl: string, sourceUrl: string): Promise<
   };
 }
 
+function isLowSignalInstagramMetadata(meta: ExtractedMetadata): boolean {
+  if (meta.platform !== "instagram") return false;
+  const title = String(meta.title || "").trim().toLowerCase();
+  const description = String(meta.description || "").trim().toLowerCase();
+  if (!title && !description) return true;
+  if (title === "instagram") return true;
+  if (description.includes("create an account or log in to instagram")) return true;
+  return false;
+}
+
+const lastHighQualityInstagramMetadataByCanonicalUrl = new Map<string, ExtractedMetadata>();
+
+function cloneMetadata(meta: ExtractedMetadata): ExtractedMetadata {
+  return JSON.parse(JSON.stringify(meta)) as ExtractedMetadata;
+}
+
+function fromYoutubeScript(parsed: any, sourceUrl: string, canonicalUrl: string): ExtractedMetadata | null {
+  if (!parsed?.ok) return null;
+  return {
+    sourceUrl,
+    canonicalUrl,
+    platform: "youtube",
+    title: String(parsed.title || "Untitled").trim() || "Untitled",
+    description: String(parsed.description || "").trim(),
+    siteName: "YouTube",
+    imageUrl: String(parsed.thumbnail || "").trim() || null,
+    fetchedAtIso: new Date().toISOString(),
+    provider: "youtube_script",
+  };
+}
+
+function fromInstagramScript(parsed: any, sourceUrl: string, canonicalUrl: string): ExtractedMetadata | null {
+  if (!parsed?.ok) return null;
+  return {
+    sourceUrl,
+    canonicalUrl,
+    platform: "instagram",
+    title: String(parsed.title || "Untitled").trim() || "Untitled",
+    description: String(parsed.description || "").trim(),
+    siteName: "Instagram",
+    imageUrl: String(parsed.thumbnail || "").trim() || null,
+    fetchedAtIso: new Date().toISOString(),
+    provider: "instagram_script",
+  };
+}
+
+async function extractViaPlatformScript(platform: "youtube" | "instagram", canonicalUrl: string, sourceUrl: string): Promise<ExtractedMetadata> {
+  if (platform === "youtube") {
+    const parsed = await runPythonJsonScript("fetch_youtube_metadata.py", canonicalUrl, 30000);
+    const out = fromYoutubeScript(parsed, sourceUrl, canonicalUrl);
+    if (out) return out;
+    throw new Error("youtube_script_failed");
+  }
+
+  const parsed = await runPythonJsonScript("fetch_instagram_metadata.py", canonicalUrl, 30000);
+  const out = fromInstagramScript(parsed, sourceUrl, canonicalUrl);
+  if (out) return out;
+  throw new Error("instagram_script_failed");
+}
+
 export async function extractMetadata(sourceUrl: string): Promise<ExtractedMetadata> {
   const canonicalUrl = canonicalizeUrl(sourceUrl);
   assertSafeHost(canonicalUrl);
   const platform = detectSourcePlatform(canonicalUrl);
 
-  if (platform === "youtube") {
-    const parsed = await runPythonJsonScript("fetch_youtube_metadata.py", canonicalUrl, 30000);
-    if (parsed?.ok) {
-      return {
-        sourceUrl,
-        canonicalUrl,
-        platform,
-        title: String(parsed.title || "Untitled").trim() || "Untitled",
-        description: String(parsed.description || "").trim(),
-        siteName: "YouTube",
-        imageUrl: String(parsed.thumbnail || "").trim() || null,
-        fetchedAtIso: new Date().toISOString(),
-        provider: "youtube_script",
-      };
+  if (platform === "instagram") {
+    const rememberedHighQuality = lastHighQualityInstagramMetadataByCanonicalUrl.get(canonicalUrl);
+    try {
+      const scriptMeta = await extractViaPlatformScript("instagram", canonicalUrl, sourceUrl);
+      if (!isLowSignalInstagramMetadata(scriptMeta)) {
+        lastHighQualityInstagramMetadataByCanonicalUrl.set(canonicalUrl, cloneMetadata(scriptMeta));
+        return scriptMeta;
+      }
+
+      // Retry script once for transient Instagram responses.
+      const scriptMetaRetry = await extractViaPlatformScript("instagram", canonicalUrl, sourceUrl);
+      if (!isLowSignalInstagramMetadata(scriptMetaRetry)) {
+        lastHighQualityInstagramMetadataByCanonicalUrl.set(canonicalUrl, cloneMetadata(scriptMetaRetry));
+        return scriptMetaRetry;
+      }
+
+      const htmlMeta = await extractViaHtml(canonicalUrl, sourceUrl);
+      if (!isLowSignalInstagramMetadata(htmlMeta)) {
+        lastHighQualityInstagramMetadataByCanonicalUrl.set(canonicalUrl, cloneMetadata(htmlMeta));
+        return htmlMeta;
+      }
+
+      // Prevent generic Instagram metadata from replacing previously good extraction.
+      if (rememberedHighQuality) {
+        return {
+          ...cloneMetadata(rememberedHighQuality),
+          sourceUrl,
+          fetchedAtIso: new Date().toISOString(),
+        };
+      }
+
+      return scriptMetaRetry;
+    } catch {
+      // Fallback handled below.
     }
   }
 
-  if (platform === "instagram") {
-    const parsed = await runPythonJsonScript("fetch_instagram_metadata.py", canonicalUrl, 30000);
-    if (parsed?.ok) {
-      return {
-        sourceUrl,
-        canonicalUrl,
-        platform,
-        title: String(parsed.title || "Untitled").trim() || "Untitled",
-        description: String(parsed.description || "").trim(),
-        siteName: "Instagram",
-        imageUrl: String(parsed.thumbnail || "").trim() || null,
-        fetchedAtIso: new Date().toISOString(),
-        provider: "instagram_script",
-      };
+  if (platform === "youtube") {
+    try {
+      return await Promise.any([
+        extractViaPlatformScript("youtube", canonicalUrl, sourceUrl),
+        extractViaHtml(canonicalUrl, sourceUrl),
+      ]);
+    } catch {
+      // Fallback handled below.
     }
   }
 

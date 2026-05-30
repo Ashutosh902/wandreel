@@ -2,6 +2,7 @@ import { z } from "zod";
 import { SOURCE_PLATFORMS, SOURCE_TYPES, SUPPORTED_CATEGORIES } from "./types";
 
 const categorySchema = z.enum(SUPPORTED_CATEGORIES);
+const confidenceSchema = z.enum(["high", "medium", "low"]);
 
 export const intelligenceOutputSchema = z.object({
   source: z.object({
@@ -20,7 +21,30 @@ export const intelligenceOutputSchema = z.object({
     confidence: z.number().min(0).max(1),
   })),
   categoriesPresent: z.array(categorySchema),
-  weakMentions: z.array(categorySchema),
+  weakMentions: z.array(
+    z.object({
+      text: z.string().min(1),
+      reason: z.string().min(1),
+    }),
+  ),
+  showIn: z.object({
+    eat: z.boolean(),
+    do: z.boolean(),
+    stay: z.boolean(),
+    see: z.boolean(),
+  }),
+  structuredEntities: z.array(z.object({
+    name: z.string().min(1),
+    category: categorySchema,
+    locality: z.string().nullable(),
+    city: z.string().nullable(),
+    state: z.string().nullable(),
+    country: z.string().nullable(),
+    address: z.string().nullable(),
+    confidence: confidenceSchema,
+    googleMapsQuery: z.string().nullable(),
+    evidenceText: z.string().nullable(),
+  })),
   entities: z.array(z.object({
     category: categorySchema,
     name: z.string().min(1),
@@ -31,9 +55,42 @@ export const intelligenceOutputSchema = z.object({
     locality: z.string().nullable(),
     tags: z.array(z.string()),
     details: z.record(z.string(), z.unknown()),
+    level2: z.union([
+      z.object({
+        category: z.literal("eat"),
+        cuisineType: z.string().nullable(),
+        mealType: z.string().nullable(),
+        dietaryTags: z.array(z.string()),
+        vibeTags: z.array(z.string()),
+        priceTier: z.string().nullable(),
+      }),
+      z.object({
+        category: z.literal("do"),
+        activityType: z.string().nullable(),
+        timeTag: z.string().nullable(),
+        audienceTags: z.array(z.string()),
+        vibeTags: z.array(z.string()),
+        priceTier: z.string().nullable(),
+      }),
+      z.object({
+        category: z.literal("stay"),
+        stayType: z.string().nullable(),
+        useCase: z.string().nullable(),
+        amenities: z.array(z.string()),
+        locationTags: z.array(z.string()),
+        priceTier: z.string().nullable(),
+      }),
+      z.object({
+        category: z.literal("see"),
+        placeType: z.string().nullable(),
+        experienceTag: z.string().nullable(),
+        vibeTags: z.array(z.string()),
+        entryFeeSignal: z.string().nullable(),
+      }),
+    ]),
     googleMapsQuery: z.string().nullable(),
     sourceEvidence: z.string().min(1),
-    confidence: z.number().min(0).max(1),
+    confidence: confidenceSchema,
   })),
   visibility: z.object({
     showIn: z.array(z.string()),

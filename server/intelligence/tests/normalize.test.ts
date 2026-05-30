@@ -6,7 +6,7 @@ test("normalizer maps aliases, dedupes, clamps confidence and sets categoriesPre
   const out = normalizeIntelligenceOutput({
     source: { platform: "youtube", sourceType: "travel_discovery_video", title: "Trip", creator: "A" },
     categoriesPresent: ["food"],
-    weakMentions: ["food"],
+    weakMentions: [{ text: "food", reason: "generic mention" }],
     entities: [
       {
         category: "food",
@@ -14,7 +14,7 @@ test("normalizer maps aliases, dedupes, clamps confidence and sets categoriesPre
         entityType: "park_activity",
         city: "Patna",
         tags: ["boating"],
-        details: {},
+        details: { activityType: "outdoor", timeTag: "evening" },
         sourceEvidence: "boating and cycling",
         confidence: 1.7,
       },
@@ -24,7 +24,7 @@ test("normalizer maps aliases, dedupes, clamps confidence and sets categoriesPre
         entityType: "park_activity",
         city: "Patna",
         tags: ["cycling"],
-        details: {},
+        details: { activityType: "outdoor", timeTag: "weekend" },
         sourceEvidence: "cycling",
         confidence: -1,
       },
@@ -33,8 +33,9 @@ test("normalizer maps aliases, dedupes, clamps confidence and sets categoriesPre
 
   assert.equal(out.entities.length, 2);
   assert.deepEqual(out.categoriesPresent.sort(), ["do", "eat"].sort());
-  assert.equal(out.entities[0].confidence <= 1 && out.entities[0].confidence >= 0, true);
-  assert.equal(out.entities[1].confidence <= 1 && out.entities[1].confidence >= 0, true);
+  assert.equal(["high", "medium", "low"].includes(out.entities[0].confidence), true);
+  assert.equal(["high", "medium", "low"].includes(out.entities[1].confidence), true);
+  assert.equal(typeof out.showIn.do, "boolean");
 });
 
 test("normalizer downgrades weak food mentions to weakMentions", () => {
@@ -52,6 +53,6 @@ test("normalizer downgrades weak food mentions to weakMentions", () => {
   });
 
   assert.equal(out.entities.length, 0);
-  assert.equal(out.weakMentions.includes("eat"), true);
+  assert.equal(out.weakMentions.some((w) => w.text === "eat"), true);
   assert.equal(out.status, "no_supported_entity_found");
 });

@@ -11,11 +11,18 @@ Output: strict structured discovery JSON with:
 - `placeCollections`
 - `categoriesPresent`
 - `weakMentions`
+- `showIn` (boolean flags per category)
+- `structuredEntities` (compact typed entities for product mapping)
 - `entities`
 - `visibility`
 - `status`
 
 Supported categories are only: `eat | do | stay | see`.
+
+## Structured mode + feature flag
+
+- `INTELLIGENCE_STRUCTURED_ENABLED=true` (default): runs model + schema + normalizer.
+- `INTELLIGENCE_STRUCTURED_ENABLED=false`: returns deterministic draft output fallback.
 
 ## Flow
 
@@ -25,9 +32,10 @@ Supported categories are only: `eat | do | stay | see`.
 4. If invalid, auto-fix deterministically:
 - category alias mapping
 - null/default normalization
-- confidence clamping
+- confidence normalization (`high|medium|low`)
 - entity dedupe
 - visibility/category cleanup
+- level-2 metadata scaffolding per category (`eat/do/stay/see`)
 5. Revalidate.
 6. If still invalid, mark `status="needs_review"` and return validation errors.
 
@@ -50,3 +58,4 @@ Supported categories are only: `eat | do | stay | see`.
 - No DB persistence in this phase.
 - Google Place resolution is intentionally out of scope; only `googleMapsQuery` is generated.
 - Queue backend is in-memory for now via pluggable store interface.
+- LLM input is `combinedTextClean` first; raw extraction dumps are intentionally not sent.

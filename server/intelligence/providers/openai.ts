@@ -2,6 +2,16 @@ import OpenAI from "openai";
 import type { ExtractionResult } from "../../extraction/types";
 import { buildSystemPrompt, buildUserPrompt } from "../prompts";
 
+export type OpenAiExtractionResult = {
+  raw: unknown;
+  timingsMs: {
+    provider: number;
+  };
+  providerMeta: {
+    model: string;
+  };
+};
+
 function getClient(): OpenAI {
   const apiKey = String(process.env.OPENAI_API_KEY || process.env.AI_INTEGRATIONS_OPENAI_API_KEY || "").trim();
   if (!apiKey) {
@@ -26,10 +36,11 @@ function extractResponseText(payload: any): string {
   return parts.join("\n").trim();
 }
 
-export async function callOpenAiStructuredExtraction(source: ExtractionResult): Promise<unknown> {
+export async function callOpenAiStructuredExtraction(source: ExtractionResult): Promise<OpenAiExtractionResult> {
   const client = getClient();
   const model = process.env.INTELLIGENCE_MODEL || "gpt-5-nano";
 
+  const startedAt = Date.now();
   const response = await client.responses.create({
     model,
     input: [
@@ -42,12 +53,27 @@ export async function callOpenAiStructuredExtraction(source: ExtractionResult): 
       },
     },
   });
+  const providerMs = Date.now() - startedAt;
 
   const rawText = extractResponseText(response as any);
-  if (!rawText) return null;
-  try {
-    return JSON.parse(rawText);
-  } catch {
-    return null;
+  if (!rawText) {
+    return {
+      raw: null,
+      timingsMs: { provider: providerMs },
+      providerMeta: { model },
+    };
   }
+
+  let parsed: unknown = null;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch {
+    parsed = null;
+  }
+
+  return {
+    raw: parsed,
+    timingsMs: { provider: providerMs },
+    providerMeta: { model },
+  };
 }

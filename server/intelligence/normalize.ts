@@ -1,4 +1,4 @@
-import type { IntelligenceOutput, SupportedCategory } from "./types";
+import type { CategoryLevel2Metadata, EntityConfidence, IntelligenceOutput, SupportedCategory } from "./types";
 
 const CATEGORY_ALIAS: Record<string, SupportedCategory> = {
   eat: "eat",
@@ -30,7 +30,21 @@ function asCategory(input: unknown): SupportedCategory | null {
   return CATEGORY_ALIAS[key] || null;
 }
 
-function clampConfidence(input: unknown): number {
+function toConfidence(input: unknown): EntityConfidence {
+  const text = String(input || "").trim().toLowerCase();
+  if (text === "high" || text === "medium" || text === "low") return text;
+  const value = Number(input);
+  if (!Number.isFinite(value)) return "low";
+  if (value >= 0.75) return "high";
+  if (value >= 0.45) return "medium";
+  return "low";
+}
+
+function toNumericConfidence(input: unknown): number {
+  const text = String(input || "").trim().toLowerCase();
+  if (text === "high") return 0.9;
+  if (text === "medium") return 0.6;
+  if (text === "low") return 0.3;
   const value = Number(input);
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(1, value));
@@ -55,6 +69,51 @@ function buildMapsQuery(entity: {
 function isWeakFoodOnly(entityType: string, evidence: string): boolean {
   const text = `${entityType} ${evidence}`.toLowerCase();
   return /(local food|delicious food|great food|try food|restaurants in town|best food spots|generic_food)/.test(text);
+}
+
+function sanitizeTags(input: unknown): string[] {
+  return Array.isArray(input) ? input.map((v) => String(v || "").trim()).filter(Boolean) : [];
+}
+
+function buildLevel2(category: SupportedCategory, entity: any): CategoryLevel2Metadata {
+  const details = entity?.details && typeof entity.details === "object" ? entity.details : {};
+  switch (category) {
+    case "eat":
+      return {
+        category,
+        cuisineType: normalizeLabel(details.cuisineType),
+        mealType: normalizeLabel(details.mealType),
+        dietaryTags: sanitizeTags(details.dietaryTags),
+        vibeTags: sanitizeTags(details.vibeTags),
+        priceTier: normalizeLabel(details.priceTier),
+      };
+    case "do":
+      return {
+        category,
+        activityType: normalizeLabel(details.activityType),
+        timeTag: normalizeLabel(details.timeTag),
+        audienceTags: sanitizeTags(details.audienceTags),
+        vibeTags: sanitizeTags(details.vibeTags),
+        priceTier: normalizeLabel(details.priceTier),
+      };
+    case "stay":
+      return {
+        category,
+        stayType: normalizeLabel(details.stayType),
+        useCase: normalizeLabel(details.useCase),
+        amenities: sanitizeTags(details.amenities),
+        locationTags: sanitizeTags(details.locationTags),
+        priceTier: normalizeLabel(details.priceTier),
+      };
+    default:
+      return {
+        category,
+        placeType: normalizeLabel(details.placeType),
+        experienceTag: normalizeLabel(details.experienceTag),
+        vibeTags: sanitizeTags(details.vibeTags),
+        entryFeeSignal: normalizeLabel(details.entryFeeSignal),
+      };
+  }
 }
 
 export function normalizeIntelligenceOutput(raw: unknown): IntelligenceOutput {
@@ -88,9 +147,10 @@ export function normalizeIntelligenceOutput(raw: unknown): IntelligenceOutput {
         locality: normalizeLabel(entity?.locality),
         tags: Array.isArray(entity?.tags) ? entity.tags.map((tag: unknown) => String(tag)).filter(Boolean) : [],
         details: entity?.details && typeof entity.details === "object" ? entity.details : {},
+        level2: buildLevel2(category, entity),
         googleMapsQuery: normalizeLabel(entity?.googleMapsQuery),
         sourceEvidence,
-        confidence: clampConfidence(entity?.confidence),
+        confidence: toConfidence(entity?.confidence),
       };
 
       if (!out.googleMapsQuery) {
@@ -110,19 +170,25 @@ export function normalizeIntelligenceOutput(raw: unknown): IntelligenceOutput {
     ).values(),
   );
 
-  const weakMentions: SupportedCategory[] = Array.from(
-    new Set(
-      weakMentionsRaw
-        .map((mention: unknown) => asCategory(mention))
-        .filter((mention: SupportedCategory | null): mention is SupportedCategory => Boolean(mention)),
-    ),
-  );
+  const weakMentions: Array<{ text: string; reason: string }> = [];
+  for (const mention of weakMentionsRaw) {
+    if (mention && typeof mention === "object") {
+      const text = normalizeLabel((mention as any).text);
+      const reason = normalizeLabel((mention as any).reason);
+      if (text && reason) weakMentions.push({ text, reason });
+      continue;
+    }
+    const text = String(mention || "").trim();
+    if (text) weakMentions.push({ text, reason: "Generic mention inferred from source text." });
+  }
 
   if (
     droppedWeakEatEntity ||
     (weakMentionsRaw.some((mention: unknown) => /food|restaurant|eat/i.test(String(mention || ""))) && !dedupedEntities.some((e) => e.category === "eat"))
   ) {
-    if (!weakMentions.includes("eat")) weakMentions.push("eat");
+    if (!weakMentions.some((w) => /eat|food|restaurant/i.test(w.text))) {
+      weakMentions.push({ text: "eat", reason: "Only weak food mention found." });
+    }
   }
 
   const categoriesPresent: SupportedCategory[] = Array.from(new Set(dedupedEntities.map((entity) => entity.category)));
@@ -139,7 +205,7 @@ export function normalizeIntelligenceOutput(raw: unknown): IntelligenceOutput {
         city: normalizeLabel(item?.city),
         state: normalizeLabel(item?.state),
         country: normalizeLabel(item?.country),
-        confidence: clampConfidence(item?.confidence),
+        confidence: toNumericConfidence(item?.confidence),
       };
     })
     .filter(Boolean) as IntelligenceOutput["placeCollections"];
@@ -157,6 +223,18 @@ export function normalizeIntelligenceOutput(raw: unknown): IntelligenceOutput {
   });
 
   const status: IntelligenceOutput["status"] = dedupedEntities.length > 0 ? "ready" : "no_supported_entity_found";
+  const structuredEntities = dedupedEntities.map((entity) => ({
+    name: entity.name,
+    category: entity.category,
+    locality: entity.locality,
+    city: entity.city,
+    state: entity.state,
+    country: entity.country,
+    address: normalizeLabel((entity.details as any)?.address) || null,
+    confidence: entity.confidence,
+    googleMapsQuery: entity.googleMapsQuery,
+    evidenceText: entity.sourceEvidence || null,
+  }));
 
   return {
     source: {
@@ -181,6 +259,13 @@ export function normalizeIntelligenceOutput(raw: unknown): IntelligenceOutput {
     placeCollections,
     categoriesPresent,
     weakMentions,
+    showIn: {
+      eat: categoriesPresent.includes("eat"),
+      do: categoriesPresent.includes("do"),
+      stay: categoriesPresent.includes("stay"),
+      see: categoriesPresent.includes("see"),
+    },
+    structuredEntities,
     entities: dedupedEntities,
     visibility: {
       showIn: Array.from(showIn),

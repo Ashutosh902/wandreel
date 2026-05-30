@@ -18,6 +18,7 @@ def add_user_site_packages() -> None:
 def add_local_site_packages() -> None:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
+        os.path.normpath(os.path.join(script_dir, "..", "pydeps")),
         os.environ.get("LAYER1_PYDEPS_PATH", ""),
         os.path.normpath(os.path.join(script_dir, "..", "..", "..", "pinshort_dataset_builder", "pydeps_run")),
         os.path.normpath(os.path.join(script_dir, "..", "..", "..", "pinshort_dataset_builder", "pydeps")),
@@ -34,26 +35,32 @@ add_local_site_packages()
 def extract_shortcode(url: str) -> str:
     parsed = urlparse(url)
     parts = [p for p in parsed.path.split("/") if p]
-    if len(parts) >= 2 and parts[0] in {"reel", "p", "tv"}:
+    if len(parts) >= 2 and parts[0] in {"reel", "reels", "p", "tv"}:
         return parts[1].strip()
     return ""
 
 
 def fetch_public_metadata(url: str) -> dict:
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; PinShort/1.0)"}
+    html = ""
     try:
         import requests  # type: ignore
+        try:
+            res = requests.get(url, headers=headers, timeout=12)
+        except Exception as err:
+            return {"ok": False, "error": f"PUBLIC_FETCH_FAILED: {err}"}
+        if res.status_code != 200:
+            return {"ok": False, "error": f"PUBLIC_HTTP_{res.status_code}"}
+        html = str(res.text or "")
     except Exception:
-        return {"ok": False, "error": "MISSING_REQUESTS"}
+        try:
+            from urllib.request import Request, urlopen
+            req = Request(url, headers=headers)
+            with urlopen(req, timeout=12) as resp:
+                html = resp.read().decode("utf-8", errors="replace")
+        except Exception as err:
+            return {"ok": False, "error": f"PUBLIC_FETCH_FAILED_NO_REQUESTS: {err}"}
 
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; PinShort/1.0)"}
-    try:
-        res = requests.get(url, headers=headers, timeout=12)
-    except Exception as err:
-        return {"ok": False, "error": f"PUBLIC_FETCH_FAILED: {err}"}
-    if res.status_code != 200:
-        return {"ok": False, "error": f"PUBLIC_HTTP_{res.status_code}"}
-
-    html = res.text
     title = ""
     description = ""
     owner = ""
@@ -185,4 +192,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-

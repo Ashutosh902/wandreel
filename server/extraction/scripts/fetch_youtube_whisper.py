@@ -21,6 +21,7 @@ def add_user_site_packages() -> None:
 def add_local_site_packages() -> None:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
+        os.path.normpath(os.path.join(script_dir, "..", "pydeps")),
         os.environ.get("LAYER1_PYDEPS_PATH", ""),
         os.path.normpath(os.path.join(script_dir, "..", "..", "..", "pinshort_dataset_builder", "pydeps")),
     ]
@@ -118,7 +119,7 @@ def extract_media_id(url: str) -> str:
 
     if "instagram.com" in host:
         parts = [p for p in path.split("/") if p]
-        if len(parts) >= 2 and parts[0] in {"reel", "p", "tv"}:
+        if len(parts) >= 2 and parts[0] in {"reel", "reels", "p", "tv"}:
             return sanitize_media_id(parts[1])
 
     match = re.search(r"(?:v=|/shorts/|youtu\.be/)([A-Za-z0-9_-]{11})", url)
@@ -157,13 +158,6 @@ def main() -> int:
         "noplaylist": True,
         "format": "bestaudio/best",
         "outtmpl": out_tmpl,
-        "postprocessors": [
-            {
-                "key": "FFmpegExtractAudio",
-                "preferredcodec": "mp3",
-                "preferredquality": "96",
-            }
-        ],
     }
 
     ffmpeg_location = get_ffmpeg_location()
@@ -183,6 +177,9 @@ def main() -> int:
             os.path.join(out_dir, f"{media_id}.mp3"),
             os.path.join(out_dir, f"{media_id}.m4a"),
             os.path.join(out_dir, f"{media_id}.webm"),
+            os.path.join(out_dir, f"{media_id}.mp4"),
+            os.path.join(out_dir, f"{media_id}.aac"),
+            os.path.join(out_dir, f"{media_id}.opus"),
         ]
         for candidate in candidates:
             if os.path.exists(candidate):

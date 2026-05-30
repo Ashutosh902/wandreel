@@ -17,6 +17,20 @@ This folder is the single source of truth for all link-extraction logic.
 - OCR (`ocr.ts`): frame text extraction for video/social links
 7. Unified JSON response is returned.
 
+## Extraction v2 contract
+
+When `EXTRACTION_V2_ENABLED=true` (default), response also includes:
+- `source`, `platform`, `canonicalUrl`
+- `stageStatus` and `stages` for `basicMetadata`, `caption`, `transcript`, `ocr`
+- `stageTimingsMs` and `stageFailures`
+- `combinedTextRaw`, `combinedTextClean`, `cleanupStats`
+- `sla` (same numbers as `perf`, maintained for compatibility)
+
+Stage status semantics:
+- `success`: stage produced expected output
+- `partial`: stage ran but returned low/no signal
+- `failed`: stage skipped/unsupported or failed hard
+
 ## Preferred Testing Entry
 
 - Use common notebook for full pipeline testing: `../pipeline_test.ipynb`
@@ -38,3 +52,4 @@ This folder is the single source of truth for all link-extraction logic.
 - Provider-specific extraction is isolated; easy to swap implementations.
 - Conditional deep steps keep average latency and compute cost lower.
 - Canonical URL enables future dedupe and cache keys.
+- Stage-level SLA fields enable p50/p95 observability without changing consumer contracts.
