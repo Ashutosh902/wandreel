@@ -25,6 +25,58 @@ const CATEGORY_ALIAS: Record<string, SupportedCategory> = {
 
 const ALL_CATEGORIES: SupportedCategory[] = ["eat", "do", "stay", "see"];
 
+const EAT_VIBE_MAP: Record<string, string> = {
+  trending: "Trending",
+  visited: "Visited",
+  "date night": "Date-night",
+  datenight: "Date-night",
+  budget: "Budget",
+  "street style": "Street-style",
+  streetstyle: "Street-style",
+  iconic: "Iconic",
+  veg: "Veg-only",
+  "veg only": "Veg-only",
+  vegetarian: "Veg-only",
+  cafe: "Cafe",
+};
+
+const DO_VIBE_MAP: Record<string, string> = {
+  trending: "Trending",
+  visited: "Visited",
+  weekend: "Weekend",
+  outdoor: "Outdoor",
+  adventure: "Adventure",
+  family: "Family",
+  comedy: "Comedy",
+  workshop: "Workshop",
+  free: "Free",
+  "hidden gem": "Hidden gem",
+};
+
+const STAY_VIBE_MAP: Record<string, string> = {
+  saved: "Saved",
+  visited: "Visited",
+  budget: "Budget",
+  premium: "Premium",
+  "couple friendly": "Couple-friendly",
+  workation: "Workation",
+  pool: "Pool",
+  dorm: "Dorm",
+  family: "Family",
+};
+
+const SEE_VIBE_MAP: Record<string, string> = {
+  trending: "Trending",
+  visited: "Visited",
+  heritage: "Heritage",
+  nature: "Nature",
+  "photo spots": "Photo spots",
+  "hidden gem": "Hidden gem",
+  spiritual: "Spiritual",
+  iconic: "Iconic",
+  free: "Free",
+};
+
 function asCategory(input: unknown): SupportedCategory | null {
   const key = String(input || "").trim().toLowerCase();
   return CATEGORY_ALIAS[key] || null;
@@ -75,44 +127,90 @@ function sanitizeTags(input: unknown): string[] {
   return Array.isArray(input) ? input.map((v) => String(v || "").trim()).filter(Boolean) : [];
 }
 
+function mapAllowedTags(input: string[], category: SupportedCategory): string[] {
+  const mapper =
+    category === "eat" ? EAT_VIBE_MAP :
+      category === "do" ? DO_VIBE_MAP :
+        category === "stay" ? STAY_VIBE_MAP : SEE_VIBE_MAP;
+  const out = new Set<string>();
+  for (const tag of input) {
+    const key = tag.toLowerCase().replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
+    const mapped = mapper[key];
+    if (mapped) out.add(mapped);
+  }
+  return Array.from(out);
+}
+
 function buildLevel2(category: SupportedCategory, entity: any): CategoryLevel2Metadata {
   const details = entity?.details && typeof entity.details === "object" ? entity.details : {};
   switch (category) {
     case "eat":
+      {
+      const vibeTags = mapAllowedTags(sanitizeTags(details.vibeTags), category);
+      const dietaryTags = sanitizeTags(details.dietaryTags).filter((tag) =>
+        /veg|vegetarian|vegan|eggless|jain/i.test(tag),
+      );
       return {
         category,
         cuisineType: normalizeLabel(details.cuisineType),
         mealType: normalizeLabel(details.mealType),
-        dietaryTags: sanitizeTags(details.dietaryTags),
-        vibeTags: sanitizeTags(details.vibeTags),
+        dietaryTags,
+        vibeTags,
         priceTier: normalizeLabel(details.priceTier),
       };
+      }
     case "do":
+      {
+      const vibeTags = mapAllowedTags(sanitizeTags(details.vibeTags), category);
+      const audienceTags = sanitizeTags(details.audienceTags).filter((tag) =>
+        /family|friends|solo|couple|kids/i.test(tag),
+      );
       return {
         category,
         activityType: normalizeLabel(details.activityType),
         timeTag: normalizeLabel(details.timeTag),
-        audienceTags: sanitizeTags(details.audienceTags),
-        vibeTags: sanitizeTags(details.vibeTags),
+        audienceTags,
+        vibeTags,
         priceTier: normalizeLabel(details.priceTier),
       };
+      }
     case "stay":
+      {
+      const locationTags = mapAllowedTags(sanitizeTags(details.locationTags), category);
+      const amenities = sanitizeTags(details.amenities).slice(0, 8);
       return {
         category,
         stayType: normalizeLabel(details.stayType),
         useCase: normalizeLabel(details.useCase),
-        amenities: sanitizeTags(details.amenities),
-        locationTags: sanitizeTags(details.locationTags),
+        amenities,
+        locationTags,
         priceTier: normalizeLabel(details.priceTier),
       };
+      }
     default:
+      {
+      const vibeTags = mapAllowedTags(sanitizeTags(details.vibeTags), category);
       return {
         category,
         placeType: normalizeLabel(details.placeType),
         experienceTag: normalizeLabel(details.experienceTag),
-        vibeTags: sanitizeTags(details.vibeTags),
+        vibeTags,
         entryFeeSignal: normalizeLabel(details.entryFeeSignal),
       };
+      }
+  }
+}
+
+function listTagsFromLevel2(level2: CategoryLevel2Metadata): string[] {
+  switch (level2.category) {
+    case "eat":
+      return level2.vibeTags;
+    case "do":
+      return level2.vibeTags;
+    case "stay":
+      return level2.locationTags;
+    default:
+      return level2.vibeTags;
   }
 }
 
@@ -137,6 +235,7 @@ export function normalizeIntelligenceOutput(raw: unknown): IntelligenceOutput {
         return null;
       }
 
+      const level2 = buildLevel2(category, entity);
       const out = {
         category,
         name,
@@ -145,9 +244,9 @@ export function normalizeIntelligenceOutput(raw: unknown): IntelligenceOutput {
         state: normalizeLabel(entity?.state),
         country: normalizeLabel(entity?.country),
         locality: normalizeLabel(entity?.locality),
-        tags: Array.isArray(entity?.tags) ? entity.tags.map((tag: unknown) => String(tag)).filter(Boolean) : [],
+        tags: listTagsFromLevel2(level2),
         details: entity?.details && typeof entity.details === "object" ? entity.details : {},
-        level2: buildLevel2(category, entity),
+        level2,
         googleMapsQuery: normalizeLabel(entity?.googleMapsQuery),
         sourceEvidence,
         confidence: toConfidence(entity?.confidence),

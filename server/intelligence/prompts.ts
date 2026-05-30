@@ -34,7 +34,8 @@ Return JSON only in this exact shape:
       "address": string | null,
       "confidence": "high" | "medium" | "low",
       "googleMapsQuery": string | null,
-      "evidenceText": string | null
+      "evidenceText": string | null,
+      "level2": object
     }
   ],
   "weakMentions": [{ "text": string, "reason": string }],
@@ -55,7 +56,18 @@ Hard rules:
 10. Create placeCollections from detected city/locality/region.
 11. Generate googleMapsQuery using entity name + locality + city + state + country when available.
 12. Set showIn booleans based on actual extracted entities only.
-13. Never extract recipes or movies.`;
+13. Never extract recipes or movies.
+14. For each entity, include level2 fields based on category:
+    - eat: cuisineType, mealType, dietaryTags[], vibeTags[], priceTier
+    - do: activityType, timeTag, audienceTags[], vibeTags[], priceTier
+    - stay: stayType, useCase, amenities[], locationTags[], priceTier
+    - see: placeType, experienceTag, vibeTags[], entryFeeSignal
+15. Only use conservative values from text evidence. Use null or [] when unknown.
+16. Keep tags aligned to user-facing filters where possible:
+    - eat vibes: Trending, Visited, Date-night, Budget, Street-style, Iconic, Veg-only, Cafe
+    - do vibes: Trending, Visited, Weekend, Outdoor, Adventure, Family, Comedy, Workshop, Free, Hidden gem
+    - stay vibes: Saved, Visited, Budget, Premium, Couple-friendly, Workation, Pool, Dorm, Family
+    - see vibes: Trending, Visited, Heritage, Nature, Photo spots, Hidden gem, Spiritual, Iconic, Free`;
 }
 
 export function buildUserPrompt(source: ExtractionResult): string {

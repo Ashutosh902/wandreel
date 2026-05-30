@@ -65,6 +65,19 @@ const img = {
 };
 
 const CATEGORY_LEVEL2_ENABLED = String(import.meta.env.VITE_CATEGORY_LEVEL2_ENABLED ?? "true").toLowerCase() !== "false";
+const CATEGORY_FEED_CACHE_KEY = "wr_category_saved_feed_v1";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+
+type SavedPlaceApiItem = {
+  title?: string;
+  category?: string | null;
+  metadata?: {
+    locality?: string | null;
+    fullAddress?: string | null;
+    videoUrl?: string | null;
+    imageUrl?: string | null;
+  } | null;
+};
 
 const categoryConfigs: Record<CategoryLabel, CategoryScreenConfig> = {
   Taste: {
@@ -144,6 +157,7 @@ export function CategoryDetailPage({
   const sheetTouchStartYRef = useRef<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedChip, setSelectedChip] = useState<CategoryFilterChip>("All");
+  const [savedFeedPlaces, setSavedFeedPlaces] = useState<CategoryPlaceRow[]>([]);
 
   useEffect(() => {
     if (!isSheetClosing) return;
@@ -154,16 +168,99 @@ export function CategoryDetailPage({
     return () => window.clearTimeout(timer);
   }, [isSheetClosing]);
 
+  useEffect(() => {
+    const loadSavedFeed = () => {
+      try {
+        const raw = window.localStorage.getItem(CATEGORY_FEED_CACHE_KEY);
+        if (!raw) {
+          setSavedFeedPlaces([]);
+          return;
+        }
+        const parsed = JSON.parse(raw) as Record<string, CategoryPlaceRow[]>;
+        const list = Array.isArray(parsed?.[category]) ? parsed[category] : [];
+        setSavedFeedPlaces(list);
+      } catch {
+        setSavedFeedPlaces([]);
+      }
+    };
+    loadSavedFeed();
+    const listener = () => loadSavedFeed();
+    window.addEventListener("wr:category-saved-updated", listener as EventListener);
+    return () => window.removeEventListener("wr:category-saved-updated", listener as EventListener);
+  }, [category]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadServerSaved = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/saved-places`, { credentials: "include" });
+        if (!response.ok || cancelled) return;
+        const payload = (await response.json()) as { ok?: boolean; items?: SavedPlaceApiItem[] };
+        if (!payload?.ok || !Array.isArray(payload.items) || cancelled) return;
+
+        const mapped = payload.items
+          .filter((item) => String(item.category || "").toLowerCase() === category.toLowerCase())
+          .map<CategoryPlaceRow>((item) => {
+            const title = String(item.title || "Saved place").trim() || "Saved place";
+            const locality = String(item.metadata?.locality || "Unknown locality").trim() || "Unknown locality";
+            const fullAddress = String(item.metadata?.fullAddress || locality).trim() || locality;
+            const imageUrl = String(item.metadata?.imageUrl || img.expA).trim() || img.expA;
+            const videoUrl = String(item.metadata?.videoUrl || "https://www.instagram.com/").trim() || "https://www.instagram.com/";
+            return {
+              title,
+              distanceKm: 0.1,
+              metaPrimary: category,
+              metaSecondary: "Saved",
+              locality,
+              fullAddress,
+              videoUrl,
+              imageUrl,
+              tags: ["Saved", "Visited"],
+            };
+          });
+
+        setSavedFeedPlaces((prev) => {
+          const combined = [...mapped, ...prev];
+          const seen = new Set<string>();
+          const deduped: CategoryPlaceRow[] = [];
+          for (const row of combined) {
+            const key = `${row.title}::${row.locality}`.toLowerCase();
+            if (seen.has(key)) continue;
+            seen.add(key);
+            deduped.push(row);
+          }
+          return deduped.slice(0, 150);
+        });
+      } catch {
+        // Ignore network/auth failures in unauthenticated mode.
+      }
+    };
+    void loadServerSaved();
+    return () => {
+      cancelled = true;
+    };
+  }, [category]);
+
+  const mergedPlaces = useMemo(() => {
+    const base = config.places;
+    if (!savedFeedPlaces.length) return base;
+    const baseKeys = new Set(base.map((place) => `${place.title}::${place.locality}`.toLowerCase()));
+    const injected = savedFeedPlaces.filter(
+      (place) => !baseKeys.has(`${place.title}::${place.locality}`.toLowerCase()),
+    );
+    return [...injected, ...base];
+  }, [config.places, savedFeedPlaces]);
+
   const closeSheet = () => {
     if (!activePlace || isSheetClosing) return;
     setIsSheetClosing(true);
   };
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
-  const allChipLabel = `All ${config.places.length}`;
+  const allChipLabel = `All ${mergedPlaces.length}`;
   const filteredPlaces = useMemo(
     () =>
-      config.places.filter((place) => {
+      mergedPlaces.filter((place) => {
         const matchesChip = selectedChip === "All" || place.tags.includes(selectedChip);
         const matchesSearch =
           normalizedQuery.length === 0 ||
@@ -173,7 +270,7 @@ export function CategoryDetailPage({
           place.locality.toLowerCase().includes(normalizedQuery);
         return matchesChip && matchesSearch;
       }),
-    [config.places, normalizedQuery, selectedChip],
+    [mergedPlaces, normalizedQuery, selectedChip],
   );
 
   return (

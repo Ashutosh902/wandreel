@@ -11,4 +11,6 @@ test("system prompt includes hard rules and category constraints", () => {
   assert.match(prompt, /do:/i);
   assert.match(prompt, /stay:/i);
   assert.match(prompt, /see:/i);
+  assert.match(prompt, /For each entity, include level2 fields/i);
+  assert.match(prompt, /date-night/i);
 });

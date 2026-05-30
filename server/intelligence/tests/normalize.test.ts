@@ -56,3 +56,31 @@ test("normalizer downgrades weak food mentions to weakMentions", () => {
   assert.equal(out.weakMentions.some((w) => w.text === "eat"), true);
   assert.equal(out.status, "no_supported_entity_found");
 });
+
+test("normalizer maps level2 vibe tags to allowed chip vocabulary", () => {
+  const out = normalizeIntelligenceOutput({
+    source: { platform: "instagram", sourceType: "restaurant_recommendation" },
+    entities: [
+      {
+        category: "eat",
+        name: "Barkaas Patna",
+        entityType: "restaurant",
+        sourceEvidence: "Spicy food and street style mention",
+        confidence: "medium",
+        details: {
+          cuisineType: "Mughlai",
+          vibeTags: ["street style", "trending", "random_unknown"],
+          dietaryTags: ["vegetarian options", "spicy"],
+        },
+      },
+    ],
+  });
+
+  assert.equal(out.entities.length, 1);
+  const entity = out.entities[0];
+  assert.deepEqual(entity.level2.category, "eat");
+  assert.deepEqual(entity.level2.vibeTags.includes("Street-style"), true);
+  assert.deepEqual(entity.level2.vibeTags.includes("Trending"), true);
+  assert.deepEqual(entity.level2.vibeTags.includes("random_unknown"), false);
+  assert.deepEqual(entity.tags.includes("Street-style"), true);
+});

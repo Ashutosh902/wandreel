@@ -121,6 +121,11 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
   - `showIn`: `{ eat, do, stay, see }`
   - `structuredEntities[]`: compact strict entities for product mapping
   - `entities[]`: normalized detailed entities with category-specific level-2 metadata scaffold
+  - resolved location enrichments (when Maps key is configured):
+    - `structuredEntities[].placeId`
+    - `structuredEntities[].lat`, `structuredEntities[].lng`
+    - `structuredEntities[].locality|city|state|country` from Google resolution
+    - `entities[].details.placeId|lat|lng|resolutionConfidence`
 - includes internal profiling fields for SLA tuning:
   - `timingsMs`: `{ total, provider, schemaFirstPass, normalize, schemaSecondPass }`
   - `providerMeta`: `{ model }`
@@ -181,6 +186,10 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
   - `EXTRACTION_V2_ENABLED=true`
   - `INTELLIGENCE_STRUCTURED_ENABLED=true`
   - `CATEGORY_LEVEL2_ENABLED=true`
+  - `PLACE_RESOLUTION_ENABLED=true`
+- Maps resolution env:
+  - `GOOGLE_MAPS_API_KEY` (required to resolve canonical locality + coordinates)
+  - `PLACE_RESOLUTION_CACHE_TTL_MS` (optional, default 14 days)
 - Optional SLA rollup logging:
   - `EXTRACTION_SLA_LOG_EVERY=20` (logs p50/p95 every N runs)
   - `INTELLIGENCE_SLA_LOG_EVERY=20` (logs p50/p95 every N runs)

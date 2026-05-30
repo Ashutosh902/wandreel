@@ -86,6 +86,12 @@ export type StructuredEntity = {
   state: string | null;
   country: string | null;
   address: string | null;
+  placeId?: string | null;
+  photoUrl?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+  resolvedBy?: "google_maps" | "none";
+  resolutionConfidence?: "high" | "medium" | "low";
   confidence: EntityConfidence;
   googleMapsQuery: string | null;
   evidenceText: string | null;

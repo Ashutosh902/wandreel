@@ -254,3 +254,23 @@ This folder owns all Wandreel frontend architecture and components.
 - Add analyze now validates URL shape/protocol before processing and returns friendly failures for invalid links.
 - Refresh action now resets Add capture state cleanly (input, analysis state, preview state, chips, save feedback).
 - Save action now avoids duplicate local saves in a single analysis pass and shows clear user feedback.
+
+## Phase note: Add non-blocking background detection persistence
+
+- Add now follows draft-first UX: quick detected draft appears immediately while final intelligence resolves asynchronously.
+- Draft messaging was updated to a non-blocking status (`Detecting and navigating for you...`) with live elapsed seconds.
+- Draft/result cards persist as a queue in local storage until user action (save/remove), so users can leave and return without losing pending/completed detections.
+- Final async job output replaces draft cards automatically when job completion is polled successfully.
+- New detections are pushed to top of queue; older entries slide down and counters increase cumulatively.
+
+## Phase note: Add save queue completion behavior
+
+- On successful save, detected cards now auto-remove from Add queue with a short bubble-out animation.
+- Chip counters reduce immediately as cards are removed.
+- Saved entries are published to a lightweight category feed cache so they appear at the top of corresponding category pages without UI redesign.
+
+## Phase note: Real place-image preference
+
+- Intelligence place resolution now attempts to fetch a real place photo URL from Google Places using resolved `placeId`.
+- Add detected cards now prioritize `entity.photoUrl` first, then fallback to extracted source image, then category fallback image.
+- This improves restaurant/place visual relevance for newly added items without changing screen layout.

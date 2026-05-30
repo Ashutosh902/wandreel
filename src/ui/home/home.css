@@ -1150,8 +1150,10 @@
 
 .wr-add-detected-head p {
   margin: 0;
-  font-size: 28px;
+  font-size: 24px;
   font-weight: 900;
+  line-height: 1.08;
+  letter-spacing: -0.02em;
   color: #10213f;
 }
 
@@ -1183,7 +1185,7 @@
   background: #fff;
   color: #4b5563;
   padding: 0.36rem 0.66rem;
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 900;
   display: inline-flex;
   align-items: center;
@@ -1226,6 +1228,10 @@
   position: relative;
 }
 
+.wr-add-preview-card.is-removing {
+  animation: wrAddBubbleOut 240ms cubic-bezier(0.22, 0.7, 0.28, 1) forwards;
+}
+
 .wr-add-preview-close {
   position: absolute;
   right: 0.55rem;
@@ -1251,7 +1257,7 @@
 
 .wr-add-preview-kicker {
   margin: 0;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 900;
   letter-spacing: 0.14em;
   color: #b45528;
@@ -1259,15 +1265,16 @@
 
 .wr-add-preview-body h4 {
   margin: 0.2rem 0 0;
-  font-size: 28px;
-  line-height: 1.05;
+  font-size: 20px;
+  line-height: 1.12;
   letter-spacing: -0.02em;
   color: #10213f;
 }
 
 .wr-add-preview-body p {
   margin: 0.22rem 0 0;
-  font-size: 18px;
+  font-size: 14px;
+  line-height: 1.25;
   font-weight: 700;
   color: #445164;
 }
@@ -1284,15 +1291,34 @@
   border: 1px solid #d9d9d9;
   background: #ece7df;
   color: #10213f;
-  min-height: 2.2rem;
-  font-size: 18px;
-  font-weight: 900;
+  min-height: 2.04rem;
+  font-size: 14px;
+  font-weight: 800;
 }
 
 .wr-add-preview-btn.is-primary {
   border-color: #0f2a56;
   background: #102a57;
   color: #fff;
+}
+
+.wr-add-preview-btn:disabled {
+  opacity: 0.56;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.wr-add-edit-input {
+  width: 100%;
+  border: 1px solid #d8d2c8;
+  border-radius: 0.72rem;
+  min-height: 2rem;
+  padding: 0 0.62rem;
+  font-size: 13px;
+  font-weight: 600;
+  color: #10213f;
+  background: #fff;
+  margin-top: 0.36rem;
 }
 
 .wr-add-save-toast {
@@ -1361,6 +1387,19 @@
 @keyframes wrAddSkeleton {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
+}
+
+@keyframes wrAddBubbleOut {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+    filter: blur(0);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.86) translateY(-6px);
+    filter: blur(1px);
+  }
 }
 
 @media (max-width: 360px) {

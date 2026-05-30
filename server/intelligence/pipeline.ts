@@ -3,6 +3,7 @@ import type { IntelligencePipelineResult, IntelligenceRequest } from "./types";
 import { normalizeIntelligenceOutput } from "./normalize";
 import { callOpenAiStructuredExtraction } from "./providers/openai";
 import { recordSla } from "../metrics/slaTracker";
+import { resolveEntityLocality } from "./placeResolver";
 
 function adaptStructuredRaw(raw: unknown, req: IntelligenceRequest): unknown {
   if (!raw || typeof raw !== "object") return raw;
@@ -77,6 +78,65 @@ function adaptStructuredRaw(raw: unknown, req: IntelligenceRequest): unknown {
   };
 }
 
+async function enrichWithResolvedLocations(output: IntelligencePipelineResult["output"]) {
+  const enabled = String(process.env.PLACE_RESOLUTION_ENABLED || "true").toLowerCase() !== "false";
+  if (!enabled || !Array.isArray(output.structuredEntities) || output.structuredEntities.length === 0) return output;
+
+  const resolved = await Promise.all(
+    output.structuredEntities.map(async (entity) => {
+      const resolution = await resolveEntityLocality(entity);
+      return {
+        ...entity,
+        locality: resolution.locality || entity.locality,
+        city: resolution.city || entity.city,
+        state: resolution.state || entity.state,
+        country: resolution.country || entity.country,
+        address: resolution.formattedAddress || entity.address,
+        placeId: resolution.placeId,
+        photoUrl: resolution.photoUrl || entity.photoUrl || null,
+        lat: resolution.lat,
+        lng: resolution.lng,
+        resolvedBy: resolution.provider,
+        resolutionConfidence: resolution.confidence,
+      };
+    }),
+  );
+
+  const byName = new Map<string, (typeof resolved)[number]>();
+  for (const item of resolved) {
+    byName.set(`${item.category}|${item.name.toLowerCase()}`, item);
+  }
+  const entities = output.entities.map((entity) => {
+    const key = `${entity.category}|${entity.name.toLowerCase()}`;
+    const match = byName.get(key);
+    if (!match) return entity;
+    return {
+      ...entity,
+      locality: match.locality,
+      city: match.city,
+      state: match.state,
+      country: match.country,
+      details: {
+        ...entity.details,
+        address: match.address || (entity.details as any)?.address || null,
+        placeId: match.placeId || null,
+        photoUrl: match.photoUrl || null,
+        lat: match.lat ?? null,
+        lng: match.lng ?? null,
+        resolvedBy: match.resolvedBy || "none",
+        resolutionConfidence: match.resolutionConfidence || "low",
+      },
+      googleMapsQuery: match.googleMapsQuery || entity.googleMapsQuery,
+    };
+  });
+
+  return {
+    ...output,
+    structuredEntities: resolved,
+    entities,
+  };
+}
+
 export async function runIntelligencePipeline(req: IntelligenceRequest): Promise<IntelligencePipelineResult> {
   const totalStartedAt = Date.now();
   const providerResult = await callOpenAiStructuredExtraction(req.source);
@@ -85,12 +145,13 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
   const firstPass = intelligenceOutputSchema.safeParse(raw);
   const schemaFirstPassMs = Date.now() - schemaFirstStartedAt;
   if (firstPass.success) {
+    const enrichedOutput = await enrichWithResolvedLocations(firstPass.data);
     const agg = recordSla("intelligence.total", Date.now() - totalStartedAt);
     if (Number(process.env.INTELLIGENCE_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.INTELLIGENCE_SLA_LOG_EVERY) === 0) {
       console.info("[sla][intelligence.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
     }
     return {
-      output: firstPass.data,
+      output: enrichedOutput,
       validationErrors: [],
       fixed: false,
       timingsMs: {
@@ -112,12 +173,13 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
   const schemaSecondPassMs = Date.now() - schemaSecondStartedAt;
 
   if (secondPass.success) {
+    const enrichedOutput = await enrichWithResolvedLocations(secondPass.data);
     const agg = recordSla("intelligence.total", Date.now() - totalStartedAt);
     if (Number(process.env.INTELLIGENCE_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.INTELLIGENCE_SLA_LOG_EVERY) === 0) {
       console.info("[sla][intelligence.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
     }
     return {
-      output: secondPass.data,
+      output: enrichedOutput,
       validationErrors: formatZodErrors(firstPass.error),
       fixed: true,
       timingsMs: {
