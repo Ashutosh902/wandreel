@@ -269,6 +269,12 @@ This folder owns all Wandreel frontend architecture and components.
 - Chip counters reduce immediately as cards are removed.
 - Saved entries are published to a lightweight category feed cache so they appear at the top of corresponding category pages without UI redesign.
 
+## Phase note: Live current location + distance refresh
+
+- Top location bars now use device geolocation (with permission) and reverse geocode to a readable label via backend Google Maps call.
+- `Change` actions on Home/Category and Map now trigger fresh location fetch.
+- Category saved rows with stored `lat/lng` now calculate distance from current user coordinates using haversine and update displayed `km`.
+
 ## Phase note: Real place-image preference
 
 - Intelligence place resolution now attempts to fetch a real place photo URL from Google Places using resolved `placeId`.

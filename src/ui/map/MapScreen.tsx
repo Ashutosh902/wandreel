@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, LocateFixed, MapPin, Search, X } from "lucide-react";
 import { mapCategories, runMapDataChecks, type MapCategoryLabel, type MapCategoryPin } from "./map.data";
+import { useUx } from "../layout/UxProvider";
 import "./map.css";
 
 runMapDataChecks();
@@ -55,6 +56,7 @@ export function MapScreen({
   onBack?: () => void;
   onAddLink?: () => void;
 }) {
+  const { currentLocationLabel, isLocating, requestCurrentLocation } = useUx();
   const [activeMapCategories, setActiveMapCategories] = useState<MapCategoryLabel[]>([
     "Taste",
     "Activity",
@@ -139,9 +141,11 @@ export function MapScreen({
           <div className="wr-map-search">
           <MapPin size={15} className="wr-map-search-pin" />
           <div className="wr-map-search-texts">
-            <span className="wr-map-search-main">Patna, Bihar</span>
+            <span className="wr-map-search-main">{currentLocationLabel}</span>
           </div>
-          <button type="button" className="wr-map-search-change">Change</button>
+          <button type="button" className="wr-map-search-change" onClick={() => void requestCurrentLocation()}>
+            {isLocating ? "Locating..." : "Change"}
+          </button>
           <Search size={14} className="wr-map-search-icon" />
           </div>
         </div>
@@ -201,9 +205,9 @@ export function MapScreen({
           <MapPinMarker key={pin.label} pin={pin} inRange={inRange} selected={activePinPreview?.label === pin.label} onSelect={setActivePinPreview} />
         ))}
 
-        <div className="wr-map-current-location">
+        <button type="button" className="wr-map-current-location" onClick={() => void requestCurrentLocation()} aria-label="Locate me">
           <LocateFixed size={11} />
-        </div>
+        </button>
 
         <div className={`wr-map-in-range-pill ${isCountBump ? "is-bump" : ""}`} aria-live="polite">
           <span className="wr-map-in-range-count">{inRangeCount}</span>

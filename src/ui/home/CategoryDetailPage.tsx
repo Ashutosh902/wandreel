@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import type { CategoryLabel } from "./home.data";
+import { useUx } from "../layout/UxProvider";
 
 type CategoryFilterChip =
   | "All"
@@ -41,6 +42,8 @@ type CategoryPlaceRow = {
   videoUrl: string;
   imageUrl: string;
   tags: Exclude<CategoryFilterChip, "All">[];
+  lat?: number | null;
+  lng?: number | null;
 };
 
 type CategoryScreenConfig = {
@@ -76,6 +79,8 @@ type SavedPlaceApiItem = {
     fullAddress?: string | null;
     videoUrl?: string | null;
     imageUrl?: string | null;
+    lat?: number | null;
+    lng?: number | null;
   } | null;
 };
 
@@ -151,6 +156,7 @@ export function CategoryDetailPage({
   onViewMap: (category: CategoryLabel) => void;
   onAddLink: () => void;
 }) {
+  const { currentCoords } = useUx();
   const config = categoryConfigs[category];
   const [activePlace, setActivePlace] = useState<CategoryPlaceRow | null>(null);
   const [isSheetClosing, setIsSheetClosing] = useState(false);
@@ -216,6 +222,8 @@ export function CategoryDetailPage({
               videoUrl,
               imageUrl,
               tags: ["Saved", "Visited"],
+              lat: typeof item.metadata?.lat === "number" ? item.metadata.lat : null,
+              lng: typeof item.metadata?.lng === "number" ? item.metadata.lng : null,
             };
           });
 
@@ -251,16 +259,37 @@ export function CategoryDetailPage({
     return [...injected, ...base];
   }, [config.places, savedFeedPlaces]);
 
+  const distanceAwarePlaces = useMemo(() => {
+    if (!currentCoords) return mergedPlaces;
+    const toRad = (value: number) => (value * Math.PI) / 180;
+    const haversineKm = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+      const R = 6371;
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(a));
+    };
+    return mergedPlaces.map((place) => {
+      if (typeof place.lat !== "number" || typeof place.lng !== "number") return place;
+      return {
+        ...place,
+        distanceKm: Number(haversineKm(currentCoords.lat, currentCoords.lng, place.lat, place.lng).toFixed(1)),
+      };
+    });
+  }, [mergedPlaces, currentCoords]);
+
   const closeSheet = () => {
     if (!activePlace || isSheetClosing) return;
     setIsSheetClosing(true);
   };
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
-  const allChipLabel = `All ${mergedPlaces.length}`;
+  const allChipLabel = `All ${distanceAwarePlaces.length}`;
   const filteredPlaces = useMemo(
     () =>
-      mergedPlaces.filter((place) => {
+      distanceAwarePlaces.filter((place) => {
         const matchesChip = selectedChip === "All" || place.tags.includes(selectedChip);
         const matchesSearch =
           normalizedQuery.length === 0 ||
@@ -270,7 +299,7 @@ export function CategoryDetailPage({
           place.locality.toLowerCase().includes(normalizedQuery);
         return matchesChip && matchesSearch;
       }),
-    [mergedPlaces, normalizedQuery, selectedChip],
+    [distanceAwarePlaces, normalizedQuery, selectedChip],
   );
 
   return (

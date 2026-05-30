@@ -80,6 +80,43 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "wandreel-api" });
 });
 
+app.get("/api/location/reverse-geocode", async (req, res) => {
+  try {
+    const lat = Number(req.query.lat);
+    const lng = Number(req.query.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ ok: false, error: "valid lat/lng required" });
+    }
+    const apiKey = String(process.env.GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY || "").trim();
+    if (!apiKey) {
+      return res.status(503).json({ ok: false, error: "Google Maps key missing" });
+    }
+    const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+    url.searchParams.set("latlng", `${lat},${lng}`);
+    url.searchParams.set("key", apiKey);
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      return res.status(502).json({ ok: false, error: "reverse geocode failed" });
+    }
+    const data = (await response.json()) as {
+      status?: string;
+      results?: Array<{ address_components?: Array<{ long_name?: string; types?: string[] }> }>;
+    };
+    const components = data.results?.[0]?.address_components || [];
+    const pick = (type: string) => components.find((c) => c.types?.includes(type))?.long_name || null;
+    const locality =
+      pick("sublocality_level_1") ||
+      pick("locality") ||
+      pick("administrative_area_level_2");
+    const state = pick("administrative_area_level_1");
+    const label = [locality, state].filter(Boolean).join(", ") || "Current location";
+    return res.json({ ok: true, label });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "reverse geocode failed";
+    return res.status(500).json({ ok: false, error: message });
+  }
+});
+
 app.post("/api/metadata/extract", async (req, res) => {
   try {
     const url = String(req.body?.url || "").trim();

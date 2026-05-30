@@ -249,6 +249,8 @@
   justify-content: center;
   box-shadow: 0 0 0 6px rgba(43, 119, 245, 0.2);
   transition: transform 120ms ease;
+  border: none;
+  cursor: pointer;
 }
 
 .wr-map-current-location:active {
@@ -443,11 +445,13 @@
   left: 50%;
   transform: translateX(-50%);
   width: min(390px, 100vw);
-  top: 1rem;
-  bottom: var(--wr-bottom-nav-offset, 4.3rem);
+  top: 0;
+  bottom: 0;
+  padding-bottom: var(--wr-bottom-nav-height);
+  box-sizing: border-box;
   background: rgba(15, 23, 42, 0.32);
   backdrop-filter: blur(1.5px);
-  z-index: 30;
+  z-index: 70;
   display: flex;
   align-items: flex-end;
   animation: wrMapSheetBackdropIn 220ms ease-out both;
@@ -455,6 +459,9 @@
 
 .wr-map-sheet {
   width: 100%;
+  margin-bottom: 0;
+  max-height: calc(100% - 0.5rem);
+  overflow-y: auto;
   border-top-left-radius: 1.1rem;
   border-top-right-radius: 1.1rem;
   background: #fffdf8;

@@ -321,6 +321,8 @@ export function AddScreen() {
       videoUrl: place.videoUrl,
       imageUrl: place.imageUrl,
       tags: ["Saved", "Visited"],
+      lat: place.lat ?? null,
+      lng: place.lng ?? null,
       createdAtMs: Date.now(),
     };
     try {
