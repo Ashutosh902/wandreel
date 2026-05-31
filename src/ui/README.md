@@ -275,6 +275,12 @@ This folder owns all Wandreel frontend architecture and components.
 - `Change` actions on Home/Category and Map now trigger fresh location fetch.
 - Category saved rows with stored `lat/lng` now calculate distance from current user coordinates using haversine and update displayed `km`.
 
+## Phase note: Location picker with search + restore current location
+
+- `Change` on location bars now opens a searchable location picker using Google Places suggestions.
+- Users can choose any suggested city/locality and it becomes the app’s active current location.
+- Picker includes `Current location` so users can instantly revert to device GPS location.
+
 ## Phase note: Real place-image preference
 
 - Intelligence place resolution now attempts to fetch a real place photo URL from Google Places using resolved `placeId`.

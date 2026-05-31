@@ -15,19 +15,29 @@ type UxContextValue = {
   showToast: (payload: ToastPayload) => void;
   currentLocationLabel: string;
   currentCoords: { lat: number; lng: number } | null;
+  deviceLocationLabel: string | null;
+  deviceCoords: { lat: number; lng: number } | null;
   isLocating: boolean;
   requestCurrentLocation: () => Promise<void>;
+  searchLocations: (query: string) => Promise<Array<{ placeId: string; label: string; secondaryText: string | null; description: string | null }>>;
+  setLocationFromPlaceId: (placeId: string) => Promise<boolean>;
+  useDeviceLocationAsCurrent: () => Promise<void>;
 };
 
 const UxContext = createContext<UxContextValue | null>(null);
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const LOCATION_CACHE_KEY = "wr_current_location_v1";
+const DEVICE_LOCATION_CACHE_KEY = "wr_device_location_v1";
+const LOCATION_MODE_CACHE_KEY = "wr_location_mode_v1";
 
 export function UxProvider({ children }: { children: React.ReactNode }) {
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [currentLocationLabel, setCurrentLocationLabel] = useState("Patna, Bihar");
   const [currentCoords, setCurrentCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [deviceLocationLabel, setDeviceLocationLabel] = useState<string | null>(null);
+  const [deviceCoords, setDeviceCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [locationMode, setLocationMode] = useState<"device" | "manual">("device");
   const [isLocating, setIsLocating] = useState(false);
   const idRef = useRef(1);
 
@@ -54,25 +64,94 @@ export function UxProvider({ children }: { children: React.ReactNode }) {
         );
       });
       const nextCoords = { lat: coords.latitude, lng: coords.longitude };
-      setCurrentCoords(nextCoords);
+      setDeviceCoords(nextCoords);
       const response = await fetch(
         `${API_BASE_URL}/api/location/reverse-geocode?lat=${encodeURIComponent(String(nextCoords.lat))}&lng=${encodeURIComponent(String(nextCoords.lng))}`,
       );
       if (response.ok) {
         const payload = (await response.json()) as { ok?: boolean; label?: string };
         if (payload?.ok && payload.label) {
-          setCurrentLocationLabel(payload.label);
-          window.localStorage.setItem(LOCATION_CACHE_KEY, JSON.stringify({ ...nextCoords, label: payload.label }));
+          setDeviceLocationLabel(payload.label);
+          window.localStorage.setItem(DEVICE_LOCATION_CACHE_KEY, JSON.stringify({ ...nextCoords, label: payload.label }));
+          if (locationMode === "device") {
+            setCurrentCoords(nextCoords);
+            setCurrentLocationLabel(payload.label);
+            window.localStorage.setItem(LOCATION_CACHE_KEY, JSON.stringify({ ...nextCoords, label: payload.label }));
+          }
           return;
         }
       }
-      window.localStorage.setItem(LOCATION_CACHE_KEY, JSON.stringify({ ...nextCoords, label: currentLocationLabel }));
+      window.localStorage.setItem(DEVICE_LOCATION_CACHE_KEY, JSON.stringify({ ...nextCoords, label: currentLocationLabel }));
+      if (locationMode === "device") {
+        setCurrentCoords(nextCoords);
+        window.localStorage.setItem(LOCATION_CACHE_KEY, JSON.stringify({ ...nextCoords, label: currentLocationLabel }));
+      }
     } catch {
       // Keep fallback location silently.
     } finally {
       setIsLocating(false);
     }
-  }, [currentLocationLabel]);
+  }, [currentLocationLabel, locationMode]);
+
+  const searchLocations = useCallback(async (query: string) => {
+    const q = query.trim();
+    if (q.length < 2) return [];
+    const response = await fetch(`${API_BASE_URL}/api/location/suggest?q=${encodeURIComponent(q)}`);
+    if (!response.ok) {
+      throw new Error("location_suggest_unavailable");
+    }
+    const payload = (await response.json()) as {
+      ok?: boolean;
+      error?: string;
+      suggestions?: Array<{ placeId?: string; label?: string; secondaryText?: string | null; description?: string | null }>;
+    };
+    if (!payload?.ok) {
+      throw new Error(payload?.error || "location_suggest_unavailable");
+    }
+    if (!Array.isArray(payload.suggestions)) return [];
+    return payload.suggestions
+      .map((item) => ({
+        placeId: String(item.placeId || ""),
+        label: String(item.label || "").trim(),
+        secondaryText: item.secondaryText ?? null,
+        description: item.description ?? null,
+      }))
+      .filter((item) => item.placeId && item.label);
+  }, []);
+
+  const setLocationFromPlaceId = useCallback(async (placeId: string) => {
+    const id = placeId.trim();
+    if (!id) return false;
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/location/resolve-place?placeId=${encodeURIComponent(id)}`);
+      if (!response.ok) return false;
+      const payload = (await response.json()) as { ok?: boolean; label?: string; location?: { lat?: number; lng?: number } };
+      const lat = payload.location?.lat;
+      const lng = payload.location?.lng;
+      if (!payload?.ok || !payload.label || !Number.isFinite(lat) || !Number.isFinite(lng)) return false;
+      const nextCoords = { lat: Number(lat), lng: Number(lng) };
+      setLocationMode("manual");
+      window.localStorage.setItem(LOCATION_MODE_CACHE_KEY, "manual");
+      setCurrentCoords(nextCoords);
+      setCurrentLocationLabel(payload.label);
+      window.localStorage.setItem(LOCATION_CACHE_KEY, JSON.stringify({ ...nextCoords, label: payload.label }));
+      return true;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const useDeviceLocationAsCurrent = useCallback(async () => {
+    setLocationMode("device");
+    window.localStorage.setItem(LOCATION_MODE_CACHE_KEY, "device");
+    if (deviceCoords && deviceLocationLabel) {
+      setCurrentCoords(deviceCoords);
+      setCurrentLocationLabel(deviceLocationLabel);
+      window.localStorage.setItem(LOCATION_CACHE_KEY, JSON.stringify({ ...deviceCoords, label: deviceLocationLabel }));
+      return;
+    }
+    await requestCurrentLocation();
+  }, [deviceCoords, deviceLocationLabel, requestCurrentLocation]);
 
   useEffect(() => {
     if (!toast) return;
@@ -98,25 +177,68 @@ export function UxProvider({ children }: { children: React.ReactNode }) {
   }, [showToast]);
 
   useEffect(() => {
+    let loadedMode: "device" | "manual" = "device";
     try {
       const raw = window.localStorage.getItem(LOCATION_CACHE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as { lat?: number; lng?: number; label?: string };
-      if (typeof parsed?.lat === "number" && typeof parsed?.lng === "number") {
-        setCurrentCoords({ lat: parsed.lat, lng: parsed.lng });
+      if (raw) {
+        const parsed = JSON.parse(raw) as { lat?: number; lng?: number; label?: string };
+        if (typeof parsed?.lat === "number" && typeof parsed?.lng === "number") {
+          setCurrentCoords({ lat: parsed.lat, lng: parsed.lng });
+        }
+        if (typeof parsed?.label === "string" && parsed.label.trim()) {
+          setCurrentLocationLabel(parsed.label.trim());
+        }
       }
-      if (typeof parsed?.label === "string" && parsed.label.trim()) {
-        setCurrentLocationLabel(parsed.label.trim());
+      const mode = window.localStorage.getItem(LOCATION_MODE_CACHE_KEY);
+      if (mode === "manual" || mode === "device") {
+        loadedMode = mode;
+        setLocationMode(mode);
+      }
+      const rawDevice = window.localStorage.getItem(DEVICE_LOCATION_CACHE_KEY);
+      if (rawDevice) {
+        const parsedDevice = JSON.parse(rawDevice) as { lat?: number; lng?: number; label?: string };
+        if (typeof parsedDevice?.lat === "number" && typeof parsedDevice?.lng === "number") {
+          setDeviceCoords({ lat: parsedDevice.lat, lng: parsedDevice.lng });
+        }
+        if (typeof parsedDevice?.label === "string" && parsedDevice.label.trim()) {
+          setDeviceLocationLabel(parsedDevice.label.trim());
+        }
       }
     } catch {
       // Ignore bad cache.
     }
-    void requestCurrentLocation();
+    if (loadedMode === "device") {
+      void requestCurrentLocation();
+    }
   }, [requestCurrentLocation]);
 
   const value = useMemo<UxContextValue>(
-    () => ({ isOffline, showToast, currentLocationLabel, currentCoords, isLocating, requestCurrentLocation }),
-    [isOffline, showToast, currentLocationLabel, currentCoords, isLocating, requestCurrentLocation],
+    () => ({
+      isOffline,
+      showToast,
+      currentLocationLabel,
+      currentCoords,
+      deviceLocationLabel,
+      deviceCoords,
+      isLocating,
+      requestCurrentLocation,
+      searchLocations,
+      setLocationFromPlaceId,
+      useDeviceLocationAsCurrent,
+    }),
+    [
+      isOffline,
+      showToast,
+      currentLocationLabel,
+      currentCoords,
+      deviceLocationLabel,
+      deviceCoords,
+      isLocating,
+      requestCurrentLocation,
+      searchLocations,
+      setLocationFromPlaceId,
+      useDeviceLocationAsCurrent,
+    ],
   );
 
   return (

@@ -44,6 +44,7 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
 - Added market-polish interaction layer: global toast + offline status, reduced-motion-safe transitions, pull-to-refresh affordance (non-map), bottom-sheet swipe-down dismiss, and polished empty/loading states for category/map/add/profile flows.
 - Add capture flow QA hardening: URL validation before analyze, deterministic refresh reset behavior, and duplicate-save guard with friendly feedback.
 - Bottom sheet containment hardened: category/map detail sheets now reserve fixed bottom-nav space and use internal sheet scrolling to avoid clipped/half-visible content on mobile webviews.
+- Location bars now support search-based location change: `Change` opens Google suggestion dropdown, selected place becomes active current location, and `Current location` option restores device GPS label/coords.
 - PWA manifest and service worker registration wired (`vite-plugin-pwa`).
 - Installable shell metadata configured (name/theme/start URL/display).
 - Unified extraction pipeline centralized under `server/extraction`.

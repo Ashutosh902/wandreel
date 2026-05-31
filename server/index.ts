@@ -117,6 +117,142 @@ app.get("/api/location/reverse-geocode", async (req, res) => {
   }
 });
 
+app.get("/api/location/suggest", async (req, res) => {
+  try {
+    const query = String(req.query.q || "").trim();
+    if (query.length < 2) {
+      return res.json({ ok: true, suggestions: [] });
+    }
+    const apiKey = String(process.env.GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY || "").trim();
+    if (!apiKey) {
+      return res.status(503).json({ ok: false, error: "Google Maps key missing" });
+    }
+    const url = new URL("https://maps.googleapis.com/maps/api/place/autocomplete/json");
+    url.searchParams.set("input", query);
+    url.searchParams.set("key", apiKey);
+    const response = await fetch(url.toString());
+    if (!response.ok) {
+      return res.status(502).json({ ok: false, error: "place autocomplete failed" });
+    }
+    const data = (await response.json()) as {
+      status?: string;
+      error_message?: string;
+      predictions?: Array<{
+        place_id?: string;
+        description?: string;
+        structured_formatting?: { main_text?: string; secondary_text?: string };
+      }>;
+    };
+    if (data.status && data.status !== "OK" && data.status !== "ZERO_RESULTS") {
+      return res.status(502).json({
+        ok: false,
+        error: data.error_message || `place autocomplete status: ${data.status}`,
+      });
+    }
+    let suggestions = (data.predictions || []).slice(0, 7).map((p) => ({
+      placeId: String(p.place_id || ""),
+      label: String(p.structured_formatting?.main_text || p.description || "").trim(),
+      secondaryText: String(p.structured_formatting?.secondary_text || "").trim() || null,
+      description: String(p.description || "").trim() || null,
+    })).filter((s) => s.placeId && s.label);
+
+    // Fallback: if Places autocomplete returns nothing, use geocoding text search.
+    if (suggestions.length === 0) {
+      const geocodeUrl = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+      geocodeUrl.searchParams.set("address", query);
+      geocodeUrl.searchParams.set("key", apiKey);
+      const geocodeRes = await fetch(geocodeUrl.toString());
+      if (geocodeRes.ok) {
+        const geocodeData = (await geocodeRes.json()) as {
+          status?: string;
+          error_message?: string;
+          results?: Array<{
+            place_id?: string;
+            formatted_address?: string;
+            address_components?: Array<{ long_name?: string; types?: string[] }>;
+          }>;
+        };
+        if (geocodeData.status && geocodeData.status !== "OK" && geocodeData.status !== "ZERO_RESULTS") {
+          return res.status(502).json({
+            ok: false,
+            error: geocodeData.error_message || `geocode status: ${geocodeData.status}`,
+          });
+        }
+        suggestions = (geocodeData.results || []).slice(0, 7).map((item) => {
+          const components = item.address_components || [];
+          const pick = (type: string) => components.find((c) => c.types?.includes(type))?.long_name || null;
+          const label =
+            pick("locality") ||
+            pick("administrative_area_level_2") ||
+            pick("administrative_area_level_1") ||
+            String(item.formatted_address || "").split(",")[0]?.trim() ||
+            "";
+          return {
+            placeId: String(item.place_id || ""),
+            label: String(label).trim(),
+            secondaryText: String(item.formatted_address || "").trim() || null,
+            description: String(item.formatted_address || "").trim() || null,
+          };
+        }).filter((s) => s.placeId && s.label);
+      }
+    }
+    return res.json({ ok: true, suggestions });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "place autocomplete failed";
+    return res.status(500).json({ ok: false, error: message });
+  }
+});
+
+app.get("/api/location/resolve-place", async (req, res) => {
+  try {
+    const placeId = String(req.query.placeId || "").trim();
+    if (!placeId) {
+      return res.status(400).json({ ok: false, error: "placeId is required" });
+    }
+    const apiKey = String(process.env.GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY || "").trim();
+    if (!apiKey) {
+      return res.status(503).json({ ok: false, error: "Google Maps key missing" });
+    }
+    const detailsUrl = new URL("https://maps.googleapis.com/maps/api/place/details/json");
+    detailsUrl.searchParams.set("place_id", placeId);
+    detailsUrl.searchParams.set("fields", "geometry/location,address_components,name,formatted_address");
+    detailsUrl.searchParams.set("key", apiKey);
+    const response = await fetch(detailsUrl.toString());
+    if (!response.ok) {
+      return res.status(502).json({ ok: false, error: "place details failed" });
+    }
+    const data = (await response.json()) as {
+      result?: {
+        geometry?: { location?: { lat?: number; lng?: number } };
+        address_components?: Array<{ long_name?: string; types?: string[] }>;
+        name?: string;
+      };
+    };
+    const location = data.result?.geometry?.location;
+    if (!location || !Number.isFinite(location.lat) || !Number.isFinite(location.lng)) {
+      return res.status(404).json({ ok: false, error: "place location not found" });
+    }
+    const components = data.result?.address_components || [];
+    const pick = (type: string) => components.find((c) => c.types?.includes(type))?.long_name || null;
+    const locality =
+      pick("sublocality_level_1") ||
+      pick("locality") ||
+      pick("administrative_area_level_2") ||
+      data.result?.name ||
+      "Selected place";
+    const state = pick("administrative_area_level_1");
+    const label = [locality, state].filter(Boolean).join(", ");
+    return res.json({
+      ok: true,
+      location: { lat: location.lat, lng: location.lng },
+      label,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "place resolve failed";
+    return res.status(500).json({ ok: false, error: message });
+  }
+});
+
 app.post("/api/metadata/extract", async (req, res) => {
   try {
     const url = String(req.body?.url || "").trim();
