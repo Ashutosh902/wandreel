@@ -422,14 +422,15 @@
 }
 .wr-hero-card-empty-memory {
   background:
-    radial-gradient(circle at 18% 22%, rgba(255, 255, 255, 0.2), transparent 28%),
-    linear-gradient(145deg, #ee7b37 0%, #d45d28 46%, #10213f 100%);
+    radial-gradient(circle at 12% 14%, rgba(255, 242, 227, 0.88), transparent 24%),
+    radial-gradient(circle at 86% 18%, rgba(255, 227, 190, 0.72), transparent 22%),
+    linear-gradient(155deg, #8cd5ff 0%, #53a7ff 32%, #4a8df0 58%, #f58f53 100%);
 }
 .wr-hero-overlay-empty-memory {
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(10, 18, 36, 0.18) 50%, rgba(10, 18, 36, 0.38) 100%),
-    radial-gradient(circle at 24% 28%, rgba(255, 244, 231, 0.28), transparent 24%),
-    radial-gradient(circle at 82% 20%, rgba(255, 255, 255, 0.18), transparent 18%);
+    linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.06) 38%, rgba(10, 18, 36, 0.18) 100%),
+    radial-gradient(circle at 72% 26%, rgba(255, 255, 255, 0.24), transparent 16%),
+    radial-gradient(circle at 18% 70%, rgba(255, 214, 186, 0.24), transparent 20%);
 }
 .wr-hero-glow { position: absolute; border-radius: 999px; filter: blur(16px); }
 .wr-hero-glow-right { right: -30px; top: -30px; width: 8rem; height: 8rem; background: rgba(194,65,12,0.35); }
@@ -464,29 +465,119 @@
   inset: 0;
   pointer-events: none;
 }
+.wr-hero-cloud {
+  position: absolute;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.52);
+  box-shadow:
+    1.1rem 0.15rem 0 0 rgba(255, 255, 255, 0.45),
+    2rem -0.18rem 0 0 rgba(255, 255, 255, 0.34);
+  filter: blur(0.1px);
+}
+.wr-hero-cloud-one {
+  left: 1.05rem;
+  top: 1.2rem;
+  width: 2.15rem;
+  height: 0.92rem;
+  opacity: 0.9;
+}
+.wr-hero-cloud-two {
+  right: 1.45rem;
+  top: 1.02rem;
+  width: 1.95rem;
+  height: 0.84rem;
+  opacity: 0.7;
+}
+.wr-hero-globe {
+  position: absolute;
+  right: 1.1rem;
+  top: 1.1rem;
+  width: 7.25rem;
+  height: 7.25rem;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 32% 28%, rgba(255, 255, 255, 0.62), transparent 22%),
+    radial-gradient(circle at 64% 74%, rgba(22, 90, 178, 0.18), transparent 26%),
+    linear-gradient(160deg, #bfe7ff 0%, #67bbff 34%, #2e84ec 72%, #1d63cb 100%);
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  box-shadow:
+    inset -0.55rem -0.8rem 1.25rem rgba(22, 94, 185, 0.24),
+    0 16px 28px rgba(33, 96, 176, 0.18);
+  overflow: hidden;
+  opacity: 0.94;
+}
+.wr-hero-globe-continents {
+  position: absolute;
+  background: linear-gradient(180deg, rgba(66, 181, 116, 0.95), rgba(35, 151, 94, 0.95));
+  border-radius: 48% 52% 46% 54% / 42% 52% 48% 58%;
+  box-shadow: inset 0 -0.18rem 0.32rem rgba(20, 112, 66, 0.18);
+}
+.wr-hero-globe-continents-one {
+  left: 1.12rem;
+  top: 1.56rem;
+  width: 2.6rem;
+  height: 1.72rem;
+  transform: rotate(-8deg);
+}
+.wr-hero-globe-continents-two {
+  right: 1.32rem;
+  bottom: 1.45rem;
+  width: 2.1rem;
+  height: 1.42rem;
+  transform: rotate(16deg);
+}
+.wr-hero-globe-shine {
+  position: absolute;
+  left: 0.82rem;
+  top: 0.9rem;
+  width: 1.55rem;
+  height: 3.4rem;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.52), rgba(255, 255, 255, 0));
+  transform: rotate(18deg);
+}
+.wr-hero-globe-ring {
+  position: absolute;
+  right: 0.6rem;
+  top: 1.9rem;
+  width: 8.15rem;
+  height: 4rem;
+  border: 2px dashed rgba(255, 245, 234, 0.62);
+  border-radius: 999px;
+}
+.wr-hero-globe-ring-back {
+  transform: rotate(-12deg);
+  opacity: 0.42;
+}
+.wr-hero-globe-ring-front {
+  transform: rotate(18deg);
+  opacity: 0.62;
+  border-left-color: transparent;
+  border-bottom-color: transparent;
+}
 .wr-hero-trail {
   position: absolute;
-  border: 2px dashed rgba(255, 245, 234, 0.45);
+  border: 2px dashed rgba(255, 248, 240, 0.62);
   border-radius: 999px;
   opacity: 0.9;
 }
 .wr-hero-trail-one {
-  left: 0.9rem;
-  top: 1.1rem;
-  width: 5.8rem;
-  height: 3.2rem;
+  left: 0.85rem;
+  top: 3.9rem;
+  width: 5.2rem;
+  height: 2.65rem;
   border-right-color: transparent;
   border-bottom-color: transparent;
-  transform: rotate(-12deg);
+  transform: rotate(-10deg);
 }
 .wr-hero-trail-two {
-  right: 1rem;
-  top: 1.45rem;
-  width: 6.2rem;
-  height: 3rem;
+  right: 5.25rem;
+  top: 0.82rem;
+  width: 5.9rem;
+  height: 2.9rem;
   border-left-color: transparent;
   border-bottom-color: transparent;
-  transform: rotate(16deg);
+  transform: rotate(8deg);
 }
 .wr-hero-doodle {
   position: absolute;
@@ -497,31 +588,31 @@
   align-items: center;
   justify-content: center;
   color: rgba(255, 249, 242, 0.94);
-  background: rgba(255, 255, 255, 0.12);
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(255, 255, 255, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.28);
   backdrop-filter: blur(8px);
-  box-shadow: 0 10px 20px rgba(16, 33, 63, 0.16);
+  box-shadow: 0 10px 20px rgba(16, 33, 63, 0.14);
 }
-.wr-hero-doodle-pin { top: 1.25rem; right: 4rem; transform: rotate(-8deg); }
-.wr-hero-doodle-camera { top: 3.4rem; right: 1.45rem; transform: rotate(8deg); }
-.wr-hero-doodle-compass { top: 1.85rem; left: 6.15rem; transform: rotate(10deg); }
+.wr-hero-doodle-pin { top: 4.7rem; right: 8.2rem; transform: rotate(-8deg); }
+.wr-hero-doodle-camera { top: 1.7rem; right: 0.95rem; transform: rotate(8deg); }
+.wr-hero-doodle-compass { top: 2.45rem; left: 5.25rem; transform: rotate(10deg); }
 .wr-hero-postcard {
   position: absolute;
   border-radius: 0.72rem;
-  background: rgba(255, 250, 245, 0.24);
-  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 250, 245, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.3);
   box-shadow: 0 14px 24px rgba(16, 33, 63, 0.12);
 }
 .wr-hero-postcard-one {
-  left: 1.1rem;
-  bottom: 3.1rem;
+  left: 1.25rem;
+  bottom: 3.35rem;
   width: 2.65rem;
   height: 1.8rem;
   transform: rotate(-8deg);
 }
 .wr-hero-postcard-two {
-  left: 3.45rem;
-  bottom: 3.65rem;
+  left: 3.75rem;
+  bottom: 4rem;
   width: 2.2rem;
   height: 1.5rem;
   transform: rotate(7deg);
@@ -531,12 +622,12 @@
   left: 0;
   right: 0;
   bottom: 0;
-  height: 4.5rem;
+  height: 4.3rem;
   background:
-    linear-gradient(180deg, transparent 0%, rgba(10, 18, 36, 0.05) 18%, rgba(10, 18, 36, 0.2) 100%),
-    linear-gradient(90deg, transparent 0 8%, rgba(255, 245, 234, 0.14) 8% 14%, transparent 14% 18%, rgba(255, 245, 234, 0.13) 18% 26%, transparent 26% 31%, rgba(255, 245, 234, 0.16) 31% 40%, transparent 40% 47%, rgba(255, 245, 234, 0.12) 47% 54%, transparent 54% 62%, rgba(255, 245, 234, 0.14) 62% 73%, transparent 73% 78%, rgba(255, 245, 234, 0.1) 78% 89%, transparent 89% 100%);
+    linear-gradient(180deg, transparent 0%, rgba(255, 214, 186, 0.08) 18%, rgba(18, 41, 88, 0.22) 100%),
+    linear-gradient(90deg, transparent 0 8%, rgba(255, 245, 234, 0.16) 8% 14%, transparent 14% 18%, rgba(255, 245, 234, 0.14) 18% 26%, transparent 26% 31%, rgba(255, 245, 234, 0.18) 31% 40%, transparent 40% 47%, rgba(255, 245, 234, 0.14) 47% 54%, transparent 54% 62%, rgba(255, 245, 234, 0.16) 62% 73%, transparent 73% 78%, rgba(255, 245, 234, 0.12) 78% 89%, transparent 89% 100%);
   clip-path: polygon(0 100%, 0 56%, 7% 52%, 11% 65%, 16% 47%, 21% 69%, 28% 42%, 34% 60%, 40% 36%, 47% 63%, 55% 46%, 61% 58%, 69% 34%, 75% 60%, 83% 44%, 89% 55%, 100% 40%, 100% 100%);
-  opacity: 0.78;
+  opacity: 0.7;
 }
 
 .wr-category-page {
