@@ -658,116 +658,117 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
             </button>
 
             <p className="wr-login-sheet-kicker">JOIN WANDREEL</p>
-
-            {sheetMode === "join" ? (
-              <>
-                <h4>Save your scrolls. Start your strolls.</h4>
-                <p className="wr-login-sheet-desc">Log in to sync your saved reels, city bucketlists, and places across devices.</p>
-                <div className="wr-login-social-row" aria-label="Social login options">
-                  <button type="button" disabled={isSocialLoading} className="wr-login-social-btn wr-login-social-google" onClick={() => void continueWithProvider("GOOGLE")} aria-label="Continue with Google">
-                    <GoogleBrandIcon />
-                  </button>
-                  <button type="button" disabled={isSocialLoading} className="wr-login-social-btn wr-login-social-apple" onClick={() => void continueWithProvider("APPLE")} aria-label="Continue with Apple">
-                    <AppleBrandIcon />
-                  </button>
-                  <button type="button" disabled={isSocialLoading} className="wr-login-social-btn wr-login-social-facebook" onClick={() => void continueWithProvider("FACEBOOK")} aria-label="Continue with Facebook">
-                    <FacebookBrandIcon />
-                  </button>
-                </div>
-                <input
-                  type="email"
-                  className="wr-login-sheet-input"
-                  value={email}
-                  onChange={(event) => {
-                    setEmail(event.target.value);
-                    setEmailAuthMessage("");
-                    setEmailValidationError("");
-                  }}
-                  placeholder="Email address"
-                  aria-label="Email address"
-                />
-                {emailValidationError ? <p className="wr-login-sheet-error">{emailValidationError}</p> : null}
-                {isEmailOtpRequested ? (
+            <div className="wr-login-sheet-body">
+              {sheetMode === "join" ? (
+                <>
+                  <h4>Save your scrolls. Start your strolls.</h4>
+                  <p className="wr-login-sheet-desc">Log in to sync your saved reels, city bucketlists, and places across devices.</p>
+                  <div className="wr-login-social-row" aria-label="Social login options">
+                    <button type="button" disabled={isSocialLoading} className="wr-login-social-btn wr-login-social-google" onClick={() => void continueWithProvider("GOOGLE")} aria-label="Continue with Google">
+                      <GoogleBrandIcon />
+                    </button>
+                    <button type="button" disabled={isSocialLoading} className="wr-login-social-btn wr-login-social-apple" onClick={() => void continueWithProvider("APPLE")} aria-label="Continue with Apple">
+                      <AppleBrandIcon />
+                    </button>
+                    <button type="button" disabled={isSocialLoading} className="wr-login-social-btn wr-login-social-facebook" onClick={() => void continueWithProvider("FACEBOOK")} aria-label="Continue with Facebook">
+                      <FacebookBrandIcon />
+                    </button>
+                  </div>
                   <input
-                    type="text"
-                    inputMode="numeric"
+                    type="email"
                     className="wr-login-sheet-input"
-                    value={emailOtp}
-                    onChange={(event) => setEmailOtp(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                    placeholder="Enter 6 digit OTP"
-                    aria-label="Email OTP"
+                    value={email}
+                    onChange={(event) => {
+                      setEmail(event.target.value);
+                      setEmailAuthMessage("");
+                      setEmailValidationError("");
+                    }}
+                    placeholder="Email address"
+                    aria-label="Email address"
                   />
-                ) : null}
-                <div className="wr-login-sheet-actions">
-                  {!isEmailOtpRequested ? (
-                    <button type="button" disabled={isEmailLoading} className="wr-login-sheet-secondary" onClick={() => void sendEmailOtp()}>
-                      <Mail size={15} />
-                      {isEmailLoading ? "Please wait..." : "Continue with email"}
+                  {emailValidationError ? <p className="wr-login-sheet-error">{emailValidationError}</p> : null}
+                  {isEmailOtpRequested ? (
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      className="wr-login-sheet-input"
+                      value={emailOtp}
+                      onChange={(event) => setEmailOtp(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                      placeholder="Enter 6 digit OTP"
+                      aria-label="Email OTP"
+                    />
+                  ) : null}
+                  <div className="wr-login-sheet-actions">
+                    {!isEmailOtpRequested ? (
+                      <button type="button" disabled={isEmailLoading} className="wr-login-sheet-secondary" onClick={() => void sendEmailOtp()}>
+                        <Mail size={15} />
+                        {isEmailLoading ? "Please wait..." : "Continue with email"}
+                      </button>
+                    ) : (
+                      <button type="button" disabled={isEmailLoading} className="wr-login-sheet-primary" onClick={() => void verifyEmailOtpAndLogin()}>
+                        {isEmailLoading ? "Please wait..." : "Verify email OTP"}
+                      </button>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="wr-login-sheet-phone-link"
+                    onClick={() => {
+                      setPhoneAuthMessage("Phone login is optional and will be enabled in a later phase.");
+                      setSheetMode("phone");
+                    }}
+                  >
+                    Use phone instead
+                  </button>
+                  {emailAuthMessage ? <p className="wr-login-sheet-desc">{emailAuthMessage}</p> : null}
+                </>
+              ) : null}
+
+              {sheetMode === "phone" ? (
+                <>
+                  <h4>Continue with phone</h4>
+                  <p className="wr-login-sheet-desc">{phoneAuthMessage || "Phone OTP will be enabled as optional account linking in a later phase."}</p>
+                  <div className="wr-login-sheet-actions">
+                    <button type="button" className="wr-login-sheet-secondary" onClick={() => setSheetMode("join")}>
+                      Back
                     </button>
-                  ) : (
-                    <button type="button" disabled={isEmailLoading} className="wr-login-sheet-primary" onClick={() => void verifyEmailOtpAndLogin()}>
-                      {isEmailLoading ? "Please wait..." : "Verify email OTP"}
+                  </div>
+                </>
+              ) : null}
+
+              {sheetMode === "collectName" ? (
+                <>
+                  <h4>What should we call you?</h4>
+                  <p className="wr-login-sheet-desc">This helps us personalize your Wandreel experience.</p>
+                  <input type="text" className="wr-login-sheet-input" value={displayNameInput} onChange={(event) => setDisplayNameInput(event.target.value)} placeholder="Your name" aria-label="Your name" />
+                  <div className="wr-login-sheet-actions">
+                    <button type="button" className="wr-login-sheet-primary" onClick={() => void submitDisplayName()}>
+                      Continue
                     </button>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  className="wr-login-sheet-phone-link"
-                  onClick={() => {
-                    setPhoneAuthMessage("Phone login is optional and will be enabled in a later phase.");
-                    setSheetMode("phone");
-                  }}
-                >
-                  Use phone instead
+                    <button type="button" className="wr-login-sheet-secondary" onClick={() => setSheetMode("join")}>
+                      Back
+                    </button>
+                  </div>
+                  {emailAuthMessage ? <p className="wr-login-sheet-desc">{emailAuthMessage}</p> : null}
+                </>
+              ) : null}
+
+              <p className="wr-login-sheet-legal">
+                By continuing, you agree to our{" "}
+                <button type="button" onClick={() => openLegalDoc("terms")}>
+                  Terms
+                </button>{" "}
+                and{" "}
+                <button type="button" onClick={() => openLegalDoc("privacy")}>
+                  Privacy Policy
                 </button>
-                {emailAuthMessage ? <p className="wr-login-sheet-desc">{emailAuthMessage}</p> : null}
-              </>
-            ) : null}
+                .
+              </p>
 
-            {sheetMode === "phone" ? (
-              <>
-                <h4>Continue with phone</h4>
-                <p className="wr-login-sheet-desc">{phoneAuthMessage || "Phone OTP will be enabled as optional account linking in a later phase."}</p>
-                <div className="wr-login-sheet-actions">
-                  <button type="button" className="wr-login-sheet-secondary" onClick={() => setSheetMode("join")}>
-                    Back
-                  </button>
-                </div>
-              </>
-            ) : null}
-
-            {sheetMode === "collectName" ? (
-              <>
-                <h4>What should we call you?</h4>
-                <p className="wr-login-sheet-desc">This helps us personalize your Wandreel experience.</p>
-                <input type="text" className="wr-login-sheet-input" value={displayNameInput} onChange={(event) => setDisplayNameInput(event.target.value)} placeholder="Your name" aria-label="Your name" />
-                <div className="wr-login-sheet-actions">
-                  <button type="button" className="wr-login-sheet-primary" onClick={() => void submitDisplayName()}>
-                    Continue
-                  </button>
-                  <button type="button" className="wr-login-sheet-secondary" onClick={() => setSheetMode("join")}>
-                    Back
-                  </button>
-                </div>
-                {emailAuthMessage ? <p className="wr-login-sheet-desc">{emailAuthMessage}</p> : null}
-              </>
-            ) : null}
-
-            <p className="wr-login-sheet-legal">
-              By continuing, you agree to our{" "}
-              <button type="button" onClick={() => openLegalDoc("terms")}>
-                Terms
-              </button>{" "}
-              and{" "}
-              <button type="button" onClick={() => openLegalDoc("privacy")}>
-                Privacy Policy
-              </button>
-              .
-            </p>
-
-            <div className="wr-login-sheet-note">
-              <ShieldCheck size={14} />
-              <span>We'll only use login to keep your saved places private and synced.</span>
+              <div className="wr-login-sheet-note">
+                <ShieldCheck size={14} />
+                <span>We'll only use login to keep your saved places private and synced.</span>
+              </div>
             </div>
           </div>
         </>
