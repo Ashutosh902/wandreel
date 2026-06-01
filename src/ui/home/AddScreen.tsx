@@ -1,37 +1,25 @@
 ﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { Bell, Link2, RefreshCw, Sparkles, X } from "lucide-react";
 import { useUx } from "../layout/UxProvider";
-
-type DetectedCategory = "Taste" | "Activity" | "Stay" | "Explore";
-
-type DetectedPlace = {
-  id: string;
-  runId: number;
-  name: string;
-  category: DetectedCategory;
-  locality: string;
-  source: string;
-  imageUrl: string;
-  fullAddress: string;
-  videoUrl: string;
-  placeId?: string | null;
-  lat?: number | null;
-  lng?: number | null;
-  city?: string | null;
-  state?: string | null;
-  country?: string | null;
-};
+import {
+  ADD_DRAFT_UPDATED_EVENT,
+  ADD_PROCESSING_STARTED_EVENT,
+  CATEGORY_FEED_CACHE_KEY,
+  categoryFallbackImage,
+  clearReviewRunId,
+  clearPersistedAddDraft,
+  mapEntitiesToPlaces,
+  peekReviewRunId,
+  readPersistedAddDraft,
+  removeReadyNotificationByRunId,
+  writePersistedAddDraft,
+  type DetectedCategory,
+  type DetectedPlace,
+  type IntelligenceEntity,
+  type PendingDetectionJob,
+} from "./addFlowState";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
-const ADD_DRAFT_STORAGE_KEY = "wr_add_detected_draft_v2";
-const CATEGORY_FEED_CACHE_KEY = "wr_category_saved_feed_v1";
-
-const categoryFallbackImage: Record<DetectedCategory, string> = {
-  Taste: "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&q=80&w=1200",
-  Activity: "https://images.unsplash.com/photo-1541625602330-2277a4c46182?auto=format&fit=crop&q=80&w=1200",
-  Stay: "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&q=80&w=1200",
-  Explore: "https://images.unsplash.com/photo-1527631746610-bca00a040d60?auto=format&fit=crop&q=80&w=1200",
-};
 
 type ExtractionApiResponse = {
   ok: boolean;
@@ -45,20 +33,6 @@ type ExtractionApiResponse = {
   };
 };
 
-type IntelligenceEntity = {
-  name?: string;
-  category?: "eat" | "do" | "stay" | "see";
-  locality?: string | null;
-  city?: string | null;
-  state?: string | null;
-  country?: string | null;
-  address?: string | null;
-  placeId?: string | null;
-  photoUrl?: string | null;
-  lat?: number | null;
-  lng?: number | null;
-};
-
 type IntelligenceApiResponse = {
   ok: boolean;
   jobId?: string;
@@ -67,28 +41,10 @@ type IntelligenceApiResponse = {
   };
 };
 
-type PersistedAddDraft = {
-  detectedPlaces: DetectedPlace[];
-  selectedDetectedCategory: "Auto-detect" | DetectedCategory;
-  selectedPreviewIndex: number;
-  isPreviewVisible: boolean;
-  linkInput: string;
-  pendingJobs: PendingDetectionJob[];
-};
-
-type PendingDetectionJob = {
-  runId: number;
-  jobId: string;
-  startedAtMs: number;
-  source: string;
-  imageUrl: string;
-  videoUrl: string;
-};
-
 const chipOrder: Array<"Auto-detect" | DetectedCategory> = ["Auto-detect", "Taste", "Activity", "Stay", "Explore"];
 
 export function AddScreen() {
-  const { isOffline, showToast } = useUx();
+  const { isOffline, showToast, searchLocations } = useUx();
   const [linkInput, setLinkInput] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
@@ -100,12 +56,18 @@ export function AddScreen() {
   const [savedPlaceIds, setSavedPlaceIds] = useState<Set<string>>(new Set());
   const [isEditing, setIsEditing] = useState(false);
   const [editName, setEditName] = useState("");
+  const [editCategory, setEditCategory] = useState<DetectedCategory>("Taste");
   const [editLocality, setEditLocality] = useState("");
   const [editAddress, setEditAddress] = useState("");
+  const [editPlaceId, setEditPlaceId] = useState<string | null>(null);
+  const [editCoords, setEditCoords] = useState<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
+  const [locationSuggestions, setLocationSuggestions] = useState<Array<{ placeId: string; label: string; secondaryText: string | null; description: string | null }>>([]);
+  const [isLocationSearching, setIsLocationSearching] = useState(false);
   const [pendingJobs, setPendingJobs] = useState<PendingDetectionJob[]>([]);
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [removingPlaceId, setRemovingPlaceId] = useState<string | null>(null);
+  const [autoSelectFirstSuggestion, setAutoSelectFirstSuggestion] = useState(true);
   const analyzeRunRef = useRef(0);
+  const locationDebounceTimerRef = useRef<number | null>(null);
   const isResolvingFinal = pendingJobs.length > 0;
 
   useEffect(() => {
@@ -113,15 +75,6 @@ export function AddScreen() {
     const timer = window.setTimeout(() => setSaveMessage(""), 1800);
     return () => window.clearTimeout(timer);
   }, [saveMessage]);
-
-  useEffect(() => {
-    if (!isResolvingFinal || pendingJobs.length === 0) return;
-    const latestStartedAtMs = pendingJobs[0]?.startedAtMs || Date.now();
-    const tick = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - latestStartedAtMs) / 1000)));
-    tick();
-    const id = window.setInterval(tick, 1000);
-    return () => window.clearInterval(id);
-  }, [isResolvingFinal, pendingJobs]);
 
   const categoryCounts = useMemo(() => {
     const base: Record<DetectedCategory, number> = { Taste: 0, Activity: 0, Stay: 0, Explore: 0 };
@@ -138,32 +91,128 @@ export function AddScreen() {
 
   useEffect(() => {
     if (!selectedPreview) return;
-    setEditName(selectedPreview.name);
-    setEditLocality(selectedPreview.locality);
-    setEditAddress(selectedPreview.fullAddress);
-    setIsEditing(false);
-  }, [selectedPreview]);
+    // Only update form fields if not currently editing to preserve user changes
+    if (!isEditing) {
+      setEditName(selectedPreview.name);
+      setEditCategory(selectedPreview.category);
+      setEditLocality(selectedPreview.locality);
+      setEditAddress(selectedPreview.fullAddress);
+      setEditPlaceId(selectedPreview.placeId ?? null);
+      setEditCoords({ lat: selectedPreview.lat ?? null, lng: selectedPreview.lng ?? null });
+    }
+  }, [selectedPreview, isEditing]);
+
+  useEffect(() => {
+    if (!isEditing) return;
+    const query = editName.trim();
+    if (query.length < 3) {
+      setLocationSuggestions([]);
+      return;
+    }
+    let cancelled = false;
+    // Clear previous debounce timer
+    if (locationDebounceTimerRef.current) {
+      window.clearTimeout(locationDebounceTimerRef.current);
+    }
+    locationDebounceTimerRef.current = window.setTimeout(() => {
+      setIsLocationSearching(true);
+      void searchLocations(query)
+        .then((items) => {
+          if (!cancelled) {
+            setLocationSuggestions(items.slice(0, 4));
+            // Auto-select and populate the first suggestion
+            if (autoSelectFirstSuggestion && items.length > 0) {
+              const firstItem = items[0];
+              setEditPlaceId(firstItem.placeId);
+              setEditLocality(firstItem.label);
+              setEditAddress(firstItem.description || firstItem.secondaryText || firstItem.label);
+              // Auto-fetch coordinates if available (via resolve-place API)
+              if (firstItem.placeId) {
+                void fetch(`${API_BASE_URL}/api/location/resolve-place?placeId=${encodeURIComponent(firstItem.placeId)}`)
+                  .then(res => res.json())
+                  .then(data => {
+                    const lat = data?.location?.lat;
+                    const lng = data?.location?.lng;
+                    if (!cancelled && typeof lat === "number" && typeof lng === "number") {
+                      setEditCoords({ lat, lng });
+                    }
+                  })
+                  .catch(() => {
+                    // Ignore fetch errors
+                  });
+              }
+              setAutoSelectFirstSuggestion(false); // Disable auto-select after first use
+            }
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setLocationSuggestions([]);
+        })
+        .finally(() => {
+          if (!cancelled) setIsLocationSearching(false);
+        });
+    }, 400); // Reduced debounce time for better responsiveness
+    return () => {
+      cancelled = true;
+      if (locationDebounceTimerRef.current) {
+        window.clearTimeout(locationDebounceTimerRef.current);
+      }
+    };
+  }, [autoSelectFirstSuggestion, editName, isEditing, searchLocations]);
+
+  // Reset auto-select flag when edit modal opens
+  useEffect(() => {
+    if (isEditing) {
+      setAutoSelectFirstSuggestion(true);
+    }
+  }, [isEditing]);
 
   useEffect(() => {
     try {
-      const raw = window.localStorage.getItem(ADD_DRAFT_STORAGE_KEY);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as PersistedAddDraft;
-      setDetectedPlaces(Array.isArray(parsed.detectedPlaces) ? parsed.detectedPlaces : []);
+      const parsed = readPersistedAddDraft();
+      if (!parsed) return;
+      setDetectedPlaces(parsed.detectedPlaces);
       setHasAnalyzed(true);
-      setSelectedDetectedCategory(parsed.selectedDetectedCategory || "Auto-detect");
-      setSelectedPreviewIndex(parsed.selectedPreviewIndex || 0);
-      setIsPreviewVisible(parsed.isPreviewVisible ?? true);
-      setLinkInput(parsed.linkInput || "");
-      setPendingJobs(Array.isArray(parsed.pendingJobs) ? parsed.pendingJobs : []);
+      setSelectedDetectedCategory(parsed.selectedDetectedCategory);
+      setSelectedPreviewIndex(parsed.selectedPreviewIndex);
+      setIsPreviewVisible(parsed.isPreviewVisible);
+      setLinkInput(parsed.linkInput);
+      setPendingJobs(parsed.pendingJobs);
     } catch {
-      clearPersistedDraftState();
+      clearPersistedAddDraft();
     }
   }, []);
 
   useEffect(() => {
+    const syncFromStorage = () => {
+      const parsed = readPersistedAddDraft();
+      if (!parsed) return;
+      setDetectedPlaces(parsed.detectedPlaces);
+      setHasAnalyzed(true);
+      setSelectedDetectedCategory(parsed.selectedDetectedCategory);
+      setSelectedPreviewIndex(parsed.selectedPreviewIndex);
+      setIsPreviewVisible(parsed.isPreviewVisible);
+      setLinkInput(parsed.linkInput);
+      setPendingJobs(parsed.pendingJobs);
+    };
+    window.addEventListener(ADD_DRAFT_UPDATED_EVENT, syncFromStorage);
+    return () => window.removeEventListener(ADD_DRAFT_UPDATED_EVENT, syncFromStorage);
+  }, []);
+
+  useEffect(() => {
+    const runId = peekReviewRunId();
+    if (!runId) return;
+    const index = detectedPlaces.findIndex((item) => item.runId === runId);
+    if (index < 0) return;
+    setSelectedDetectedCategory("Auto-detect");
+    setSelectedPreviewIndex(index);
+    setIsPreviewVisible(true);
+    clearReviewRunId();
+  }, [detectedPlaces]);
+
+  useEffect(() => {
     if (!hasAnalyzed) return;
-    persistDraftState({
+    writePersistedAddDraft({
       detectedPlaces,
       selectedDetectedCategory,
       selectedPreviewIndex,
@@ -181,86 +230,11 @@ export function AddScreen() {
     pendingJobs,
   ]);
 
-  useEffect(() => {
-    if (!pendingJobs.length) return;
-    const timer = window.setInterval(() => {
-      void (async () => {
-        const jobsSnapshot = [...pendingJobs];
-        for (const pending of jobsSnapshot) {
-          try {
-            const jobResponse = await fetch(`${API_BASE_URL}/api/intelligence/jobs/${pending.jobId}`);
-            const jobPayload = await jobResponse.json();
-            const job = jobPayload?.job;
-            if (!jobResponse.ok || !job) continue;
-            if (job.status === "completed") {
-              const entities = (job.result?.output?.structuredEntities || []) as IntelligenceEntity[];
-              const resolvedPlaces = mapEntitiesToPlaces(
-                entities,
-                { source: pending.source, imageUrl: pending.imageUrl, videoUrl: pending.videoUrl },
-                pending.runId,
-              );
-              setDetectedPlaces((prev) => {
-                const withoutRun = prev.filter((item) => item.runId !== pending.runId);
-                return resolvedPlaces.length ? [...resolvedPlaces, ...withoutRun] : withoutRun;
-              });
-              setPendingJobs((prev) => prev.filter((item) => item.jobId !== pending.jobId));
-              showToast({ message: "Link analyzed", variant: "success" });
-            } else if (job.status === "failed") {
-              setPendingJobs((prev) => prev.filter((item) => item.jobId !== pending.jobId));
-            }
-          } catch {
-            // Ignore transient polling errors.
-          }
-        }
-      })();
-    }, 1800);
-    return () => window.clearInterval(timer);
-  }, [pendingJobs, showToast]);
-
-  const mapCategory = (category: IntelligenceEntity["category"]): DetectedCategory | null => {
-    if (category === "eat") return "Taste";
-    if (category === "do") return "Activity";
-    if (category === "stay") return "Stay";
-    if (category === "see") return "Explore";
-    return null;
-  };
-
   const sourceLabelFromPlatform = (platform?: string) => {
     if (platform === "instagram") return "Instagram Reel";
     if (platform === "youtube") return "YouTube Video";
     return "Web Link";
   };
-
-  const mapEntitiesToPlaces = (
-    entities: IntelligenceEntity[],
-    defaults: { source: string; imageUrl: string; videoUrl: string },
-    runId: number,
-  ): DetectedPlace[] =>
-    entities
-      .map<DetectedPlace | null>((entity, index) => {
-        const mapped = mapCategory(entity.category);
-        if (!mapped || !entity.name) return null;
-        const locality = entity.locality || entity.city || entity.state || "Unknown locality";
-        const fullAddress = entity.address || [entity.locality, entity.city, entity.state, entity.country].filter(Boolean).join(", ") || locality;
-        return {
-          id: `${mapped}-${entity.name}-${index}`.toLowerCase().replace(/\s+/g, "-"),
-          runId,
-          name: entity.name,
-          category: mapped,
-          locality,
-          source: defaults.source,
-          imageUrl: entity.photoUrl || defaults.imageUrl || categoryFallbackImage[mapped],
-          fullAddress,
-          videoUrl: defaults.videoUrl,
-          placeId: entity.placeId ?? null,
-          lat: entity.lat ?? null,
-          lng: entity.lng ?? null,
-          city: entity.city ?? null,
-          state: entity.state ?? null,
-          country: entity.country ?? null,
-        };
-      })
-      .filter((value): value is DetectedPlace => value !== null);
 
   const toDraftPlace = (extraction: ExtractionApiResponse, runId: number): DetectedPlace => {
     const platformSource = sourceLabelFromPlatform(extraction.metadata?.platform);
@@ -293,17 +267,9 @@ export function AddScreen() {
     };
   };
 
-  const persistDraftState = (payload: PersistedAddDraft) => {
-    try {
-      window.localStorage.setItem(ADD_DRAFT_STORAGE_KEY, JSON.stringify(payload));
-    } catch {
-      // Ignore localStorage failures.
-    }
-  };
-
   const clearPersistedDraftState = () => {
     try {
-      window.localStorage.removeItem(ADD_DRAFT_STORAGE_KEY);
+      clearPersistedAddDraft();
     } catch {
       // Ignore localStorage failures.
     }
@@ -350,6 +316,7 @@ export function AddScreen() {
         return next;
       });
       setPendingJobs((prev) => prev.filter((job) => job.runId !== place.runId));
+      removeReadyNotificationByRunId(place.runId);
       setSavedPlaceIds((prev) => {
         if (!prev.has(place.id)) return prev;
         const next = new Set(prev);
@@ -383,6 +350,7 @@ export function AddScreen() {
 
     const runId = Date.now();
     analyzeRunRef.current = runId;
+    window.dispatchEvent(new CustomEvent(ADD_PROCESSING_STARTED_EVENT));
     setIsAnalyzing(true);
     setHasAnalyzed(true);
     setIsPreviewVisible(true);
@@ -401,10 +369,20 @@ export function AddScreen() {
 
       if (analyzeRunRef.current !== runId) return;
       const draftPlace = toDraftPlace(extraction, runId);
+      const storedBeforeDraft = readPersistedAddDraft();
+      const baseBeforeDraft = storedBeforeDraft?.detectedPlaces ?? detectedPlaces;
+      const draftPlaces = [draftPlace, ...baseBeforeDraft.filter((item) => item.runId !== runId)];
+      writePersistedAddDraft({
+        detectedPlaces: draftPlaces,
+        selectedDetectedCategory: "Auto-detect",
+        selectedPreviewIndex: 0,
+        isPreviewVisible: true,
+        linkInput: linkInput.trim(),
+        pendingJobs: storedBeforeDraft?.pendingJobs ?? [],
+      });
       setDetectedPlaces((prev) => [draftPlace, ...prev.filter((item) => item.runId !== runId)]);
       setIsAnalyzing(false);
       const startedAt = Date.now();
-      setElapsedSeconds(0);
       setSelectedDetectedCategory("Auto-detect");
       setSelectedPreviewIndex(0);
       setIsPreviewVisible(true);
@@ -428,22 +406,45 @@ export function AddScreen() {
         runId,
       );
       const shownDraft = draftFromApi.length ? draftFromApi : [draftPlace];
+      const storedBeforeJob = readPersistedAddDraft();
+      const baseBeforeJob = storedBeforeJob?.detectedPlaces ?? detectedPlaces;
+      const shownPlaces = [...shownDraft, ...baseBeforeJob.filter((item) => item.runId !== runId)];
       setDetectedPlaces((prev) => [...shownDraft, ...prev.filter((item) => item.runId !== runId)]);
 
       const jobId = intelligence.jobId || null;
       if (!jobId) {
+        writePersistedAddDraft({
+          detectedPlaces: shownPlaces,
+          selectedDetectedCategory: "Auto-detect",
+          selectedPreviewIndex: 0,
+          isPreviewVisible: true,
+          linkInput: linkInput.trim(),
+          pendingJobs: storedBeforeJob?.pendingJobs?.filter((item) => item.runId !== runId) ?? [],
+        });
         showToast({ message: "Link analyzed", variant: "success" });
         return;
       }
+      const pendingJob = {
+        runId,
+        jobId,
+        startedAtMs: startedAt,
+        source: sourceLabelFromPlatform(extraction.metadata?.platform),
+        imageUrl: extraction.metadata?.imageUrl || categoryFallbackImage.Taste,
+        videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || linkInput.trim(),
+      };
+      writePersistedAddDraft({
+        detectedPlaces: shownPlaces,
+        selectedDetectedCategory: "Auto-detect",
+        selectedPreviewIndex: 0,
+        isPreviewVisible: true,
+        linkInput: linkInput.trim(),
+        pendingJobs: [
+          pendingJob,
+          ...(storedBeforeJob?.pendingJobs ?? []).filter((item) => item.runId !== runId),
+        ],
+      });
       setPendingJobs((prev) => [
-        {
-          runId,
-          jobId,
-          startedAtMs: startedAt,
-          source: sourceLabelFromPlatform(extraction.metadata?.platform),
-          imageUrl: extraction.metadata?.imageUrl || categoryFallbackImage.Taste,
-          videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || linkInput.trim(),
-        },
+        pendingJob,
         ...prev.filter((item) => item.runId !== runId),
       ]);
     } catch {
@@ -464,48 +465,7 @@ export function AddScreen() {
 
   const handleSavePlace = async () => {
     if (!selectedPreview) return;
-    if (savedPlaceIds.has(selectedPreview.id)) {
-      showToast({ message: "Place already saved", variant: "info" });
-      return;
-    }
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/saved-places`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          placeId: selectedPreview.placeId || selectedPreview.id,
-          title: selectedPreview.name,
-          category: selectedPreview.category,
-          metadata: {
-            locality: selectedPreview.locality,
-            fullAddress: selectedPreview.fullAddress,
-            source: selectedPreview.source,
-            imageUrl: selectedPreview.imageUrl,
-            videoUrl: selectedPreview.videoUrl,
-            lat: selectedPreview.lat ?? null,
-            lng: selectedPreview.lng ?? null,
-            city: selectedPreview.city ?? null,
-            state: selectedPreview.state ?? null,
-            country: selectedPreview.country ?? null,
-          },
-        }),
-      });
-      if (!response.ok) {
-        if (response.status === 401) {
-          showToast({ message: "Please log in to save places.", variant: "error" });
-          return;
-        }
-        throw new Error("save_failed");
-      }
-      publishSavedToCategoryFeed(selectedPreview);
-      setSavedPlaceIds((current) => new Set(current).add(selectedPreview.id));
-      setSaveMessage(`Saved to ${selectedPreview.category}`);
-      showToast({ message: `Saved to ${selectedPreview.category}`, variant: "success" });
-      removeDetectedWithAnimation(selectedPreview);
-    } catch {
-      showToast({ message: "Couldn’t connect. Please try again.", variant: "error" });
-    }
+    await savePlace(selectedPreview);
   };
 
   const handleApplyEdit = () => {
@@ -517,16 +477,106 @@ export function AddScreen() {
       showToast({ message: "Name and locality are required.", variant: "error" });
       return;
     }
-    setDetectedPlaces((prev) => prev.map((item) => (item.id === selectedPreview.id ? { ...item, name, locality, fullAddress: fullAddress || item.fullAddress } : item)));
+    setDetectedPlaces((prev) => prev.map((item) => (item.id === selectedPreview.id ? {
+      ...item,
+      name,
+      category: editCategory,
+      locality,
+      fullAddress: fullAddress || item.fullAddress,
+      placeId: editPlaceId ?? item.placeId ?? null,
+      lat: editCoords.lat ?? item.lat ?? null,
+      lng: editCoords.lng ?? item.lng ?? null,
+    } : item)));
     setIsEditing(false);
     showToast({ message: "Details updated", variant: "success" });
+  };
+
+  const cancelEdit = () => {
+    if (selectedPreview) {
+      setEditName(selectedPreview.name);
+      setEditCategory(selectedPreview.category);
+      setEditLocality(selectedPreview.locality);
+      setEditAddress(selectedPreview.fullAddress);
+      setEditPlaceId(selectedPreview.placeId ?? null);
+      setEditCoords({ lat: selectedPreview.lat ?? null, lng: selectedPreview.lng ?? null });
+      setLocationSuggestions([]);
+    }
+    setIsEditing(false);
+  };
+
+  const handleSaveEditedPlace = async () => {
+    if (!selectedPreview) return;
+    const name = editName.trim();
+    const locality = editLocality.trim();
+    const fullAddress = editAddress.trim();
+    if (!name || !locality) {
+      showToast({ message: "Name and locality are required.", variant: "error" });
+      return;
+    }
+    const editedPlace: DetectedPlace = {
+      ...selectedPreview,
+      name,
+      category: editCategory,
+      locality,
+      fullAddress: fullAddress || locality,
+      placeId: editPlaceId ?? selectedPreview.placeId ?? null,
+      lat: editCoords.lat ?? selectedPreview.lat ?? null,
+      lng: editCoords.lng ?? selectedPreview.lng ?? null,
+    };
+    await savePlace(editedPlace);
+  };
+
+  const savePlace = async (place: DetectedPlace) => {
+    if (savedPlaceIds.has(place.id)) {
+      showToast({ message: "Place already saved", variant: "info" });
+      return;
+    }
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/saved-places`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          placeId: place.placeId || place.id,
+          title: place.name,
+          category: place.category,
+          metadata: {
+            locality: place.locality,
+            fullAddress: place.fullAddress,
+            source: place.source,
+            imageUrl: place.imageUrl,
+            videoUrl: place.videoUrl,
+            lat: place.lat ?? null,
+            lng: place.lng ?? null,
+            city: place.city ?? null,
+            state: place.state ?? null,
+            country: place.country ?? null,
+          },
+        }),
+      });
+      if (!response.ok) {
+        if (response.status === 401) {
+          showToast({ message: "Please log in to save places.", variant: "error" });
+          return;
+        }
+        throw new Error("save_failed");
+      }
+      publishSavedToCategoryFeed(place);
+      removeReadyNotificationByRunId(place.runId);
+      setSavedPlaceIds((current) => new Set(current).add(place.id));
+      setSaveMessage(`Saved to ${place.category}`);
+      showToast({ message: `Saved to ${place.category}`, variant: "success" });
+      setIsEditing(false);
+      removeDetectedWithAnimation(place);
+    } catch {
+      showToast({ message: "Couldn't connect. Please try again.", variant: "error" });
+    }
   };
 
   const handleRefreshInput = () => {
     analyzeRunRef.current = Date.now();
     setLinkInput("");
     setIsAnalyzing(false);
-    setElapsedSeconds(0);
     setHasAnalyzed(false);
     setDetectedPlaces([]);
     setPendingJobs([]);
@@ -558,6 +608,7 @@ export function AddScreen() {
       next.delete(selectedPreview.id);
       return next;
     });
+    removeReadyNotificationByRunId(selectedPreview.runId);
     setSelectedPreviewIndex(0);
     setIsPreviewVisible(true);
     setIsEditing(false);
@@ -600,7 +651,7 @@ export function AddScreen() {
 
       {hasAnalyzed ? (
         <section className="wr-add-detected-wrap is-ready" aria-label="Detected places">
-          <div className="wr-add-detected-head"><p>{isResolvingFinal ? "Detected draft (resolving...)" : "Detected from this link"}</p><span>{categoryCounts.total} places</span></div>
+          <div className="wr-add-detected-head"><p>{isResolvingFinal ? "Resolving this link" : "Detected from this link"}</p><span>{categoryCounts.total} places</span></div>
 
           <div className="wr-add-chip-row">
             {chipOrder.map((chip) => {
@@ -620,36 +671,22 @@ export function AddScreen() {
               <img src={selectedPreview.imageUrl} alt={selectedPreview.name} className="wr-add-preview-image" />
               <div className="wr-add-preview-body">
                 <p className="wr-add-preview-kicker">DETECTED PREVIEW {selectedPreviewIndex + 1} OF {visibleDetectedPlaces.length || 1}</p>
-                {isEditing ? (
+                <h4>{isResolvingFinal ? "Finding place details..." : selectedPreview.name}</h4>
+                {isResolvingFinal ? (
                   <>
-                    <input className="wr-add-edit-input" value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Place name" />
-                    <input className="wr-add-edit-input" value={editLocality} onChange={(e) => setEditLocality(e.target.value)} placeholder="Locality" />
-                    <input className="wr-add-edit-input" value={editAddress} onChange={(e) => setEditAddress(e.target.value)} placeholder="Full address" />
-                    <div className="wr-add-preview-actions">
-                      <button type="button" className="wr-add-preview-btn" onClick={() => setIsEditing(false)}>Cancel</button>
-                      <button type="button" className="wr-add-preview-btn is-primary" onClick={handleApplyEdit}>Apply</button>
-                    </div>
+                    <p>We're fetching the info for you.</p>
+                    <p>Keep scrolling - come back anytime to save it.</p>
                   </>
                 ) : (
                   <>
-                    <h4>{selectedPreview.name}</h4>
-                    {isResolvingFinal ? (
-                      <>
-                        <p>Detecting and navigating for you...</p>
-                        <p>You can continue scrolling · {elapsedSeconds}s</p>
-                      </>
-                    ) : (
-                      <>
-                        <p>{selectedPreview.category} · {selectedPreview.locality}</p>
-                        <p>From {selectedPreview.source}</p>
-                      </>
-                    )}
-                    <div className="wr-add-preview-actions">
-                      <button type="button" className="wr-add-preview-btn" onClick={() => setIsEditing(true)} disabled={isResolvingFinal}>Edit details</button>
-                      <button type="button" className="wr-add-preview-btn is-primary" onClick={handleSavePlace} disabled={isResolvingFinal}>Save place</button>
-                    </div>
+                    <p>{selectedPreview.category} · {selectedPreview.locality}</p>
+                    <p>From {selectedPreview.source}</p>
                   </>
                 )}
+                <div className="wr-add-preview-actions">
+                  <button type="button" className="wr-add-preview-btn" onClick={() => setIsEditing(true)} disabled={isResolvingFinal}>Edit details</button>
+                  <button type="button" className="wr-add-preview-btn is-primary" onClick={handleSavePlace} disabled={isResolvingFinal}>Save place</button>
+                </div>
               </div>
             </article>
           ) : (
@@ -667,8 +704,63 @@ export function AddScreen() {
       ) : (
         <section className="wr-add-empty-state" aria-label="Detected preview empty state">Your detected place will appear here.</section>
       )}
+      {isEditing && selectedPreview ? (
+        <div className="wr-add-edit-layer" role="presentation">
+          <button type="button" className="wr-add-edit-backdrop" aria-label="Cancel edit" onClick={cancelEdit} />
+          <section className="wr-add-edit-sheet" role="dialog" aria-modal="true" aria-label="Edit detected place">
+            <div className="wr-add-edit-head">
+              <div>
+                <p>EDIT WANDREEL</p>
+                <h3>Check the details</h3>
+              </div>
+              <button type="button" className="wr-add-edit-close" aria-label="Cancel edit" onClick={cancelEdit}>x</button>
+            </div>
+            <label className="wr-add-edit-field">
+              <span>Title</span>
+              <input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Place name" />
+            </label>
+            <label className="wr-add-edit-field">
+              <span>Category</span>
+              <select value={editCategory} onChange={(e) => setEditCategory(e.target.value as DetectedCategory)}>
+                {chipOrder.filter((chip): chip is DetectedCategory => chip !== "Auto-detect").map((chip) => (
+                  <option key={chip} value={chip}>{chip}</option>
+                ))}
+              </select>
+            </label>
+            <label className="wr-add-edit-field">
+              <span>Location</span>
+              <input value={editLocality} onChange={(e) => setEditLocality(e.target.value)} placeholder="Locality" />
+            </label>
+            <label className="wr-add-edit-field">
+              <span>Full address</span>
+              <input value={editAddress} onChange={(e) => setEditAddress(e.target.value)} placeholder="Full address" />
+            </label>
+            <div className="wr-add-location-suggest">
+              {isLocationSearching ? <p>Searching location suggestions...</p> : null}
+              {locationSuggestions.map((item) => (
+                <button
+                  type="button"
+                  key={item.placeId}
+                  onClick={() => {
+                    setEditPlaceId(item.placeId);
+                    setEditLocality(item.label);
+                    setEditAddress(item.description || item.secondaryText || item.label);
+                    setLocationSuggestions([]);
+                  }}
+                >
+                  <span>{item.label}</span>
+                  {item.secondaryText || item.description ? <small>{item.secondaryText || item.description}</small> : null}
+                </button>
+              ))}
+            </div>
+            <div className="wr-add-edit-actions">
+              <button type="button" className="wr-add-preview-btn" onClick={cancelEdit}>Cancel</button>
+              <button type="button" className="wr-add-preview-btn" onClick={handleApplyEdit}>Update card</button>
+              <button type="button" className="wr-add-preview-btn is-primary" onClick={() => void handleSaveEditedPlace()}>Save place</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   );
 }
-
-

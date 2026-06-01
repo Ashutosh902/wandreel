@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bell } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import { BottomNav } from "./BottomNav";
@@ -13,10 +13,24 @@ import { runHomeDataChecks } from "./home.data";
 import { LoginProfileScreen } from "../profile/LoginProfileScreen";
 import { MapScreen } from "../map/MapScreen";
 import { useUx } from "../layout/UxProvider";
+import {
+  ADD_DRAFT_UPDATED_EVENT,
+  ADD_PROCESSING_STARTED_EVENT,
+  ADD_READY_UPDATED_EVENT,
+  addReadyNotification,
+  mapEntitiesToPlaces,
+  readPersistedAddDraft,
+  readReadyNotifications,
+  setReviewRunId,
+  writePersistedAddDraft,
+  type AddReadyNotification,
+  type IntelligenceEntity,
+} from "./addFlowState";
 import "./home.css";
 
 runHomeDataChecks();
 const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Login"];
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 
 function PlaceholderPage({
   title,
@@ -44,12 +58,16 @@ function DiscoverPage({
   onViewMap,
   onAddLink,
   onBackCategory,
+  notificationCount,
+  onNotificationsClick,
 }: {
   activeCategory: CategoryLabel | null;
   onSelectCategory: (category: CategoryLabel) => void;
   onViewMap: (category: CategoryLabel) => void;
   onAddLink: () => void;
   onBackCategory: () => void;
+  notificationCount: number;
+  onNotificationsClick: () => void;
 }) {
   return (
     <>
@@ -69,10 +87,12 @@ function DiscoverPage({
         <LocationSelector inline />
         <button
           type="button"
-          aria-label="Notifications"
-          className="wr-notify-btn"
+          aria-label={notificationCount ? `${notificationCount} ready notifications` : "Notifications"}
+          className={`wr-notify-btn ${notificationCount ? "is-ready" : ""}`}
+          onClick={onNotificationsClick}
         >
           <Bell size={18} className="wr-notify-icon" />
+          {notificationCount ? <span className="wr-notify-badge">{notificationCount}</span> : null}
         </button>
       </header>
       {activeCategory ? (
@@ -88,15 +108,64 @@ function DiscoverPage({
   );
 }
 
+function ReadyNotificationsSheet({
+  items,
+  onClose,
+  onReview,
+}: {
+  items: AddReadyNotification[];
+  onClose: () => void;
+  onReview: (runId: number) => void;
+}) {
+  return (
+    <div className="wr-ready-sheet-layer" role="presentation">
+      <button type="button" className="wr-ready-sheet-backdrop" aria-label="Close notifications" onClick={onClose} />
+      <section className="wr-ready-sheet" role="dialog" aria-modal="false" aria-label="Ready to save notifications">
+        <div className="wr-ready-sheet-head">
+          <div>
+            <p>READY TO SAVE</p>
+            <h3>Your Wandreels</h3>
+          </div>
+          <button type="button" className="wr-ready-sheet-close" aria-label="Close notifications" onClick={onClose}>
+            x
+          </button>
+        </div>
+        {items.length ? (
+          <div className="wr-ready-list">
+            {items.map((item) => (
+              <article className="wr-ready-item" key={item.id}>
+                <img src={item.imageUrl} alt="" className="wr-ready-item-image" />
+                <div className="wr-ready-item-body">
+                  <h4>{item.placeName}</h4>
+                  <p>{item.placeName} is ready to save in {item.category}.</p>
+                  <span>{item.locality} - {item.source}</span>
+                  <button type="button" className="wr-ready-review-btn" onClick={() => onReview(item.runId)}>
+                    Review & save
+                  </button>
+                </div>
+              </article>
+            ))}
+          </div>
+        ) : (
+          <p className="wr-ready-empty">No Wandreels are waiting right now.</p>
+        )}
+      </section>
+    </div>
+  );
+}
+
 export function HomeScreen() {
   const prefersReducedMotion = useReducedMotion();
   const { showToast } = useUx();
   const [activeTab, setActiveTab] = useState<NavLabel>("Discover");
   const [activeCategory, setActiveCategory] = useState<CategoryLabel | null>(null);
   const [mapFocusedCategory, setMapFocusedCategory] = useState<CategoryLabel | null>(null);
+  const [readyNotifications, setReadyNotifications] = useState<AddReadyNotification[]>(() => readReadyNotifications());
+  const [isReadySheetOpen, setIsReadySheetOpen] = useState(false);
   const [transitionDirection, setTransitionDirection] = useState(1);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
+  const isPollingAddJobsRef = useRef(false);
   const touchStartRef = useRef<{ x: number; y: number; edge: "left" | "right" } | null>(null);
   const pullStartYRef = useRef<number | null>(null);
   const pullDistanceRef = useRef(0);
@@ -106,6 +175,149 @@ export function HomeScreen() {
   const isCategoryView = activeTab === "Discover" && activeCategory !== null;
   const pageKey = activeTab === "Discover" && activeCategory ? `Discover-${activeCategory}` : activeTab;
   const getTabOrderIndex = (tab: NavLabel) => NAV_ORDER.indexOf(tab);
+
+  const refreshReadyNotifications = useCallback(() => {
+    setReadyNotifications(readReadyNotifications());
+  }, []);
+
+  const openAddForReview = useCallback((runId: number) => {
+    setReviewRunId(runId);
+    setTransitionDirection(getTabOrderIndex("Add") >= getTabOrderIndex(activeTab) ? 1 : -1);
+    setActiveCategory(null);
+    setMapFocusedCategory(null);
+    setActiveTab("Add");
+    setIsReadySheetOpen(false);
+  }, [activeTab]);
+
+  const requestNotificationPermission = useCallback(() => {
+    if (!("Notification" in window)) return;
+    if (Notification.permission !== "default") return;
+    void Notification.requestPermission().catch(() => undefined);
+  }, []);
+
+  const notifyReadyToSave = useCallback((item: AddReadyNotification) => {
+    addReadyNotification(item);
+    refreshReadyNotifications();
+
+    const body = `${item.placeName} is ready to save in ${item.category}.`;
+    if (document.visibilityState === "hidden" && "Notification" in window && Notification.permission === "granted") {
+      const notification = new Notification("Your Wandreel is ready", {
+        body,
+        icon: "/favicon.svg",
+        tag: `wr-add-ready-${item.runId}`,
+      });
+      notification.onclick = () => {
+        window.focus();
+        openAddForReview(item.runId);
+        notification.close();
+      };
+      return;
+    }
+
+    if (activeTab !== "Add") {
+      showToast({ message: body, variant: "success", durationMs: 3600 });
+    }
+  }, [activeTab, openAddForReview, refreshReadyNotifications, showToast]);
+
+  const pollPendingAddJobs = useCallback(async () => {
+    if (isPollingAddJobsRef.current) return;
+    const draft = readPersistedAddDraft();
+    if (!draft?.pendingJobs.length) return;
+
+    isPollingAddJobsRef.current = true;
+    try {
+      let didChange = false;
+      let nextPlaces = draft.detectedPlaces;
+      let nextPendingJobs = draft.pendingJobs;
+
+      for (const pending of draft.pendingJobs) {
+        try {
+          const response = await fetch(`${API_BASE_URL}/api/intelligence/jobs/${pending.jobId}`);
+          const payload = await response.json();
+          const job = payload?.job;
+          if (!response.ok || !job) continue;
+
+          if (job.status === "completed") {
+            const entities = (job.result?.output?.structuredEntities || []) as IntelligenceEntity[];
+            const resolvedPlaces = mapEntitiesToPlaces(
+              entities,
+              { source: pending.source, imageUrl: pending.imageUrl, videoUrl: pending.videoUrl },
+              pending.runId,
+            );
+            const withoutRun = nextPlaces.filter((item) => item.runId !== pending.runId);
+            nextPlaces = resolvedPlaces.length ? [...resolvedPlaces, ...withoutRun] : withoutRun;
+            nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
+            didChange = true;
+
+            const readyPlace = resolvedPlaces[0];
+            if (readyPlace) {
+              notifyReadyToSave({
+                id: `ready-${pending.jobId}`,
+                runId: pending.runId,
+                jobId: pending.jobId,
+                placeId: readyPlace.placeId || readyPlace.id,
+                placeName: readyPlace.name,
+                category: readyPlace.category,
+                locality: readyPlace.locality,
+                source: readyPlace.source,
+                imageUrl: readyPlace.imageUrl,
+                createdAtMs: Date.now(),
+              });
+            }
+          } else if (job.status === "failed") {
+            nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
+            didChange = true;
+          }
+        } catch {
+          // Keep the pending job for a later retry.
+        }
+      }
+
+      if (didChange) {
+        writePersistedAddDraft({
+          ...draft,
+          detectedPlaces: nextPlaces,
+          pendingJobs: nextPendingJobs,
+          selectedDetectedCategory: "Auto-detect",
+          selectedPreviewIndex: 0,
+          isPreviewVisible: true,
+        });
+      }
+    } finally {
+      isPollingAddJobsRef.current = false;
+    }
+  }, [notifyReadyToSave]);
+
+  useEffect(() => {
+    refreshReadyNotifications();
+    const onReadyUpdate = () => refreshReadyNotifications();
+    window.addEventListener(ADD_READY_UPDATED_EVENT, onReadyUpdate);
+    window.addEventListener("storage", onReadyUpdate);
+    return () => {
+      window.removeEventListener(ADD_READY_UPDATED_EVENT, onReadyUpdate);
+      window.removeEventListener("storage", onReadyUpdate);
+    };
+  }, [refreshReadyNotifications]);
+
+  useEffect(() => {
+    window.addEventListener(ADD_PROCESSING_STARTED_EVENT, requestNotificationPermission);
+    return () => window.removeEventListener(ADD_PROCESSING_STARTED_EVENT, requestNotificationPermission);
+  }, [requestNotificationPermission]);
+
+  useEffect(() => {
+    void pollPendingAddJobs();
+    const intervalId = window.setInterval(() => void pollPendingAddJobs(), 1800);
+    const onResume = () => void pollPendingAddJobs();
+    window.addEventListener(ADD_DRAFT_UPDATED_EVENT, onResume);
+    window.addEventListener("online", onResume);
+    document.addEventListener("visibilitychange", onResume);
+    return () => {
+      window.clearInterval(intervalId);
+      window.removeEventListener(ADD_DRAFT_UPDATED_EVENT, onResume);
+      window.removeEventListener("online", onResume);
+      document.removeEventListener("visibilitychange", onResume);
+    };
+  }, [pollPendingAddJobs]);
 
   const handleBackGesture = () => {
     if (activeTab === "Discover" && activeCategory) {
@@ -148,6 +360,8 @@ export function HomeScreen() {
             setActiveCategory(null);
             setActiveTab("Add");
           }}
+          notificationCount={readyNotifications.length}
+          onNotificationsClick={() => setIsReadySheetOpen(true)}
           onViewMap={(category) => {
             setTransitionDirection(1);
             setMapFocusedCategory(category);
@@ -195,7 +409,7 @@ export function HomeScreen() {
     }
 
     return <LoginProfileScreen />;
-  }, [activeCategory, activeTab, mapFocusedCategory]);
+  }, [activeCategory, activeTab, mapFocusedCategory, readyNotifications.length]);
 
   return (
     <div className="wr-home-page">
@@ -285,6 +499,13 @@ export function HomeScreen() {
           >
             {page}
           </motion.section>
+          {isReadySheetOpen ? (
+            <ReadyNotificationsSheet
+              items={readyNotifications}
+              onClose={() => setIsReadySheetOpen(false)}
+              onReview={openAddForReview}
+            />
+          ) : null}
         </div>
         <BottomNav
           activeTab={activeTab}

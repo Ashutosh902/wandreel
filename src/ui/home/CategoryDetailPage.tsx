@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+import { createPortal } from "react-dom";
+import { Pencil, Search, Trash2, X } from "lucide-react";
 import type { CategoryLabel } from "./home.data";
 import { useUx } from "../layout/UxProvider";
 
@@ -33,6 +34,8 @@ type CategoryFilterChip =
   | "Spiritual";
 
 type CategoryPlaceRow = {
+  id?: string;
+  placeId?: string | null;
   title: string;
   distanceKm: number;
   metaPrimary: string;
@@ -69,9 +72,12 @@ const img = {
 
 const CATEGORY_LEVEL2_ENABLED = String(import.meta.env.VITE_CATEGORY_LEVEL2_ENABLED ?? "true").toLowerCase() !== "false";
 const CATEGORY_FEED_CACHE_KEY = "wr_category_saved_feed_v1";
+const CATEGORY_EDIT_CACHE_KEY = "wr_category_card_edits_v1";
+const CATEGORY_DELETE_CACHE_KEY = "wr_category_card_deleted_v1";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 
 type SavedPlaceApiItem = {
+  placeId?: string;
   title?: string;
   category?: string | null;
   metadata?: {
@@ -83,6 +89,26 @@ type SavedPlaceApiItem = {
     lng?: number | null;
   } | null;
 };
+
+const categoryOrder: CategoryLabel[] = ["Taste", "Activity", "Stay", "Explore"];
+
+function getPlaceKey(place: CategoryPlaceRow) {
+  return String(place.id || place.placeId || `${place.title}::${place.locality}`).toLowerCase();
+}
+
+function readCategoryRecord<T>(key: string): Record<string, T> {
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeCategoryRecord<T>(key: string, value: Record<string, T>) {
+  window.localStorage.setItem(key, JSON.stringify(value));
+}
 
 const categoryConfigs: Record<CategoryLabel, CategoryScreenConfig> = {
   Taste: {
@@ -156,14 +182,21 @@ export function CategoryDetailPage({
   onViewMap: (category: CategoryLabel) => void;
   onAddLink: () => void;
 }) {
-  const { currentCoords } = useUx();
+  const { currentCoords, showToast } = useUx();
   const config = categoryConfigs[category];
   const [activePlace, setActivePlace] = useState<CategoryPlaceRow | null>(null);
+  const [editingCategoryPlace, setEditingCategoryPlace] = useState<CategoryPlaceRow | null>(null);
+  const [deleteConfirmPlace, setDeleteConfirmPlace] = useState<CategoryPlaceRow | null>(null);
+  const [categoryEditTitle, setCategoryEditTitle] = useState("");
+  const [categoryEditLocality, setCategoryEditLocality] = useState("");
+  const [categoryEditAddress, setCategoryEditAddress] = useState("");
+  const [categoryEditCategory, setCategoryEditCategory] = useState<CategoryLabel>(category);
   const [isSheetClosing, setIsSheetClosing] = useState(false);
   const sheetTouchStartYRef = useRef<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedChip, setSelectedChip] = useState<CategoryFilterChip>("All");
   const [savedFeedPlaces, setSavedFeedPlaces] = useState<CategoryPlaceRow[]>([]);
+  const [cardEditVersion, setCardEditVersion] = useState(0);
 
   useEffect(() => {
     if (!isSheetClosing) return;
@@ -173,6 +206,37 @@ export function CategoryDetailPage({
     }, 190);
     return () => window.clearTimeout(timer);
   }, [isSheetClosing]);
+
+  const hasOverlayOpen = Boolean(activePlace || editingCategoryPlace || deleteConfirmPlace);
+
+  useEffect(() => {
+    if (!hasOverlayOpen) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const surface = document.querySelector(".wr-home-surface") as HTMLDivElement | null;
+    const previousSurfaceOverflow = surface?.style.overflow;
+    const previousSurfaceTouchAction = surface?.style.touchAction;
+    const previousSurfaceOverscroll = surface?.style.overscrollBehavior;
+
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    if (surface) {
+      surface.style.overflow = "hidden";
+      surface.style.touchAction = "none";
+      surface.style.overscrollBehavior = "none";
+    }
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      if (surface) {
+        surface.style.overflow = previousSurfaceOverflow || "";
+        surface.style.touchAction = previousSurfaceTouchAction || "";
+        surface.style.overscrollBehavior = previousSurfaceOverscroll || "";
+      }
+    };
+  }, [hasOverlayOpen]);
 
   useEffect(() => {
     const loadSavedFeed = () => {
@@ -184,7 +248,7 @@ export function CategoryDetailPage({
         }
         const parsed = JSON.parse(raw) as Record<string, CategoryPlaceRow[]>;
         const list = Array.isArray(parsed?.[category]) ? parsed[category] : [];
-        setSavedFeedPlaces(list);
+        setSavedFeedPlaces(list.map((item) => ({ ...item, id: item.id || getPlaceKey(item) })));
       } catch {
         setSavedFeedPlaces([]);
       }
@@ -213,6 +277,8 @@ export function CategoryDetailPage({
             const imageUrl = String(item.metadata?.imageUrl || img.expA).trim() || img.expA;
             const videoUrl = String(item.metadata?.videoUrl || "https://www.instagram.com/").trim() || "https://www.instagram.com/";
             return {
+              id: item.placeId || `${category}-${title}`.toLowerCase().replace(/\s+/g, "-"),
+              placeId: item.placeId || null,
               title,
               distanceKm: 0.1,
               metaPrimary: category,
@@ -251,13 +317,19 @@ export function CategoryDetailPage({
 
   const mergedPlaces = useMemo(() => {
     const base = config.places;
-    if (!savedFeedPlaces.length) return base;
+    const edits = readCategoryRecord<Partial<CategoryPlaceRow>>(CATEGORY_EDIT_CACHE_KEY);
+    const deleted = readCategoryRecord<boolean>(CATEGORY_DELETE_CACHE_KEY);
+    const applyLocalState = (place: CategoryPlaceRow) => {
+      const key = getPlaceKey(place);
+      return deleted[key] ? null : { ...place, ...(edits[key] || {}) };
+    };
+    if (!savedFeedPlaces.length) return base.map(applyLocalState).filter((place): place is CategoryPlaceRow => place !== null);
     const baseKeys = new Set(base.map((place) => `${place.title}::${place.locality}`.toLowerCase()));
     const injected = savedFeedPlaces.filter(
       (place) => !baseKeys.has(`${place.title}::${place.locality}`.toLowerCase()),
     );
-    return [...injected, ...base];
-  }, [config.places, savedFeedPlaces]);
+    return [...injected, ...base].map(applyLocalState).filter((place): place is CategoryPlaceRow => place !== null);
+  }, [config.places, savedFeedPlaces, cardEditVersion]);
 
   const distanceAwarePlaces = useMemo(() => {
     if (!currentCoords) return mergedPlaces;
@@ -285,6 +357,81 @@ export function CategoryDetailPage({
     setIsSheetClosing(true);
   };
 
+  const openCategoryEdit = (place: CategoryPlaceRow) => {
+    setCategoryEditTitle(place.title);
+    setCategoryEditLocality(place.locality);
+    setCategoryEditAddress(place.fullAddress);
+    setCategoryEditCategory(category);
+    setEditingCategoryPlace(place);
+  };
+
+  const updateSavedFeedPlace = (place: CategoryPlaceRow, nextCategory: CategoryLabel, remove = false) => {
+    try {
+      const raw = window.localStorage.getItem(CATEGORY_FEED_CACHE_KEY);
+      const parsed = raw ? JSON.parse(raw) : {};
+      const currentList = Array.isArray(parsed?.[category]) ? parsed[category] : [];
+      const key = getPlaceKey(place);
+      const filtered = currentList.filter((item: CategoryPlaceRow) => getPlaceKey(item) !== key);
+      const next = { ...parsed, [category]: filtered };
+      if (!remove) {
+        const nextList = Array.isArray(next?.[nextCategory]) ? next[nextCategory] : [];
+        next[nextCategory] = [{ ...place, category: nextCategory }, ...nextList.filter((item: CategoryPlaceRow) => getPlaceKey(item) !== key)].slice(0, 100);
+      }
+      window.localStorage.setItem(CATEGORY_FEED_CACHE_KEY, JSON.stringify(next));
+      window.dispatchEvent(new CustomEvent("wr:category-saved-updated", { detail: { category } }));
+      if (nextCategory !== category) {
+        window.dispatchEvent(new CustomEvent("wr:category-saved-updated", { detail: { category: nextCategory } }));
+      }
+    } catch {
+      // Ignore local cache failures.
+    }
+  };
+
+  const saveCategoryEdit = () => {
+    if (!editingCategoryPlace) return;
+    const title = categoryEditTitle.trim();
+    const locality = categoryEditLocality.trim();
+    const fullAddress = categoryEditAddress.trim() || locality;
+    if (!title || !locality) {
+      showToast({ message: "Title and location are required.", variant: "error" });
+      return;
+    }
+    const key = getPlaceKey(editingCategoryPlace);
+    const edits = readCategoryRecord<Partial<CategoryPlaceRow>>(CATEGORY_EDIT_CACHE_KEY);
+    const updated = {
+      ...editingCategoryPlace,
+      title,
+      locality,
+      fullAddress,
+      metaPrimary: categoryEditCategory,
+    };
+    edits[key] = updated;
+    writeCategoryRecord(CATEGORY_EDIT_CACHE_KEY, edits);
+    updateSavedFeedPlace(editingCategoryPlace, categoryEditCategory, false);
+    setActivePlace(updated);
+    setEditingCategoryPlace(null);
+    setCardEditVersion((current) => current + 1);
+    showToast({ message: "Card updated", variant: "success" });
+  };
+
+  const deleteCategoryPlace = async (place: CategoryPlaceRow) => {
+    const key = getPlaceKey(place);
+    const deleted = readCategoryRecord<boolean>(CATEGORY_DELETE_CACHE_KEY);
+    deleted[key] = true;
+    writeCategoryRecord(CATEGORY_DELETE_CACHE_KEY, deleted);
+    updateSavedFeedPlace(place, category, true);
+    if (place.placeId) {
+      fetch(`${API_BASE_URL}/api/saved-places/${encodeURIComponent(place.placeId)}`, {
+        method: "DELETE",
+        credentials: "include",
+      }).catch(() => undefined);
+    }
+    setActivePlace(null);
+    setEditingCategoryPlace(null);
+    setCardEditVersion((current) => current + 1);
+    showToast({ message: "Card deleted", variant: "info" });
+  };
+
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const allChipLabel = `All ${distanceAwarePlaces.length}`;
   const filteredPlaces = useMemo(
@@ -302,8 +449,218 @@ export function CategoryDetailPage({
     [distanceAwarePlaces, normalizedQuery, selectedChip],
   );
 
+  const overlays = (
+    <>
+      {activePlace ? (
+        <div className={`wr-taste-sheet-layer ${isSheetClosing ? "is-closing" : ""}`} onClick={closeSheet} role="presentation">
+          <article
+            className="wr-taste-sheet"
+            onClick={(event) => event.stopPropagation()}
+            onTouchStart={(event) => {
+              sheetTouchStartYRef.current = event.touches[0].clientY;
+            }}
+            onTouchEnd={(event) => {
+              if (sheetTouchStartYRef.current === null) return;
+              const deltaY = event.changedTouches[0].clientY - sheetTouchStartYRef.current;
+              sheetTouchStartYRef.current = null;
+              if (deltaY > 72) closeSheet();
+            }}
+            aria-label={`${activePlace.title} details`}
+          >
+            <div className="wr-taste-sheet-toolbar">
+              <button
+                type="button"
+                className="wr-taste-sheet-icon-btn"
+                aria-label="Edit card"
+                onClick={() => openCategoryEdit(activePlace)}
+              >
+                <Pencil size={15} />
+              </button>
+              <button
+                type="button"
+                className="wr-taste-sheet-icon-btn is-delete"
+                aria-label="Delete card"
+                onClick={() => setDeleteConfirmPlace(activePlace)}
+              >
+                <Trash2 size={15} />
+              </button>
+              <button type="button" className="wr-taste-sheet-icon-btn" aria-label="Close details" onClick={closeSheet}>
+                <X size={16} />
+              </button>
+            </div>
+            <div className="wr-taste-sheet-body">
+              <img src={activePlace.imageUrl} alt={activePlace.title} className="wr-taste-sheet-image" />
+              <h3 className="wr-taste-sheet-title">{activePlace.title}</h3>
+              <p className="wr-taste-sheet-address">Full address: {activePlace.fullAddress}</p>
+              <div className="wr-taste-sheet-actions">
+                <a
+                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activePlace.fullAddress)}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="wr-taste-sheet-action-btn"
+                >
+                  Directions
+                </a>
+                <a
+                  href={activePlace.videoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="wr-taste-sheet-action-btn is-video"
+                >
+                  Watch video
+                </a>
+              </div>
+            </div>
+          </article>
+        </div>
+      ) : null}
+      {editingCategoryPlace ? (
+        <div className="wr-add-edit-layer" role="presentation">
+          <button
+            type="button"
+            className="wr-add-edit-backdrop"
+            aria-label="Cancel edit"
+            onClick={() => setEditingCategoryPlace(null)}
+          />
+          <section
+            className="wr-add-edit-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Edit card"
+          >
+            <div className="wr-add-edit-head">
+              <div>
+                <p>EDIT CARD</p>
+                <h3>Update the details</h3>
+              </div>
+              <button
+                type="button"
+                className="wr-add-edit-close"
+                aria-label="Cancel edit"
+                onClick={() => setEditingCategoryPlace(null)}
+              >
+                x
+              </button>
+            </div>
+            <label className="wr-add-edit-field">
+              <span>Title</span>
+              <input
+                value={categoryEditTitle}
+                onChange={(e) => setCategoryEditTitle(e.target.value)}
+                placeholder="Card title"
+              />
+            </label>
+            <label className="wr-add-edit-field">
+              <span>Category</span>
+              <select
+                value={categoryEditCategory}
+                onChange={(e) => setCategoryEditCategory(e.target.value as CategoryLabel)}
+              >
+                {categoryOrder.map((cat) => (
+                  <option key={cat} value={cat}>
+                    {cat}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="wr-add-edit-field">
+              <span>Location</span>
+              <input
+                value={categoryEditLocality}
+                onChange={(e) => setCategoryEditLocality(e.target.value)}
+                placeholder="Locality"
+              />
+            </label>
+            <label className="wr-add-edit-field">
+              <span>Full address</span>
+              <input
+                value={categoryEditAddress}
+                onChange={(e) => setCategoryEditAddress(e.target.value)}
+                placeholder="Full address"
+              />
+            </label>
+            <div className="wr-add-edit-actions">
+              <button
+                type="button"
+                className="wr-add-preview-btn"
+                onClick={() => setEditingCategoryPlace(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="wr-add-preview-btn is-primary"
+                onClick={saveCategoryEdit}
+              >
+                Save changes
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+      {deleteConfirmPlace ? (
+        <div className="wr-add-edit-layer" role="presentation">
+          <button
+            type="button"
+            className="wr-add-edit-backdrop"
+            aria-label="Cancel delete"
+            onClick={() => setDeleteConfirmPlace(null)}
+          />
+          <section
+            className="wr-add-edit-sheet"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Confirm delete"
+          >
+            <div className="wr-add-edit-head">
+              <div>
+                <p>DELETE CARD</p>
+                <h3>Are you sure?</h3>
+              </div>
+              <button
+                type="button"
+                className="wr-add-edit-close"
+                aria-label="Cancel delete"
+                onClick={() => setDeleteConfirmPlace(null)}
+              >
+                x
+              </button>
+            </div>
+            <p style={{ padding: "16px 0", textAlign: "center", color: "#666" }}>
+              This will permanently delete "{deleteConfirmPlace.title}" from your saved places.
+            </p>
+            <div className="wr-add-edit-actions">
+              <button
+                type="button"
+                className="wr-add-preview-btn"
+                onClick={() => setDeleteConfirmPlace(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="wr-add-preview-btn is-primary"
+                onClick={() => {
+                  void deleteCategoryPlace(deleteConfirmPlace);
+                  setDeleteConfirmPlace(null);
+                  closeSheet();
+                }}
+              >
+                Delete
+              </button>
+            </div>
+          </section>
+        </div>
+      ) : null}
+    </>
+  );
+
+  const overlayTarget =
+    typeof document !== "undefined" ? document.querySelector(".wr-phone-shell") ?? document.body : null;
+
   return (
-    <section className={`wr-category-page is-${category}`} aria-label={`${category} category page`}>
+    <>
+      <section className={`wr-category-page is-${category}`} aria-label={`${category} category page`}>
       <label className="wr-taste-search" aria-label={`Search saved ${category.toLowerCase()} places`}>
         <Search size={15} className="wr-taste-search-icon" />
         <input
@@ -377,49 +734,8 @@ export function CategoryDetailPage({
         ))}
       </section>
 
-      {activePlace ? (
-        <div className={`wr-taste-sheet-layer ${isSheetClosing ? "is-closing" : ""}`} onClick={closeSheet} role="presentation">
-          <article
-            className="wr-taste-sheet"
-            onClick={(event) => event.stopPropagation()}
-            onTouchStart={(event) => {
-              sheetTouchStartYRef.current = event.touches[0].clientY;
-            }}
-            onTouchEnd={(event) => {
-              if (sheetTouchStartYRef.current === null) return;
-              const deltaY = event.changedTouches[0].clientY - sheetTouchStartYRef.current;
-              sheetTouchStartYRef.current = null;
-              if (deltaY > 72) closeSheet();
-            }}
-            aria-label={`${activePlace.title} details`}
-          >
-            <button type="button" className="wr-taste-sheet-close" aria-label="Close details" onClick={closeSheet}>
-              <X size={16} />
-            </button>
-            <img src={activePlace.imageUrl} alt={activePlace.title} className="wr-taste-sheet-image" />
-            <h3 className="wr-taste-sheet-title">{activePlace.title}</h3>
-            <p className="wr-taste-sheet-address">Full address: {activePlace.fullAddress}</p>
-            <div className="wr-taste-sheet-actions">
-              <a
-                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activePlace.fullAddress)}`}
-                target="_blank"
-                rel="noreferrer"
-                className="wr-taste-sheet-action-btn"
-              >
-                Directions
-              </a>
-              <a
-                href={activePlace.videoUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="wr-taste-sheet-action-btn is-video"
-              >
-                Watch video
-              </a>
-            </div>
-          </article>
-        </div>
-      ) : null}
-    </section>
+      </section>
+      {overlayTarget ? createPortal(overlays, overlayTarget) : null}
+    </>
   );
 }
