@@ -8,6 +8,11 @@ export default defineConfig({
   plugins: [react(), VitePWA({
     registerType: 'autoUpdate',
     includeAssets: ['favicon.svg'],
+    workbox: {
+      clientsClaim: true,
+      skipWaiting: true,
+      cleanupOutdatedCaches: true,
+    },
     manifest: {
       name: 'Wandreel',
       short_name: 'Wandreel',
