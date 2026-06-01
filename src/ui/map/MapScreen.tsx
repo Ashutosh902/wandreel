@@ -131,6 +131,7 @@ export function MapScreen({
   const [locationSuggestions, setLocationSuggestions] = useState<Array<{ placeId: string; label: string; secondaryText: string | null; description: string | null }>>([]);
   const [isLocationSearching, setIsLocationSearching] = useState(false);
   const [isLocationSearchUnavailable, setIsLocationSearchUnavailable] = useState(false);
+  const locationShellRef = useRef<HTMLDivElement | null>(null);
   const effectiveLocationLabel = currentLocationLabel || "Dhanaut, Bihar";
   const googleMapsApiKey = String(
     import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.VITE_GOOGLE_PLACES_API_KEY || "",
@@ -257,7 +258,7 @@ export function MapScreen({
   useEffect(() => {
     if (!isLocationMenuOpen) return;
     const onPointerDown = (event: PointerEvent) => {
-      const node = document.querySelector(".wr-map-topbar");
+      const node = locationShellRef.current;
       if (!node) return;
       if (!node.contains(event.target as Node)) {
         setIsLocationMenuOpen(false);
@@ -301,68 +302,70 @@ export function MapScreen({
           >
             <ArrowLeft size={18} />
           </button>
-          <div className="wr-map-search">
-            <MapPin size={15} className="wr-map-search-pin" />
-            <div className="wr-map-search-texts">
-              <span className="wr-map-search-main">{effectiveLocationLabel}</span>
-            </div>
-            <button type="button" className="wr-map-search-change" onClick={() => setIsLocationMenuOpen((open) => !open)}>
-              {isLocating ? "Locating..." : "Change"}
-            </button>
-            <Search size={14} className="wr-map-search-icon" />
-          </div>
-          {isLocationMenuOpen ? (
-            <div className="wr-map-location-menu" role="dialog" aria-label="Change map location">
-              <input
-                type="text"
-                className="wr-map-location-input"
-                placeholder="Search city or locality..."
-                value={locationQuery}
-                onChange={(event) => setLocationQuery(event.target.value)}
-                autoFocus
-              />
-              <button
-                type="button"
-                className="wr-map-location-option is-current"
-                onClick={() => {
-                  void useDeviceLocationAsCurrent();
-                  setIsLocationMenuOpen(false);
-                }}
-              >
-                <span>Current location</span>
-                <small>{deviceLocationLabel || "Use device GPS"}</small>
+          <div className="wr-map-location-shell" ref={locationShellRef}>
+            <div className="wr-map-search">
+              <MapPin size={15} className="wr-map-search-pin" />
+              <div className="wr-map-search-texts">
+                <span className="wr-map-search-main">{effectiveLocationLabel}</span>
+              </div>
+              <button type="button" className="wr-map-search-change" onClick={() => setIsLocationMenuOpen((open) => !open)}>
+                {isLocating ? "Locating..." : "Change"}
               </button>
-              {!isLocationSearching && isLocationSearchUnavailable ? (
-                <p className="wr-map-location-helper">Location suggestions unavailable right now.</p>
-              ) : null}
-              {isLocationSearching ? <p className="wr-map-location-helper">Searching...</p> : null}
-              {!isLocationSearching && locationQuery.trim().length >= 2 && locationSuggestions.length === 0 ? (
-                <p className="wr-map-location-helper">
-                  {isLocationSearchUnavailable ? "Try again in a moment." : "No matching places found."}
-                </p>
-              ) : null}
-              {locationSuggestions.map((item) => (
+              <Search size={14} className="wr-map-search-icon" />
+            </div>
+            {isLocationMenuOpen ? (
+              <div className="wr-map-location-menu" role="dialog" aria-label="Change map location">
+                <input
+                  type="text"
+                  className="wr-map-location-input"
+                  placeholder="Search city or locality..."
+                  value={locationQuery}
+                  onChange={(event) => setLocationQuery(event.target.value)}
+                  autoFocus
+                />
                 <button
-                  key={item.placeId}
                   type="button"
-                  className="wr-map-location-option"
-                  onClick={async () => {
-                    const ok = await setLocationFromPlaceId(item.placeId);
-                    if (!ok) {
-                      showToast({ message: "Couldn't set that location. Please try again.", variant: "error" });
-                      return;
-                    }
+                  className="wr-map-location-option is-current"
+                  onClick={() => {
+                    void useDeviceLocationAsCurrent();
                     setIsLocationMenuOpen(false);
-                    setLocationQuery("");
-                    setLocationSuggestions([]);
                   }}
                 >
-                  <span>{item.label}</span>
-                  <small>{item.secondaryText || item.description || ""}</small>
+                  <span>Current location</span>
+                  <small>{deviceLocationLabel || "Use device GPS"}</small>
                 </button>
-              ))}
-            </div>
-          ) : null}
+                {!isLocationSearching && isLocationSearchUnavailable ? (
+                  <p className="wr-map-location-helper">Location suggestions unavailable right now.</p>
+                ) : null}
+                {isLocationSearching ? <p className="wr-map-location-helper">Searching...</p> : null}
+                {!isLocationSearching && locationQuery.trim().length >= 2 && locationSuggestions.length === 0 ? (
+                  <p className="wr-map-location-helper">
+                    {isLocationSearchUnavailable ? "Try again in a moment." : "No matching places found."}
+                  </p>
+                ) : null}
+                {locationSuggestions.map((item) => (
+                  <button
+                    key={item.placeId}
+                    type="button"
+                    className="wr-map-location-option"
+                    onClick={async () => {
+                      const ok = await setLocationFromPlaceId(item.placeId);
+                      if (!ok) {
+                        showToast({ message: "Couldn't set that location. Please try again.", variant: "error" });
+                        return;
+                      }
+                      setIsLocationMenuOpen(false);
+                      setLocationQuery("");
+                      setLocationSuggestions([]);
+                    }}
+                  >
+                    <span>{item.label}</span>
+                    <small>{item.secondaryText || item.description || ""}</small>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </div>
 
         <div className="wr-map-chips" role="group" aria-label="Map categories">
@@ -462,13 +465,6 @@ export function MapScreen({
         {!isMapReady ? <div className="wr-map-road wr-map-road-b" /> : null}
         {!isMapReady ? <div className="wr-map-road wr-map-road-c" /> : null}
         {!isMapReady ? <div className="wr-map-road wr-map-road-d" /> : null}
-        <div className="wr-map-center-label">
-          <span>{effectiveLocationLabel}</span>
-          <small>
-            {isMapReady ? "Google Maps live" : currentCoords ? "Current area" : "Selected area"}
-          </small>
-        </div>
-
         {!isMapReady ? visiblePins.map((pin) => (
           <MapPinMarker
             key={pin.id}
