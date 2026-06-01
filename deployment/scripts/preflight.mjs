@@ -6,8 +6,12 @@ const requiredEnv = [
   "API_BASE_URL",
   "CORS_ALLOWED_ORIGINS",
   "COOKIE_DOMAIN",
+  "CLIENT_ORIGIN",
   "OPENAI_API_KEY",
   "OPENAI_MODEL",
+  "DATABASE_URL",
+  "VITE_GOOGLE_CLIENT_ID",
+  "GOOGLE_CLIENT_ID",
 ];
 
 const results = [];
@@ -110,6 +114,22 @@ async function main() {
     "CORS_ALLOWED_ORIGINS contains APP_URL",
     allowedOrigins.includes(appUrl),
     allowedOrigins.length ? allowedOrigins.join(", ") : "empty",
+  );
+
+  const clientOrigin = process.env.CLIENT_ORIGIN || "";
+  addResult("CLIENT_ORIGIN format", isHttpsUrl(clientOrigin), clientOrigin || "missing");
+  addResult(
+    "CLIENT_ORIGIN matches APP_URL",
+    Boolean(clientOrigin) && clientOrigin === appUrl,
+    clientOrigin || "missing",
+  );
+
+  const googleClientId = String(process.env.GOOGLE_CLIENT_ID || "").trim();
+  const viteGoogleClientId = String(process.env.VITE_GOOGLE_CLIENT_ID || "").trim();
+  addResult(
+    "Google client ids match",
+    Boolean(googleClientId) && googleClientId === viteGoogleClientId,
+    googleClientId && viteGoogleClientId ? "matched check" : "missing",
   );
 
   if (isHttpsUrl(appUrl)) {
