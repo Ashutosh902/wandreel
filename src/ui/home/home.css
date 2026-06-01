@@ -88,8 +88,21 @@
 
 .wr-home-surface-map {
   height: 100%;
-  padding: 0 0 var(--wr-bottom-nav-height);
+  padding: 0;
+  box-sizing: border-box;
   background: #dde6ef;
+  overflow: hidden;
+}
+
+.wr-home-surface-map .wr-page-transition-layer,
+.wr-page-transition-layer.is-map-page {
+  height: 100%;
+  min-height: 100%;
+}
+
+.wr-home-surface-map .wr-page-transition-layer > .wr-map {
+  height: calc(100% - var(--wr-bottom-nav-height));
+  min-height: calc(100% - var(--wr-bottom-nav-height));
   overflow: hidden;
 }
 
@@ -1012,6 +1025,32 @@
 }
 .wr-bucket-item-title { margin: 0; font-size: 12.5px; font-weight: 900; line-height: 1.22; letter-spacing: -0.01em; text-shadow: 0 1px 4px rgba(0,0,0,0.3); }
 .wr-bucket-item-count { margin: 0.08rem 0 0; font-size: 10.5px; font-weight: 800; line-height: 1.2; color: rgba(255,255,255,0.94); }
+.wr-bucket-empty-state {
+  position: relative;
+  z-index: 1;
+  border-radius: 1rem;
+  border: 1px dashed rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.08);
+  padding: 1rem 0.95rem;
+  color: #fff;
+}
+.wr-bucket-empty-state h4 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+.wr-bucket-empty-state p {
+  margin: 0.38rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: rgba(255,255,255,0.82);
+}
+.wr-bucket-empty-state .wr-category-empty-cta {
+  margin-top: 0.7rem;
+  background: #fff;
+  color: #10213f;
+  border-color: rgba(255,255,255,0.85);
+}
 
 .wr-recent-wrap { margin: 1.5rem -1.25rem 0; }
 .wr-recent-scroll {
@@ -1067,6 +1106,25 @@
 .wr-recent-view-all-icon { width: 3rem; height: 3rem; border-radius: 1rem; background: rgba(255,255,255,0.15); display: inline-flex; align-items: center; justify-content: center; }
 .wr-recent-view-all-title { margin: 0; font-size: 14px; font-weight: 800; letter-spacing: -0.01em; }
 .wr-recent-view-all-sub { margin: 0.25rem 0 0; font-size: 10px; font-weight: 600; line-height: 1.25; color: rgba(255,255,255,0.7); }
+.wr-recent-empty-card {
+  width: clamp(15.8rem, 80vw, 18.8rem);
+  flex-shrink: 0;
+  scroll-snap-align: start;
+  border: 1px dashed #d6dde6;
+  border-radius: 1rem;
+  background: rgba(255, 255, 255, 0.82);
+  padding: 1rem;
+  display: grid;
+  gap: 0.7rem;
+  color: #10213f;
+}
+.wr-recent-empty-card .wr-recent-view-all-icon {
+  background: rgba(16, 33, 63, 0.08);
+  color: #10213f;
+}
+.wr-recent-empty-card .wr-recent-view-all-sub {
+  color: #5f6772;
+}
 
 .wr-tab-placeholder {
   position: relative;
@@ -1703,6 +1761,96 @@
 .wr-add-edit-actions .wr-add-preview-btn {
   min-height: 2.34rem;
   font-size: 12.5px;
+}
+
+.wr-delete-confirm-sheet {
+  position: relative;
+  width: calc(100% - 1.5rem);
+  margin: 0 auto;
+  max-height: fit-content;
+  border-top-left-radius: 1.35rem;
+  border-top-right-radius: 1.35rem;
+  border: 1px solid rgba(234, 223, 213, 0.96);
+  background: rgba(255, 253, 248, 0.96);
+  backdrop-filter: blur(18px);
+  box-shadow: 0 -12px 40px rgba(15, 23, 42, 0.16);
+  padding: 0.72rem 0.92rem 0.92rem;
+  animation: wrTasteSheetIn 220ms cubic-bezier(0.2, 0.75, 0.2, 1) both;
+}
+
+.wr-delete-confirm-sheet::before {
+  content: "";
+  width: 2.15rem;
+  height: 0.22rem;
+  border-radius: 999px;
+  margin: 0 auto 0.58rem;
+  background: #d5c9bc;
+  display: block;
+}
+
+.wr-delete-confirm-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+
+.wr-delete-confirm-head p {
+  margin: 0;
+  font-size: 9.75px;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  color: #b45528;
+}
+
+.wr-delete-confirm-head h3 {
+  margin: 0.14rem 0 0;
+  font-size: 1.08rem;
+  line-height: 1.12;
+  font-weight: 900;
+  color: #10213f;
+}
+
+.wr-delete-confirm-close {
+  width: 1.85rem;
+  height: 1.85rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 1px solid #e5ddd5;
+  background: rgba(255, 255, 255, 0.94);
+  color: #374151;
+  font-size: 14px;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wr-delete-confirm-message {
+  margin: 0.58rem 0 0;
+  font-size: 12.4px;
+  line-height: 1.42;
+  font-weight: 700;
+  color: #5d6672;
+  text-align: left;
+}
+
+.wr-delete-confirm-actions {
+  margin-top: 0.78rem;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.wr-delete-confirm-actions .wr-add-preview-btn {
+  min-height: 2.6rem;
+  font-size: 12.6px;
+}
+
+.wr-delete-confirm-actions .wr-add-preview-btn.is-primary {
+  border-color: #b42318;
+  background: #b42318;
+  box-shadow: 0 10px 18px rgba(180, 35, 24, 0.16);
 }
 
 .wr-add-save-toast {

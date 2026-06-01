@@ -3,6 +3,11 @@ import { createPortal } from "react-dom";
 import { Pencil, Search, Trash2, X } from "lucide-react";
 import type { CategoryLabel } from "./home.data";
 import { useUx } from "../layout/UxProvider";
+import {
+  removeSavedPlace,
+  upsertSavedPlace,
+  type SavedPlaceRecord,
+} from "./savedPlaces";
 
 type CategoryFilterChip =
   | "All"
@@ -33,143 +38,34 @@ type CategoryFilterChip =
   | "Free"
   | "Spiritual";
 
-type CategoryPlaceRow = {
-  id?: string;
-  placeId?: string | null;
-  title: string;
-  distanceKm: number;
-  metaPrimary: string;
-  metaSecondary: string;
-  locality: string;
-  fullAddress: string;
-  videoUrl: string;
-  imageUrl: string;
-  tags: Exclude<CategoryFilterChip, "All">[];
-  lat?: number | null;
-  lng?: number | null;
-};
+type CategoryPlaceRow = SavedPlaceRecord;
 
 type CategoryScreenConfig = {
   searchPlaceholder: string;
   chips: CategoryFilterChip[];
-  places: CategoryPlaceRow[];
-};
-
-const img = {
-  tasteA: "https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?auto=format&fit=crop&q=80&w=1200",
-  tasteB: "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?auto=format&fit=crop&q=80&w=1200",
-  tasteC: "https://images.unsplash.com/photo-1504674900247-0877df9cc836?auto=format&fit=crop&q=80&w=1200",
-  actA: "https://images.unsplash.com/photo-1541625602330-2277a4c46182?auto=format&fit=crop&q=80&w=1200",
-  actB: "https://images.unsplash.com/photo-1520975916090-3105956dac38?auto=format&fit=crop&q=80&w=1200",
-  actC: "https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&q=80&w=1200",
-  stayA: "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&q=80&w=1200",
-  stayB: "https://images.unsplash.com/photo-1455587734955-081b22074882?auto=format&fit=crop&q=80&w=1200",
-  stayC: "https://images.unsplash.com/photo-1578683010236-d716f9a3f461?auto=format&fit=crop&q=80&w=1200",
-  expA: "https://images.unsplash.com/photo-1527631746610-bca00a040d60?auto=format&fit=crop&q=80&w=1200",
-  expB: "https://images.unsplash.com/photo-1539650116574-75c0c6d73f4e?auto=format&fit=crop&q=80&w=1200",
-  expC: "https://images.unsplash.com/photo-1467269204594-9661b134dd2b?auto=format&fit=crop&q=80&w=1200",
 };
 
 const CATEGORY_LEVEL2_ENABLED = String(import.meta.env.VITE_CATEGORY_LEVEL2_ENABLED ?? "true").toLowerCase() !== "false";
-const CATEGORY_FEED_CACHE_KEY = "wr_category_saved_feed_v1";
-const CATEGORY_EDIT_CACHE_KEY = "wr_category_card_edits_v1";
-const CATEGORY_DELETE_CACHE_KEY = "wr_category_card_deleted_v1";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 
-type SavedPlaceApiItem = {
-  placeId?: string;
-  title?: string;
-  category?: string | null;
-  metadata?: {
-    locality?: string | null;
-    fullAddress?: string | null;
-    videoUrl?: string | null;
-    imageUrl?: string | null;
-    lat?: number | null;
-    lng?: number | null;
-  } | null;
-};
-
 const categoryOrder: CategoryLabel[] = ["Taste", "Activity", "Stay", "Explore"];
-
-function getPlaceKey(place: CategoryPlaceRow) {
-  return String(place.id || place.placeId || `${place.title}::${place.locality}`).toLowerCase();
-}
-
-function readCategoryRecord<T>(key: string): Record<string, T> {
-  try {
-    const raw = window.localStorage.getItem(key);
-    const parsed = raw ? JSON.parse(raw) : {};
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-function writeCategoryRecord<T>(key: string, value: Record<string, T>) {
-  window.localStorage.setItem(key, JSON.stringify(value));
-}
 
 const categoryConfigs: Record<CategoryLabel, CategoryScreenConfig> = {
   Taste: {
     searchPlaceholder: "Search saved restaurants...",
-    chips: CATEGORY_LEVEL2_ENABLED
-      ? ["All", "Trending", "Visited", "Date-night", "Budget", "Street-style", "Iconic", "Veg-only", "Cafe"]
-      : ["All", "Trending", "Visited", "Date-night", "Budget"],
-    places: [
-      { title: "Litti Courtyard", distanceKm: 0.8, metaPrimary: "Local classic", metaSecondary: "Lunch", locality: "Patna City", fullAddress: "Near Ashok Rajpath, Patna City, Patna, Bihar 800008", videoUrl: "https://www.instagram.com/", imageUrl: img.tasteA, tags: ["Trending", "Iconic"] },
-      { title: "Biryani by the Ganges", distanceKm: 1.2, metaPrimary: "Mughlai", metaSecondary: "Dinner", locality: "Boring Road", fullAddress: "Boring Canal Road, Boring Road Crossing, Patna, Bihar 800001", videoUrl: "https://www.youtube.com/", imageUrl: img.tasteB, tags: ["Date-night", "Iconic"] },
-      { title: "Kulhad Chai Junction", distanceKm: 2.1, metaPrimary: "Street bites", metaSecondary: "Evening", locality: "Kankarbagh", fullAddress: "Main Road, Kankarbagh Colony More, Patna, Bihar 800020", videoUrl: "https://www.instagram.com/", imageUrl: img.tasteC, tags: ["Street-style", "Budget"] },
-      { title: "Sattu & Spice House", distanceKm: 2.6, metaPrimary: "Bihari", metaSecondary: "Lunch", locality: "Rajendra Nagar", fullAddress: "Road No. 3, Rajendra Nagar, Patna, Bihar 800016", videoUrl: "https://www.youtube.com/shorts/", imageUrl: img.tasteA, tags: ["Budget"] },
-      { title: "Tandoor & Tales", distanceKm: 3.4, metaPrimary: "North Indian", metaSecondary: "Date-night", locality: "Bailey Road", fullAddress: "Saguna More to Bailey Road stretch, Patna, Bihar 801503", videoUrl: "https://www.instagram.com/", imageUrl: img.tasteB, tags: ["Date-night", "Trending"] },
-      { title: "Ghatside Chaat Studio", distanceKm: 4.1, metaPrimary: "Street food", metaSecondary: "Snacks", locality: "Gandhi Maidan", fullAddress: "Near Gandhi Maidan North Gate, Patna, Bihar 800001", videoUrl: "https://www.youtube.com/", imageUrl: img.tasteC, tags: ["Street-style", "Visited"] },
-      { title: "Mint Leaf Cafe", distanceKm: 5.3, metaPrimary: "Cafe", metaSecondary: "Brunch", locality: "Patliputra Colony", fullAddress: "Patliputra Colony Main Road, Patna, Bihar 800013", videoUrl: "https://www.instagram.com/", imageUrl: img.tasteA, tags: ["Visited", "Trending", "Cafe"] },
-    ],
+    chips: CATEGORY_LEVEL2_ENABLED ? ["All", "Saved", "Visited"] : ["All", "Saved"],
   },
   Activity: {
     searchPlaceholder: "Search saved activities...",
-    chips: CATEGORY_LEVEL2_ENABLED
-      ? ["All", "Trending", "Visited", "Weekend", "Outdoor", "Adventure", "Family", "Comedy", "Workshop", "Free", "Hidden gem"]
-      : ["All", "Trending", "Visited", "Weekend", "Outdoor", "Adventure"],
-    places: [
-      { title: "Eco Park Patna", distanceKm: 1.1, metaPrimary: "Outdoor", metaSecondary: "Cycling", locality: "Bailey Road", fullAddress: "Eco Park Gate 2, Rajbansi Nagar, Patna, Bihar 800015", videoUrl: "https://www.youtube.com/", imageUrl: img.actA, tags: ["Outdoor", "Family"] },
-      { title: "Gandhi Maidan Walk", distanceKm: 1.7, metaPrimary: "Walking", metaSecondary: "Evening", locality: "Gandhi Maidan", fullAddress: "Gandhi Maidan Circular Road, Patna, Bihar 800001", videoUrl: "https://www.instagram.com/", imageUrl: img.actB, tags: ["Trending", "Weekend"] },
-      { title: "Bihar Museum Visit", distanceKm: 2.2, metaPrimary: "Culture", metaSecondary: "Indoor", locality: "Bailey Road", fullAddress: "Bihar Museum, Jawaharlal Nehru Marg, Patna, Bihar 800001", videoUrl: "https://www.youtube.com/", imageUrl: img.actC, tags: ["Family", "Visited"] },
-      { title: "Ganga Riverfront Cycling", distanceKm: 2.9, metaPrimary: "Outdoor", metaSecondary: "Adventure", locality: "Collectorate Ghat", fullAddress: "Riverfront Track, Near Collectorate Ghat, Patna, Bihar 800001", videoUrl: "https://www.instagram.com/", imageUrl: img.actA, tags: ["Outdoor", "Adventure"] },
-      { title: "Patna Zoo", distanceKm: 3.3, metaPrimary: "Nature", metaSecondary: "Family", locality: "Raj Bhavan", fullAddress: "Sanjay Gandhi Biological Park, Raj Bhavan Road, Patna, Bihar 800015", videoUrl: "https://www.youtube.com/", imageUrl: img.actB, tags: ["Family", "Weekend"] },
-      { title: "Indoor Climbing Studio", distanceKm: 4.4, metaPrimary: "Fitness", metaSecondary: "Adventure", locality: "Kankarbagh", fullAddress: "Near Main Road, Kankarbagh, Patna, Bihar 800020", videoUrl: "https://www.instagram.com/", imageUrl: img.actC, tags: ["Adventure"] },
-      { title: "Weekend Pottery Workshop", distanceKm: 5.1, metaPrimary: "Creative", metaSecondary: "Weekend", locality: "Patliputra", fullAddress: "Community Art Space, Patliputra Colony, Patna, Bihar 800013", videoUrl: "https://www.youtube.com/", imageUrl: img.actA, tags: ["Weekend", "Workshop", "Hidden gem"] },
-    ],
+    chips: CATEGORY_LEVEL2_ENABLED ? ["All", "Saved", "Visited"] : ["All", "Saved"],
   },
   Stay: {
     searchPlaceholder: "Search saved stays...",
-    chips: CATEGORY_LEVEL2_ENABLED
-      ? ["All", "Saved", "Visited", "Budget", "Premium", "Couple-friendly", "Workation", "Pool", "Dorm", "Family"]
-      : ["All", "Saved", "Visited", "Budget", "Premium", "Workation"],
-    places: [
-      { title: "The Panache", distanceKm: 1.8, metaPrimary: "Premium hotel", metaSecondary: "Business", locality: "Fraser Road", fullAddress: "The Panache, West Gandhi Maidan, Patna, Bihar 800001", videoUrl: "https://www.youtube.com/", imageUrl: img.stayA, tags: ["Premium", "Saved"] },
-      { title: "Hotel Maurya", distanceKm: 2.1, metaPrimary: "Premium hotel", metaSecondary: "City center", locality: "South Gandhi Maidan", fullAddress: "Hotel Maurya, South Gandhi Maidan, Patna, Bihar 800001", videoUrl: "https://www.instagram.com/", imageUrl: img.stayB, tags: ["Premium", "Visited"] },
-      { title: "Lemon Tree Premier Patna", distanceKm: 2.7, metaPrimary: "Business stay", metaSecondary: "Workation", locality: "Dak Bungalow", fullAddress: "Lemon Tree Premier, Exhibition Road, Patna, Bihar 800001", videoUrl: "https://www.youtube.com/", imageUrl: img.stayC, tags: ["Workation", "Premium"] },
-      { title: "Budget Stay Boring Road", distanceKm: 3.2, metaPrimary: "Budget hotel", metaSecondary: "Solo", locality: "Boring Road", fullAddress: "Near Boring Road Crossing, Patna, Bihar 800001", videoUrl: "https://www.instagram.com/", imageUrl: img.stayA, tags: ["Budget"] },
-      { title: "Boutique Homestay Patliputra", distanceKm: 4.0, metaPrimary: "Homestay", metaSecondary: "Couple-friendly", locality: "Patliputra Colony", fullAddress: "Patliputra Colony Main Road, Patna, Bihar 800013", videoUrl: "https://www.youtube.com/", imageUrl: img.stayB, tags: ["Couple-friendly", "Saved"] },
-      { title: "Riverside Guest House", distanceKm: 4.7, metaPrimary: "Guest house", metaSecondary: "Pool", locality: "Digha", fullAddress: "Near Digha Ghat, Patna, Bihar 800011", videoUrl: "https://www.instagram.com/", imageUrl: img.stayC, tags: ["Pool", "Visited"] },
-      { title: "Workation Stay Kankarbagh", distanceKm: 5.5, metaPrimary: "Apartment stay", metaSecondary: "Workation", locality: "Kankarbagh", fullAddress: "Road No. 7, Kankarbagh, Patna, Bihar 800020", videoUrl: "https://www.youtube.com/", imageUrl: img.stayA, tags: ["Workation", "Budget", "Family"] },
-    ],
+    chips: CATEGORY_LEVEL2_ENABLED ? ["All", "Saved", "Visited"] : ["All", "Saved"],
   },
   Explore: {
     searchPlaceholder: "Search saved places...",
-    chips: CATEGORY_LEVEL2_ENABLED
-      ? ["All", "Trending", "Visited", "Heritage", "Nature", "Photo spots", "Hidden gem", "Spiritual", "Iconic", "Free"]
-      : ["All", "Trending", "Visited", "Heritage", "Nature", "Photo spots"],
-    places: [
-      { title: "Golghar", distanceKm: 1.4, metaPrimary: "Heritage", metaSecondary: "Photo spot", locality: "Patna City", fullAddress: "Golghar, Gandhi Maidan, Patna, Bihar 800001", videoUrl: "https://www.youtube.com/", imageUrl: img.expA, tags: ["Heritage", "Photo spots"] },
-      { title: "Patna Sahib Gurudwara", distanceKm: 2.3, metaPrimary: "Spiritual", metaSecondary: "Heritage", locality: "Patna Sahib", fullAddress: "Takht Sri Harmandir Sahib, Patna Sahib, Bihar 800008", videoUrl: "https://www.instagram.com/", imageUrl: img.expB, tags: ["Heritage", "Visited"] },
-      { title: "Bihar Museum", distanceKm: 2.8, metaPrimary: "Museum", metaSecondary: "Weekend", locality: "Bailey Road", fullAddress: "Bihar Museum, Jawaharlal Nehru Marg, Patna, Bihar 800001", videoUrl: "https://www.youtube.com/", imageUrl: img.expC, tags: ["Weekend", "Trending"] },
-      { title: "Gandhi Ghat", distanceKm: 3.5, metaPrimary: "Riverfront", metaSecondary: "Sunset", locality: "Ashok Rajpath", fullAddress: "Gandhi Ghat, Ashok Rajpath, Patna, Bihar 800001", videoUrl: "https://www.instagram.com/", imageUrl: img.expA, tags: ["Nature", "Photo spots"] },
-      { title: "Sabhyata Dwar", distanceKm: 4.2, metaPrimary: "Landmark", metaSecondary: "Photo spot", locality: "Digha", fullAddress: "Sabhyata Dwar, Near Samrat Ashok Convention, Patna, Bihar 800001", videoUrl: "https://www.youtube.com/", imageUrl: img.expB, tags: ["Photo spots", "Weekend"] },
-      { title: "Buddha Smriti Park", distanceKm: 4.9, metaPrimary: "Peace park", metaSecondary: "Nature", locality: "Fraser Road", fullAddress: "Buddha Smriti Park, Fraser Road Area, Patna, Bihar 800001", videoUrl: "https://www.instagram.com/", imageUrl: img.expC, tags: ["Nature", "Hidden gem"] },
-      { title: "Patna Planetarium", distanceKm: 5.4, metaPrimary: "Science", metaSecondary: "Family", locality: "Indira Gandhi Road", fullAddress: "Indira Gandhi Science Complex, Patna, Bihar 800001", videoUrl: "https://www.youtube.com/", imageUrl: img.expA, tags: ["Weekend", "Visited"] },
-    ],
+    chips: CATEGORY_LEVEL2_ENABLED ? ["All", "Saved", "Visited"] : ["All", "Saved"],
   },
 };
 
@@ -177,10 +73,12 @@ export function CategoryDetailPage({
   category,
   onViewMap,
   onAddLink,
+  savedPlaces,
 }: {
   category: CategoryLabel;
   onViewMap: (category: CategoryLabel) => void;
   onAddLink: () => void;
+  savedPlaces: SavedPlaceRecord[];
 }) {
   const { currentCoords, showToast } = useUx();
   const config = categoryConfigs[category];
@@ -195,8 +93,6 @@ export function CategoryDetailPage({
   const sheetTouchStartYRef = useRef<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedChip, setSelectedChip] = useState<CategoryFilterChip>("All");
-  const [savedFeedPlaces, setSavedFeedPlaces] = useState<CategoryPlaceRow[]>([]);
-  const [cardEditVersion, setCardEditVersion] = useState(0);
 
   useEffect(() => {
     if (!isSheetClosing) return;
@@ -238,101 +134,8 @@ export function CategoryDetailPage({
     };
   }, [hasOverlayOpen]);
 
-  useEffect(() => {
-    const loadSavedFeed = () => {
-      try {
-        const raw = window.localStorage.getItem(CATEGORY_FEED_CACHE_KEY);
-        if (!raw) {
-          setSavedFeedPlaces([]);
-          return;
-        }
-        const parsed = JSON.parse(raw) as Record<string, CategoryPlaceRow[]>;
-        const list = Array.isArray(parsed?.[category]) ? parsed[category] : [];
-        setSavedFeedPlaces(list.map((item) => ({ ...item, id: item.id || getPlaceKey(item) })));
-      } catch {
-        setSavedFeedPlaces([]);
-      }
-    };
-    loadSavedFeed();
-    const listener = () => loadSavedFeed();
-    window.addEventListener("wr:category-saved-updated", listener as EventListener);
-    return () => window.removeEventListener("wr:category-saved-updated", listener as EventListener);
-  }, [category]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadServerSaved = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/saved-places`, { credentials: "include" });
-        if (!response.ok || cancelled) return;
-        const payload = (await response.json()) as { ok?: boolean; items?: SavedPlaceApiItem[] };
-        if (!payload?.ok || !Array.isArray(payload.items) || cancelled) return;
-
-        const mapped = payload.items
-          .filter((item) => String(item.category || "").toLowerCase() === category.toLowerCase())
-          .map<CategoryPlaceRow>((item) => {
-            const title = String(item.title || "Saved place").trim() || "Saved place";
-            const locality = String(item.metadata?.locality || "Unknown locality").trim() || "Unknown locality";
-            const fullAddress = String(item.metadata?.fullAddress || locality).trim() || locality;
-            const imageUrl = String(item.metadata?.imageUrl || img.expA).trim() || img.expA;
-            const videoUrl = String(item.metadata?.videoUrl || "https://www.instagram.com/").trim() || "https://www.instagram.com/";
-            return {
-              id: item.placeId || `${category}-${title}`.toLowerCase().replace(/\s+/g, "-"),
-              placeId: item.placeId || null,
-              title,
-              distanceKm: 0.1,
-              metaPrimary: category,
-              metaSecondary: "Saved",
-              locality,
-              fullAddress,
-              videoUrl,
-              imageUrl,
-              tags: ["Saved", "Visited"],
-              lat: typeof item.metadata?.lat === "number" ? item.metadata.lat : null,
-              lng: typeof item.metadata?.lng === "number" ? item.metadata.lng : null,
-            };
-          });
-
-        setSavedFeedPlaces((prev) => {
-          const combined = [...mapped, ...prev];
-          const seen = new Set<string>();
-          const deduped: CategoryPlaceRow[] = [];
-          for (const row of combined) {
-            const key = `${row.title}::${row.locality}`.toLowerCase();
-            if (seen.has(key)) continue;
-            seen.add(key);
-            deduped.push(row);
-          }
-          return deduped.slice(0, 150);
-        });
-      } catch {
-        // Ignore network/auth failures in unauthenticated mode.
-      }
-    };
-    void loadServerSaved();
-    return () => {
-      cancelled = true;
-    };
-  }, [category]);
-
-  const mergedPlaces = useMemo(() => {
-    const base = config.places;
-    const edits = readCategoryRecord<Partial<CategoryPlaceRow>>(CATEGORY_EDIT_CACHE_KEY);
-    const deleted = readCategoryRecord<boolean>(CATEGORY_DELETE_CACHE_KEY);
-    const applyLocalState = (place: CategoryPlaceRow) => {
-      const key = getPlaceKey(place);
-      return deleted[key] ? null : { ...place, ...(edits[key] || {}) };
-    };
-    if (!savedFeedPlaces.length) return base.map(applyLocalState).filter((place): place is CategoryPlaceRow => place !== null);
-    const baseKeys = new Set(base.map((place) => `${place.title}::${place.locality}`.toLowerCase()));
-    const injected = savedFeedPlaces.filter(
-      (place) => !baseKeys.has(`${place.title}::${place.locality}`.toLowerCase()),
-    );
-    return [...injected, ...base].map(applyLocalState).filter((place): place is CategoryPlaceRow => place !== null);
-  }, [config.places, savedFeedPlaces, cardEditVersion]);
-
   const distanceAwarePlaces = useMemo(() => {
-    if (!currentCoords) return mergedPlaces;
+    if (!currentCoords) return savedPlaces;
     const toRad = (value: number) => (value * Math.PI) / 180;
     const haversineKm = (lat1: number, lng1: number, lat2: number, lng2: number) => {
       const R = 6371;
@@ -343,14 +146,14 @@ export function CategoryDetailPage({
         Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
       return 2 * R * Math.asin(Math.sqrt(a));
     };
-    return mergedPlaces.map((place) => {
+    return savedPlaces.map((place) => {
       if (typeof place.lat !== "number" || typeof place.lng !== "number") return place;
       return {
         ...place,
         distanceKm: Number(haversineKm(currentCoords.lat, currentCoords.lng, place.lat, place.lng).toFixed(1)),
       };
     });
-  }, [mergedPlaces, currentCoords]);
+  }, [savedPlaces, currentCoords]);
 
   const closeSheet = () => {
     if (!activePlace || isSheetClosing) return;
@@ -366,25 +169,11 @@ export function CategoryDetailPage({
   };
 
   const updateSavedFeedPlace = (place: CategoryPlaceRow, nextCategory: CategoryLabel, remove = false) => {
-    try {
-      const raw = window.localStorage.getItem(CATEGORY_FEED_CACHE_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      const currentList = Array.isArray(parsed?.[category]) ? parsed[category] : [];
-      const key = getPlaceKey(place);
-      const filtered = currentList.filter((item: CategoryPlaceRow) => getPlaceKey(item) !== key);
-      const next = { ...parsed, [category]: filtered };
-      if (!remove) {
-        const nextList = Array.isArray(next?.[nextCategory]) ? next[nextCategory] : [];
-        next[nextCategory] = [{ ...place, category: nextCategory }, ...nextList.filter((item: CategoryPlaceRow) => getPlaceKey(item) !== key)].slice(0, 100);
-      }
-      window.localStorage.setItem(CATEGORY_FEED_CACHE_KEY, JSON.stringify(next));
-      window.dispatchEvent(new CustomEvent("wr:category-saved-updated", { detail: { category } }));
-      if (nextCategory !== category) {
-        window.dispatchEvent(new CustomEvent("wr:category-saved-updated", { detail: { category: nextCategory } }));
-      }
-    } catch {
-      // Ignore local cache failures.
+    if (remove) {
+      removeSavedPlace(place);
+      return;
     }
+    upsertSavedPlace({ ...place, category: nextCategory, metaPrimary: nextCategory });
   };
 
   const saveCategoryEdit = () => {
@@ -396,29 +185,21 @@ export function CategoryDetailPage({
       showToast({ message: "Title and location are required.", variant: "error" });
       return;
     }
-    const key = getPlaceKey(editingCategoryPlace);
-    const edits = readCategoryRecord<Partial<CategoryPlaceRow>>(CATEGORY_EDIT_CACHE_KEY);
     const updated = {
       ...editingCategoryPlace,
       title,
       locality,
       fullAddress,
       metaPrimary: categoryEditCategory,
+      category: categoryEditCategory,
     };
-    edits[key] = updated;
-    writeCategoryRecord(CATEGORY_EDIT_CACHE_KEY, edits);
-    updateSavedFeedPlace(editingCategoryPlace, categoryEditCategory, false);
+    updateSavedFeedPlace(updated, categoryEditCategory, false);
     setActivePlace(updated);
     setEditingCategoryPlace(null);
-    setCardEditVersion((current) => current + 1);
     showToast({ message: "Card updated", variant: "success" });
   };
 
   const deleteCategoryPlace = async (place: CategoryPlaceRow) => {
-    const key = getPlaceKey(place);
-    const deleted = readCategoryRecord<boolean>(CATEGORY_DELETE_CACHE_KEY);
-    deleted[key] = true;
-    writeCategoryRecord(CATEGORY_DELETE_CACHE_KEY, deleted);
     updateSavedFeedPlace(place, category, true);
     if (place.placeId) {
       fetch(`${API_BASE_URL}/api/saved-places/${encodeURIComponent(place.placeId)}`, {
@@ -428,7 +209,6 @@ export function CategoryDetailPage({
     }
     setActivePlace(null);
     setEditingCategoryPlace(null);
-    setCardEditVersion((current) => current + 1);
     showToast({ message: "Card deleted", variant: "info" });
   };
 
@@ -607,29 +387,29 @@ export function CategoryDetailPage({
             onClick={() => setDeleteConfirmPlace(null)}
           />
           <section
-            className="wr-add-edit-sheet"
+            className="wr-delete-confirm-sheet"
             role="dialog"
             aria-modal="true"
             aria-label="Confirm delete"
           >
-            <div className="wr-add-edit-head">
+            <div className="wr-delete-confirm-head">
               <div>
                 <p>DELETE CARD</p>
                 <h3>Are you sure?</h3>
               </div>
               <button
                 type="button"
-                className="wr-add-edit-close"
+                className="wr-delete-confirm-close"
                 aria-label="Cancel delete"
                 onClick={() => setDeleteConfirmPlace(null)}
               >
                 x
               </button>
             </div>
-            <p style={{ padding: "16px 0", textAlign: "center", color: "#666" }}>
+            <p className="wr-delete-confirm-message">
               This will permanently delete "{deleteConfirmPlace.title}" from your saved places.
             </p>
-            <div className="wr-add-edit-actions">
+            <div className="wr-delete-confirm-actions">
               <button
                 type="button"
                 className="wr-add-preview-btn"
@@ -704,12 +484,12 @@ export function CategoryDetailPage({
                     : "Save sights, hidden gems, and weekend spots."}
             </p>
             <button type="button" className="wr-category-empty-cta" onClick={onAddLink}>
-              Add a link
+              Add place
             </button>
           </article>
         ) : filteredPlaces.map((place) => (
           <article
-            key={place.title}
+            key={place.id}
             className="wr-taste-row-card"
             onClick={() => setActivePlace(place)}
             role="button"

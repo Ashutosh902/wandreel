@@ -4,7 +4,6 @@ import { useUx } from "../layout/UxProvider";
 import {
   ADD_DRAFT_UPDATED_EVENT,
   ADD_PROCESSING_STARTED_EVENT,
-  CATEGORY_FEED_CACHE_KEY,
   categoryFallbackImage,
   clearReviewRunId,
   clearPersistedAddDraft,
@@ -18,6 +17,7 @@ import {
   type IntelligenceEntity,
   type PendingDetectionJob,
 } from "./addFlowState";
+import { upsertSavedPlace } from "./savedPlaces";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 
@@ -276,9 +276,11 @@ export function AddScreen() {
   };
 
   const publishSavedToCategoryFeed = (place: DetectedPlace) => {
-    const payload = {
+    upsertSavedPlace({
       id: `${place.category}-${place.placeId || place.id}`.toLowerCase(),
+      placeId: place.placeId || place.id,
       title: place.name,
+      category: place.category,
       distanceKm: 0.1,
       metaPrimary: place.category,
       metaSecondary: "Saved",
@@ -290,21 +292,7 @@ export function AddScreen() {
       lat: place.lat ?? null,
       lng: place.lng ?? null,
       createdAtMs: Date.now(),
-    };
-    try {
-      const raw = window.localStorage.getItem(CATEGORY_FEED_CACHE_KEY);
-      const parsed = raw ? JSON.parse(raw) : {};
-      const byCategory = Array.isArray(parsed?.[place.category]) ? parsed[place.category] : [];
-      const withoutDup = byCategory.filter((item: { id?: string; title?: string; locality?: string }) => {
-        if (item?.id && item.id === payload.id) return false;
-        return !(item?.title === payload.title && item?.locality === payload.locality);
-      });
-      const next = { ...parsed, [place.category]: [payload, ...withoutDup].slice(0, 100) };
-      window.localStorage.setItem(CATEGORY_FEED_CACHE_KEY, JSON.stringify(next));
-      window.dispatchEvent(new CustomEvent("wr:category-saved-updated", { detail: { category: place.category } }));
-    } catch {
-      // Ignore cache errors.
-    }
+    });
   };
 
   const removeDetectedWithAnimation = (place: DetectedPlace) => {

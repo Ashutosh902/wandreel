@@ -10,9 +10,6 @@
   Utensils,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import ecoParkImage from "../assets/recent/eco-park.svg";
-import patnaSahibImage from "../assets/recent/patna-sahib.svg";
-import funtasiaImage from "../assets/recent/funtasia.svg";
 import tasteCategoryImage from "../assets/categories/taste.png";
 import activityCategoryImage from "../assets/categories/activity.png";
 import stayCategoryImage from "../assets/categories/stay.png";
@@ -22,16 +19,6 @@ export type CategoryItem = {
   label: CategoryLabel;
   icon: LucideIcon;
   fill: string;
-  count: number;
-  image: string;
-};
-
-export type RecentCard = {
-  title: string;
-  category: string;
-  meta: string;
-  place: string;
-  color: string;
   image: string;
 };
 
@@ -44,37 +31,10 @@ export type NavItem = {
 };
 
 export const categories: CategoryItem[] = [
-  { label: "Taste", icon: Utensils, fill: "from-[#C2410C] to-[#E11D48]", count: 18, image: tasteCategoryImage },
-  { label: "Activity", icon: FerrisWheel, fill: "from-[#B45309] to-[#D97706]", count: 9, image: activityCategoryImage },
-  { label: "Stay", icon: BedDouble, fill: "from-[#4C1D95] to-[#6D28D9]", count: 6, image: stayCategoryImage },
-  { label: "Explore", icon: Camera, fill: "from-[#0F766E] to-[#0E7490]", count: 22, image: exploreCategoryImage },
-];
-
-export const cards: RecentCard[] = [
-  {
-    title: "Eco Park Patna",
-    category: "Activity",
-    meta: "Boating | Cycling | Outdoor",
-    place: "Patna, Bihar",
-    color: "#B45309",
-    image: ecoParkImage,
-  },
-  {
-    title: "Patna Sahib Gurudwara",
-    category: "Explore",
-    meta: "Heritage | Pilgrimage | Culture",
-    place: "Patna City",
-    color: "#0F766E",
-    image: patnaSahibImage,
-  },
-  {
-    title: "Funtasia Water Park",
-    category: "Activity",
-    meta: "Water rides | Family | Weekend",
-    place: "Patna",
-    color: "#B45309",
-    image: funtasiaImage,
-  },
+  { label: "Taste", icon: Utensils, fill: "from-[#C2410C] to-[#E11D48]", image: tasteCategoryImage },
+  { label: "Activity", icon: FerrisWheel, fill: "from-[#B45309] to-[#D97706]", image: activityCategoryImage },
+  { label: "Stay", icon: BedDouble, fill: "from-[#4C1D95] to-[#6D28D9]", image: stayCategoryImage },
+  { label: "Explore", icon: Camera, fill: "from-[#0F766E] to-[#0E7490]", image: exploreCategoryImage },
 ];
 
 export const navItems: NavItem[] = [
@@ -92,10 +52,6 @@ export function runHomeDataChecks(): void {
 
   if (!categories.every((category) => category.label && category.fill.trim().length > 0)) {
     throw new Error("Every category must include label and fill.");
-  }
-
-  if (!cards.every((card) => card.title && card.category && card.place && card.image)) {
-    throw new Error("Every recently added card must include title, category, place, and image.");
   }
 
   if (navItems.length !== 5) {

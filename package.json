@@ -16,6 +16,7 @@
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
+    "@react-google-maps/api": "^2.20.8",
     "@types/pg": "^8.20.0",
     "dotenv": "^17.4.2",
     "express": "^5.1.0",

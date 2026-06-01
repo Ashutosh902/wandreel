@@ -26,6 +26,16 @@ import {
   type AddReadyNotification,
   type IntelligenceEntity,
 } from "./addFlowState";
+import {
+  createEmptySavedPlacesByCategory,
+  flattenSavedPlaces,
+  getSavedPlaceCounts,
+  mergeSavedPlacesFromApi,
+  readSavedPlacesByCategory,
+  SAVED_PLACES_UPDATED_EVENT,
+  type SavedPlaceApiItem,
+  type SavedPlaceRecord,
+} from "./savedPlaces";
 import "./home.css";
 
 runHomeDataChecks();
@@ -60,6 +70,8 @@ function DiscoverPage({
   onBackCategory,
   notificationCount,
   onNotificationsClick,
+  savedPlacesByCategory,
+  allSavedPlaces,
 }: {
   activeCategory: CategoryLabel | null;
   onSelectCategory: (category: CategoryLabel) => void;
@@ -68,7 +80,11 @@ function DiscoverPage({
   onBackCategory: () => void;
   notificationCount: number;
   onNotificationsClick: () => void;
+  savedPlacesByCategory: Record<CategoryLabel, SavedPlaceRecord[]>;
+  allSavedPlaces: SavedPlaceRecord[];
 }) {
+  const counts = getSavedPlaceCounts(savedPlacesByCategory);
+
   return (
     <>
       <header className="wr-home-header">
@@ -96,12 +112,17 @@ function DiscoverPage({
         </button>
       </header>
       {activeCategory ? (
-        <CategoryDetailPage category={activeCategory} onViewMap={onViewMap} onAddLink={onAddLink} />
+        <CategoryDetailPage
+          category={activeCategory}
+          onViewMap={onViewMap}
+          onAddLink={onAddLink}
+          savedPlaces={savedPlacesByCategory[activeCategory]}
+        />
       ) : (
         <>
           <HeroCard />
-          <BucketlistSummary onSelectCategory={onSelectCategory} />
-          <RecentlyAddedCarousel />
+          <BucketlistSummary counts={counts} onSelectCategory={onSelectCategory} onAddLink={onAddLink} />
+          <RecentlyAddedCarousel places={allSavedPlaces} onAddLink={onAddLink} />
         </>
       )}
     </>
@@ -160,6 +181,7 @@ export function HomeScreen() {
   const [activeTab, setActiveTab] = useState<NavLabel>("Discover");
   const [activeCategory, setActiveCategory] = useState<CategoryLabel | null>(null);
   const [mapFocusedCategory, setMapFocusedCategory] = useState<CategoryLabel | null>(null);
+  const [savedPlacesByCategory, setSavedPlacesByCategory] = useState(createEmptySavedPlacesByCategory);
   const [readyNotifications, setReadyNotifications] = useState<AddReadyNotification[]>(() => readReadyNotifications());
   const [isReadySheetOpen, setIsReadySheetOpen] = useState(false);
   const [transitionDirection, setTransitionDirection] = useState(1);
@@ -175,6 +197,11 @@ export function HomeScreen() {
   const isCategoryView = activeTab === "Discover" && activeCategory !== null;
   const pageKey = activeTab === "Discover" && activeCategory ? `Discover-${activeCategory}` : activeTab;
   const getTabOrderIndex = (tab: NavLabel) => NAV_ORDER.indexOf(tab);
+  const allSavedPlaces = useMemo(() => flattenSavedPlaces(savedPlacesByCategory), [savedPlacesByCategory]);
+
+  const refreshSavedPlaces = useCallback(() => {
+    setSavedPlacesByCategory(readSavedPlacesByCategory());
+  }, []);
 
   const refreshReadyNotifications = useCallback(() => {
     setReadyNotifications(readReadyNotifications());
@@ -289,6 +316,36 @@ export function HomeScreen() {
   }, [notifyReadyToSave]);
 
   useEffect(() => {
+    refreshSavedPlaces();
+    const onSavedPlacesUpdate = () => refreshSavedPlaces();
+    window.addEventListener(SAVED_PLACES_UPDATED_EVENT, onSavedPlacesUpdate);
+    window.addEventListener("storage", onSavedPlacesUpdate);
+    return () => {
+      window.removeEventListener(SAVED_PLACES_UPDATED_EVENT, onSavedPlacesUpdate);
+      window.removeEventListener("storage", onSavedPlacesUpdate);
+    };
+  }, [refreshSavedPlaces]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadServerSavedPlaces = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/saved-places`, { credentials: "include" });
+        if (!response.ok || cancelled) return;
+        const payload = (await response.json()) as { ok?: boolean; items?: SavedPlaceApiItem[] };
+        if (!payload?.ok || !Array.isArray(payload.items) || cancelled) return;
+        mergeSavedPlacesFromApi(payload.items);
+      } catch {
+        // Ignore network/auth failures in unauthenticated mode.
+      }
+    };
+    void loadServerSavedPlaces();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     refreshReadyNotifications();
     const onReadyUpdate = () => refreshReadyNotifications();
     window.addEventListener(ADD_READY_UPDATED_EVENT, onReadyUpdate);
@@ -362,6 +419,8 @@ export function HomeScreen() {
           }}
           notificationCount={readyNotifications.length}
           onNotificationsClick={() => setIsReadySheetOpen(true)}
+          savedPlacesByCategory={savedPlacesByCategory}
+          allSavedPlaces={allSavedPlaces}
           onViewMap={(category) => {
             setTransitionDirection(1);
             setMapFocusedCategory(category);
@@ -376,6 +435,7 @@ export function HomeScreen() {
       return (
         <MapScreen
           focusedCategory={mapFocusedCategory}
+          savedPlaces={allSavedPlaces}
           onAddLink={() => {
             setTransitionDirection(1);
             setActiveTab("Add");
@@ -409,7 +469,7 @@ export function HomeScreen() {
     }
 
     return <LoginProfileScreen />;
-  }, [activeCategory, activeTab, mapFocusedCategory, readyNotifications.length]);
+  }, [activeCategory, activeTab, allSavedPlaces, mapFocusedCategory, readyNotifications.length, savedPlacesByCategory]);
 
   return (
     <div className="wr-home-page">
@@ -488,7 +548,7 @@ export function HomeScreen() {
 
           <motion.section
             key={pageKey}
-            className="wr-page-transition-layer"
+            className={`wr-page-transition-layer ${isMapTab ? "is-map-page" : ""}`}
             initial={
               prefersReducedMotion || activeTab === "Login"
                 ? { opacity: 0.98 }
