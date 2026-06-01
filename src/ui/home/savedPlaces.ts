@@ -67,6 +67,10 @@ export function writeSavedPlacesByCategory(value: Record<CategoryLabel, SavedPla
   window.dispatchEvent(new CustomEvent(SAVED_PLACES_UPDATED_EVENT));
 }
 
+export function clearSavedPlacesByCategory() {
+  writeSavedPlacesByCategory(createEmptySavedPlacesByCategory());
+}
+
 export function flattenSavedPlaces(byCategory: Record<CategoryLabel, SavedPlaceRecord[]>) {
   return categoryOrder.flatMap((category) => byCategory[category] || []);
 }
