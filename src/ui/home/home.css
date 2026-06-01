@@ -421,16 +421,16 @@
   background-repeat: no-repeat;
 }
 .wr-hero-card-empty-memory {
-  background:
-    radial-gradient(circle at 12% 14%, rgba(255, 242, 227, 0.88), transparent 24%),
-    radial-gradient(circle at 86% 18%, rgba(255, 227, 190, 0.72), transparent 22%),
-    linear-gradient(155deg, #8cd5ff 0%, #53a7ff 32%, #4a8df0 58%, #f58f53 100%);
+  background: #0d1b47;
 }
 .wr-hero-overlay-empty-memory {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.18) 0%, rgba(255, 255, 255, 0.06) 38%, rgba(10, 18, 36, 0.18) 100%),
-    radial-gradient(circle at 72% 26%, rgba(255, 255, 255, 0.24), transparent 16%),
-    radial-gradient(circle at 18% 70%, rgba(255, 214, 186, 0.24), transparent 20%);
+  background-image:
+    linear-gradient(90deg, rgba(8, 16, 44, 0.64) 0%, rgba(8, 16, 44, 0.34) 34%, rgba(8, 16, 44, 0.08) 62%, rgba(242, 138, 87, 0.14) 100%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04) 0%, rgba(10, 18, 36, 0.12) 46%, rgba(10, 18, 36, 0.58) 100%),
+    url("../assets/hero/cartoon-globe.png");
+  background-size: cover, cover, cover;
+  background-position: center, center, center 34%;
+  background-repeat: no-repeat;
 }
 .wr-hero-glow { position: absolute; border-radius: 999px; filter: blur(16px); }
 .wr-hero-glow-right { right: -30px; top: -30px; width: 8rem; height: 8rem; background: rgba(194,65,12,0.35); }
