@@ -27,6 +27,7 @@ import {
   type IntelligenceEntity,
 } from "./addFlowState";
 import {
+  clearSavedPlacesByCategory,
   createEmptySavedPlacesByCategory,
   flattenSavedPlaces,
   getSavedPlaceCounts,
@@ -41,6 +42,7 @@ import "./home.css";
 runHomeDataChecks();
 const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Login"];
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
 
 function PlaceholderPage({
   title,
@@ -62,6 +64,43 @@ function PlaceholderPage({
   );
 }
 
+type HeroMode = "empty-memory" | "city-memory";
+
+function derivePrimaryCityFromSavedPlaces(places: SavedPlaceRecord[]) {
+  const cityCounts = new Map<string, number>();
+
+  for (const place of places) {
+    const candidates = [place.locality, place.fullAddress]
+      .map((value) => String(value || "").trim())
+      .filter(Boolean);
+
+    let resolvedCity = "";
+    for (const candidate of candidates) {
+      const parts = candidate.split(",").map((part) => part.trim()).filter(Boolean);
+      const preferred = parts[0] || candidate;
+      const normalized = preferred.replace(/\s+/g, " ").trim();
+      if (!normalized) continue;
+      if (/^unknown locality$/i.test(normalized)) continue;
+      resolvedCity = normalized;
+      break;
+    }
+
+    if (!resolvedCity) continue;
+    cityCounts.set(resolvedCity, (cityCounts.get(resolvedCity) || 0) + 1);
+  }
+
+  let primaryCity = "";
+  let maxCount = 0;
+  for (const [city, count] of cityCounts.entries()) {
+    if (count > maxCount) {
+      primaryCity = city;
+      maxCount = count;
+    }
+  }
+
+  return primaryCity;
+}
+
 function DiscoverPage({
   activeCategory,
   onSelectCategory,
@@ -71,7 +110,9 @@ function DiscoverPage({
   notificationCount,
   onNotificationsClick,
   savedPlacesByCategory,
-  allSavedPlaces,
+  visibleSavedPlaces,
+  heroMode,
+  derivedPrimaryCity,
 }: {
   activeCategory: CategoryLabel | null;
   onSelectCategory: (category: CategoryLabel) => void;
@@ -81,9 +122,17 @@ function DiscoverPage({
   notificationCount: number;
   onNotificationsClick: () => void;
   savedPlacesByCategory: Record<CategoryLabel, SavedPlaceRecord[]>;
-  allSavedPlaces: SavedPlaceRecord[];
+  visibleSavedPlaces: SavedPlaceRecord[];
+  heroMode: HeroMode;
+  derivedPrimaryCity: string;
 }) {
   const counts = getSavedPlaceCounts(savedPlacesByCategory);
+  const heroTitle = heroMode === "city-memory"
+    ? `${derivedPrimaryCity} memories, ready to stroll`
+    : "Your memories will start here";
+  const heroSubtitle = heroMode === "city-memory"
+    ? "Saved places, reels, and ideas are ready to shape your next stroll."
+    : "Save places, reels, and ideas to build your city memories.";
 
   return (
     <>
@@ -120,9 +169,9 @@ function DiscoverPage({
         />
       ) : (
         <>
-          <HeroCard />
+          <HeroCard mode={heroMode} title={heroTitle} subtitle={heroSubtitle} />
           <BucketlistSummary counts={counts} onSelectCategory={onSelectCategory} onAddLink={onAddLink} />
-          <RecentlyAddedCarousel places={allSavedPlaces} onAddLink={onAddLink} />
+          <RecentlyAddedCarousel places={visibleSavedPlaces} onAddLink={onAddLink} />
         </>
       )}
     </>
@@ -182,6 +231,7 @@ export function HomeScreen() {
   const [activeCategory, setActiveCategory] = useState<CategoryLabel | null>(null);
   const [mapFocusedCategory, setMapFocusedCategory] = useState<CategoryLabel | null>(null);
   const [savedPlacesByCategory, setSavedPlacesByCategory] = useState(createEmptySavedPlacesByCategory);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [readyNotifications, setReadyNotifications] = useState<AddReadyNotification[]>(() => readReadyNotifications());
   const [isReadySheetOpen, setIsReadySheetOpen] = useState(false);
   const [transitionDirection, setTransitionDirection] = useState(1);
@@ -197,14 +247,71 @@ export function HomeScreen() {
   const isCategoryView = activeTab === "Discover" && activeCategory !== null;
   const pageKey = activeTab === "Discover" && activeCategory ? `Discover-${activeCategory}` : activeTab;
   const getTabOrderIndex = (tab: NavLabel) => NAV_ORDER.indexOf(tab);
-  const allSavedPlaces = useMemo(() => flattenSavedPlaces(savedPlacesByCategory), [savedPlacesByCategory]);
+  const effectiveSavedPlacesByCategory = useMemo(
+    () => (isAuthenticated ? savedPlacesByCategory : createEmptySavedPlacesByCategory()),
+    [isAuthenticated, savedPlacesByCategory],
+  );
+  const allSavedPlaces = useMemo(
+    () => flattenSavedPlaces(effectiveSavedPlacesByCategory),
+    [effectiveSavedPlacesByCategory],
+  );
+  const visibleSavedPlaces = useMemo(
+    () => (isAuthenticated ? allSavedPlaces : []),
+    [allSavedPlaces, isAuthenticated],
+  );
+  const visibleSavedPlacesByCategory = useMemo(() => {
+    if (!isAuthenticated) return createEmptySavedPlacesByCategory();
+    return effectiveSavedPlacesByCategory;
+  }, [effectiveSavedPlacesByCategory, isAuthenticated]);
+  const derivedPrimaryCity = useMemo(
+    () => derivePrimaryCityFromSavedPlaces(visibleSavedPlaces),
+    [visibleSavedPlaces],
+  );
+  const heroMode: HeroMode = visibleSavedPlaces.length > 0 && derivedPrimaryCity ? "city-memory" : "empty-memory";
 
   const refreshSavedPlaces = useCallback(() => {
-    setSavedPlacesByCategory(readSavedPlacesByCategory());
-  }, []);
+    setSavedPlacesByCategory(isAuthenticated ? readSavedPlacesByCategory() : createEmptySavedPlacesByCategory());
+  }, [isAuthenticated]);
 
   const refreshReadyNotifications = useCallback(() => {
     setReadyNotifications(readReadyNotifications());
+  }, []);
+
+  useEffect(() => {
+    const syncAuthState = () => {
+      void (async () => {
+        try {
+          const sessionResponse = await fetch(`${API_BASE_URL}/api/auth/session/me`, { credentials: "include" });
+          if (!sessionResponse.ok) {
+            setIsAuthenticated(false);
+            clearSavedPlacesByCategory();
+            setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
+            return;
+          }
+          const sessionPayload = (await sessionResponse.json()) as { ok?: boolean; user?: unknown };
+          if (!sessionPayload?.ok || !sessionPayload.user) {
+            setIsAuthenticated(false);
+            clearSavedPlacesByCategory();
+            setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
+            return;
+          }
+          setIsAuthenticated(true);
+          setSavedPlacesByCategory(readSavedPlacesByCategory());
+          const savedResponse = await fetch(`${API_BASE_URL}/api/saved-places`, { credentials: "include" });
+          if (!savedResponse.ok) return;
+          const savedPayload = (await savedResponse.json()) as { ok?: boolean; items?: SavedPlaceApiItem[] };
+          if (!savedPayload?.ok || !Array.isArray(savedPayload.items)) return;
+          mergeSavedPlacesFromApi(savedPayload.items);
+        } catch {
+          setIsAuthenticated(false);
+          clearSavedPlacesByCategory();
+          setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
+        }
+      })();
+    };
+
+    window.addEventListener(AUTH_SESSION_UPDATED_EVENT, syncAuthState);
+    return () => window.removeEventListener(AUTH_SESSION_UPDATED_EVENT, syncAuthState);
   }, []);
 
   const openAddForReview = useCallback((runId: number) => {
@@ -328,18 +435,38 @@ export function HomeScreen() {
 
   useEffect(() => {
     let cancelled = false;
-    const loadServerSavedPlaces = async () => {
+    const syncAuthAndSavedPlaces = async () => {
       try {
+        const sessionResponse = await fetch(`${API_BASE_URL}/api/auth/session/me`, { credentials: "include" });
+        if (!sessionResponse.ok || cancelled) {
+          setIsAuthenticated(false);
+          clearSavedPlacesByCategory();
+          setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
+          return;
+        }
+        const sessionPayload = (await sessionResponse.json()) as { ok?: boolean; user?: unknown };
+        if (!sessionPayload?.ok || !sessionPayload.user || cancelled) {
+          setIsAuthenticated(false);
+          clearSavedPlacesByCategory();
+          setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
+          return;
+        }
+
+        setIsAuthenticated(true);
+
         const response = await fetch(`${API_BASE_URL}/api/saved-places`, { credentials: "include" });
         if (!response.ok || cancelled) return;
         const payload = (await response.json()) as { ok?: boolean; items?: SavedPlaceApiItem[] };
         if (!payload?.ok || !Array.isArray(payload.items) || cancelled) return;
         mergeSavedPlacesFromApi(payload.items);
       } catch {
-        // Ignore network/auth failures in unauthenticated mode.
+        if (cancelled) return;
+        setIsAuthenticated(false);
+        clearSavedPlacesByCategory();
+        setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
       }
     };
-    void loadServerSavedPlaces();
+    void syncAuthAndSavedPlaces();
     return () => {
       cancelled = true;
     };
@@ -419,8 +546,10 @@ export function HomeScreen() {
           }}
           notificationCount={readyNotifications.length}
           onNotificationsClick={() => setIsReadySheetOpen(true)}
-          savedPlacesByCategory={savedPlacesByCategory}
-          allSavedPlaces={allSavedPlaces}
+          savedPlacesByCategory={visibleSavedPlacesByCategory}
+          visibleSavedPlaces={visibleSavedPlaces}
+          heroMode={heroMode}
+          derivedPrimaryCity={derivedPrimaryCity}
           onViewMap={(category) => {
             setTransitionDirection(1);
             setMapFocusedCategory(category);
@@ -469,7 +598,16 @@ export function HomeScreen() {
     }
 
     return <LoginProfileScreen />;
-  }, [activeCategory, activeTab, allSavedPlaces, mapFocusedCategory, readyNotifications.length, savedPlacesByCategory]);
+  }, [
+    activeCategory,
+    activeTab,
+    derivedPrimaryCity,
+    heroMode,
+    mapFocusedCategory,
+    readyNotifications.length,
+    visibleSavedPlaces,
+    visibleSavedPlacesByCategory,
+  ]);
 
   return (
     <div className="wr-home-page">

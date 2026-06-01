@@ -398,22 +398,47 @@
   color: #6b7280;
 }
 
-.wr-hero-card { margin-top: 1.5rem; position: relative; overflow: hidden; border-radius: 1rem; padding: 1.25rem; color: #fff; box-shadow: 0 18px 36px rgba(17,24,39,0.2); }
+.wr-hero-card {
+  margin-top: 1.5rem;
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem;
+  padding: 1.25rem;
+  color: #fff;
+  box-shadow: 0 18px 36px rgba(17,24,39,0.2);
+}
 .wr-hero-overlay {
   position: absolute;
   inset: 0;
+  opacity: 1;
+}
+.wr-hero-overlay-city-memory {
   background-image:
     linear-gradient(180deg, rgba(0, 0, 0, 0) 44%, rgba(0, 0, 0, 0.46) 100%),
     url("../assets/hero/golghar-patna.png");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
-  opacity: 1;
+}
+.wr-hero-card-empty-memory {
+  background:
+    radial-gradient(circle at 18% 22%, rgba(255, 255, 255, 0.2), transparent 28%),
+    linear-gradient(145deg, #ee7b37 0%, #d45d28 46%, #10213f 100%);
+}
+.wr-hero-overlay-empty-memory {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, rgba(10, 18, 36, 0.18) 50%, rgba(10, 18, 36, 0.38) 100%),
+    radial-gradient(circle at 24% 28%, rgba(255, 244, 231, 0.28), transparent 24%),
+    radial-gradient(circle at 82% 20%, rgba(255, 255, 255, 0.18), transparent 18%);
 }
 .wr-hero-glow { position: absolute; border-radius: 999px; filter: blur(16px); }
 .wr-hero-glow-right { right: -30px; top: -30px; width: 8rem; height: 8rem; background: rgba(194,65,12,0.35); }
 .wr-hero-glow-left { left: -35px; bottom: -45px; width: 8rem; height: 8rem; background: rgba(15,118,110,0.4); }
 .wr-hero-content { position: relative; z-index: 1; min-height: 9.5rem; display: flex; align-items: flex-end; }
+.wr-hero-copy {
+  width: 100%;
+  padding: 0 0.28rem 0.32rem 0.45rem;
+}
 .wr-hero-content h2 {
   margin: 0;
   width: 100%;
@@ -422,10 +447,97 @@
   font-weight: 800;
   line-height: 1.18;
   letter-spacing: -0.035em;
-  padding: 0 0.28rem 0.32rem 0.45rem;
   text-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
 }
+.wr-hero-copy p {
+  margin: 0.42rem 0 0;
+  max-width: 16.5rem;
+  font-size: 13.4px;
+  line-height: 1.4;
+  font-weight: 700;
+  color: rgba(255, 248, 241, 0.95);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.28);
+}
 .wr-hero-footprints { display: inline-block; margin-left: 0.25rem; margin-top: -0.25rem; vertical-align: middle; }
+.wr-hero-illustration {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.wr-hero-trail {
+  position: absolute;
+  border: 2px dashed rgba(255, 245, 234, 0.45);
+  border-radius: 999px;
+  opacity: 0.9;
+}
+.wr-hero-trail-one {
+  left: 0.9rem;
+  top: 1.1rem;
+  width: 5.8rem;
+  height: 3.2rem;
+  border-right-color: transparent;
+  border-bottom-color: transparent;
+  transform: rotate(-12deg);
+}
+.wr-hero-trail-two {
+  right: 1rem;
+  top: 1.45rem;
+  width: 6.2rem;
+  height: 3rem;
+  border-left-color: transparent;
+  border-bottom-color: transparent;
+  transform: rotate(16deg);
+}
+.wr-hero-doodle {
+  position: absolute;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.9rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 249, 242, 0.94);
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 10px 20px rgba(16, 33, 63, 0.16);
+}
+.wr-hero-doodle-pin { top: 1.25rem; right: 4rem; transform: rotate(-8deg); }
+.wr-hero-doodle-camera { top: 3.4rem; right: 1.45rem; transform: rotate(8deg); }
+.wr-hero-doodle-compass { top: 1.85rem; left: 6.15rem; transform: rotate(10deg); }
+.wr-hero-postcard {
+  position: absolute;
+  border-radius: 0.72rem;
+  background: rgba(255, 250, 245, 0.24);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: 0 14px 24px rgba(16, 33, 63, 0.12);
+}
+.wr-hero-postcard-one {
+  left: 1.1rem;
+  bottom: 3.1rem;
+  width: 2.65rem;
+  height: 1.8rem;
+  transform: rotate(-8deg);
+}
+.wr-hero-postcard-two {
+  left: 3.45rem;
+  bottom: 3.65rem;
+  width: 2.2rem;
+  height: 1.5rem;
+  transform: rotate(7deg);
+}
+.wr-hero-skyline {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 4.5rem;
+  background:
+    linear-gradient(180deg, transparent 0%, rgba(10, 18, 36, 0.05) 18%, rgba(10, 18, 36, 0.2) 100%),
+    linear-gradient(90deg, transparent 0 8%, rgba(255, 245, 234, 0.14) 8% 14%, transparent 14% 18%, rgba(255, 245, 234, 0.13) 18% 26%, transparent 26% 31%, rgba(255, 245, 234, 0.16) 31% 40%, transparent 40% 47%, rgba(255, 245, 234, 0.12) 47% 54%, transparent 54% 62%, rgba(255, 245, 234, 0.14) 62% 73%, transparent 73% 78%, rgba(255, 245, 234, 0.1) 78% 89%, transparent 89% 100%);
+  clip-path: polygon(0 100%, 0 56%, 7% 52%, 11% 65%, 16% 47%, 21% 69%, 28% 42%, 34% 60%, 40% 36%, 47% 63%, 55% 46%, 61% 58%, 69% 34%, 75% 60%, 83% 44%, 89% 55%, 100% 40%, 100% 100%);
+  opacity: 0.78;
+}
 
 .wr-category-page {
   position: relative;
@@ -1025,33 +1137,6 @@
 }
 .wr-bucket-item-title { margin: 0; font-size: 12.5px; font-weight: 900; line-height: 1.22; letter-spacing: -0.01em; text-shadow: 0 1px 4px rgba(0,0,0,0.3); }
 .wr-bucket-item-count { margin: 0.08rem 0 0; font-size: 10.5px; font-weight: 800; line-height: 1.2; color: rgba(255,255,255,0.94); }
-.wr-bucket-empty-state {
-  position: relative;
-  z-index: 1;
-  border-radius: 1rem;
-  border: 1px dashed rgba(255,255,255,0.22);
-  background: rgba(255,255,255,0.08);
-  padding: 1rem 0.95rem;
-  color: #fff;
-}
-.wr-bucket-empty-state h4 {
-  margin: 0;
-  font-size: 0.95rem;
-  font-weight: 900;
-}
-.wr-bucket-empty-state p {
-  margin: 0.38rem 0 0;
-  font-size: 0.78rem;
-  line-height: 1.4;
-  color: rgba(255,255,255,0.82);
-}
-.wr-bucket-empty-state .wr-category-empty-cta {
-  margin-top: 0.7rem;
-  background: #fff;
-  color: #10213f;
-  border-color: rgba(255,255,255,0.85);
-}
-
 .wr-recent-wrap { margin: 1.5rem -1.25rem 0; }
 .wr-recent-scroll {
   display: flex;

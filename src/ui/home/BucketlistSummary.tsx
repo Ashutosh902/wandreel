@@ -34,40 +34,30 @@ export function BucketlistSummary({
           </button>
         </div>
 
-        {counts.total ? (
-          <div className="wr-bucket-grid">
-            {categories.map((cat) => {
-              return (
-                <button
-                  type="button"
-                  key={cat.label}
-                  className="wr-bucket-item"
-                  onClick={() => onSelectCategory(cat.label)}
-                  aria-label={`Open ${cat.label} category`}
-                >
-                  <div className="wr-bucket-item-layer" />
-                  <div className="wr-bucket-item-content">
-                    <div className="wr-bucket-item-tile">
-                      <img src={cat.image} alt={cat.label} className="wr-bucket-item-image" loading="lazy" />
-                    </div>
-                    <div>
-                      <p className="wr-bucket-item-title">{cat.label}</p>
-                      <p className="wr-bucket-item-count">{counts[cat.label]}</p>
-                    </div>
+        <div className="wr-bucket-grid">
+          {categories.map((cat) => {
+            return (
+              <button
+                type="button"
+                key={cat.label}
+                className="wr-bucket-item"
+                onClick={() => (counts.total ? onSelectCategory(cat.label) : onAddLink())}
+                aria-label={counts.total ? `Open ${cat.label} category` : `Add your first place to ${cat.label}`}
+              >
+                <div className="wr-bucket-item-layer" />
+                <div className="wr-bucket-item-content">
+                  <div className="wr-bucket-item-tile">
+                    <img src={cat.image} alt={cat.label} className="wr-bucket-item-image" loading="lazy" />
                   </div>
-                </button>
-              );
-            })}
-          </div>
-        ) : (
-          <div className="wr-bucket-empty-state">
-            <h4>No places added yet</h4>
-            <p>Save your first reel or place to see it here.</p>
-            <button type="button" className="wr-category-empty-cta" onClick={onAddLink}>
-              Add place
-            </button>
-          </div>
-        )}
+                  <div>
+                    <p className="wr-bucket-item-title">{cat.label}</p>
+                    <p className="wr-bucket-item-count">{counts[cat.label]}</p>
+                  </div>
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
     </section>
   );
