@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowLeft, LocateFixed, MapPin, Search, X } from "lucide-react";
 import { CircleF, GoogleMap, MarkerF, useJsApiLoader } from "@react-google-maps/api";
 import { mapCategoryStyles, runMapDataChecks, type MapCategoryLabel } from "./map.data";
@@ -28,6 +28,15 @@ type MapPlacePin = SavedPlaceRecord & {
   y: string;
   color: string;
 };
+
+function hexToRgba(hex: string, alpha: number): string {
+  const normalized = hex.replace("#", "").trim();
+  if (normalized.length !== 6) return `rgba(16, 33, 63, ${alpha})`;
+  const red = Number.parseInt(normalized.slice(0, 2), 16);
+  const green = Number.parseInt(normalized.slice(2, 4), 16);
+  const blue = Number.parseInt(normalized.slice(4, 6), 16);
+  return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
+}
 
 function toRadians(value: number): number {
   return (value * Math.PI) / 180;
@@ -91,6 +100,59 @@ function MapPinMarker({
   );
 }
 
+function MapCategorySegmentedControl({
+  categories,
+  activeCategories,
+  isLocked,
+  onToggle,
+}: {
+  categories: typeof mapCategoryStyles;
+  activeCategories: MapCategoryLabel[];
+  isLocked: boolean;
+  onToggle: (label: MapCategoryLabel) => void;
+}) {
+  return (
+    <div className="map-category-card" role="group" aria-label="Map categories">
+      {categories.map((category, index) => {
+        const Icon = category.icon;
+        const isActive = activeCategories.includes(category.label);
+        const tint = hexToRgba(category.color, 0.1);
+        const indicator = hexToRgba(category.color, 0.22);
+
+        return (
+          <button
+            type="button"
+            key={category.label}
+            aria-pressed={isActive}
+            aria-label={`${isActive ? "Hide" : "Show"} ${category.label} places`}
+            onClick={() => {
+              if (isLocked) return;
+              onToggle(category.label);
+            }}
+            disabled={isLocked && !isActive}
+            className={`map-category-segment ${isActive ? "active" : ""} ${!isActive ? "is-neutral" : ""}`}
+            style={
+              isActive
+                ? ({
+                    "--map-segment-color": category.color,
+                    "--map-segment-tint": tint,
+                    "--map-segment-indicator": indicator,
+                  } as CSSProperties)
+                : undefined
+            }
+          >
+            <span className="map-category-icon">
+              <Icon size={16} strokeWidth={2.1} />
+            </span>
+            <span className="map-category-label">{category.label}</span>
+            {index < categories.length - 1 ? <span className="map-category-divider" aria-hidden="true" /> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function MapScreen({
   focusedCategory = null,
   savedPlaces,
@@ -120,7 +182,7 @@ export function MapScreen({
     "Stay",
     "Explore",
   ]);
-  const [radiusKm, setRadiusKm] = useState(12);
+  const [radiusKm, setRadiusKm] = useState(10);
   const [mapMinDimensionPx, setMapMinDimensionPx] = useState(320);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [activePinPreview, setActivePinPreview] = useState<MapPlacePin | null>(null);
@@ -311,6 +373,7 @@ export function MapScreen({
               <button type="button" className="wr-map-search-change" onClick={() => setIsLocationMenuOpen((open) => !open)}>
                 {isLocating ? "Locating..." : "Change"}
               </button>
+              <span className="wr-map-search-divider" aria-hidden="true" />
               <Search size={14} className="wr-map-search-icon" />
             </div>
             {isLocationMenuOpen ? (
@@ -368,32 +431,12 @@ export function MapScreen({
           </div>
         </div>
 
-        <div className="wr-map-chips" role="group" aria-label="Map categories">
-          {mapCategoryStyles.map((category) => {
-            const Icon = category.icon;
-            const isActive = activeMapCategories.includes(category.label);
-
-            return (
-              <button
-                type="button"
-                key={category.label}
-                aria-pressed={isActive}
-                aria-label={`${isActive ? "Hide" : "Show"} ${category.label} places`}
-                onClick={() => {
-                  if (isCategoryLockActive) return;
-                  toggleMapCategory(category.label);
-                }}
-                disabled={isCategoryLockActive && !isActive}
-                className={`wr-map-chip ${isActive ? "is-active" : "is-disabled"}`}
-              >
-                <span className="wr-map-chip-icon" style={isActive ? { backgroundColor: category.color } : undefined}>
-                  <Icon size={13} strokeWidth={2.2} />
-                </span>
-                <span>{category.label}</span>
-              </button>
-            );
-          })}
-        </div>
+        <MapCategorySegmentedControl
+          categories={mapCategoryStyles}
+          activeCategories={activeMapCategories}
+          isLocked={isCategoryLockActive}
+          onToggle={toggleMapCategory}
+        />
       </div>
 
       <div className="wr-map-canvas" aria-label="Map canvas" ref={canvasRef}>
