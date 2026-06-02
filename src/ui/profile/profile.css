@@ -325,11 +325,15 @@
 }
 
 .wr-login-sheet-backdrop {
-  position: absolute;
-  inset: 0;
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(390px, 100vw);
+  top: 0;
+  bottom: var(--wr-bottom-nav-height, 82px);
   background: rgba(21, 33, 50, 0.32);
-  backdrop-filter: blur(4px);
-  z-index: 94;
+  backdrop-filter: blur(1.5px);
+  z-index: 60;
   border: none;
   padding: 0;
   margin: 0;
@@ -337,38 +341,28 @@
   animation: wrSheetBackdropIn 220ms ease-out both;
 }
 
-.wr-login-sheet-layer {
-  position: absolute;
-  inset: 0;
-  z-index: 95;
-  pointer-events: none;
-  display: flex;
-  align-items: flex-end;
-  padding: calc(0.5rem + var(--wr-safe-top)) 0 0;
-  box-sizing: border-box;
-}
-
 .wr-login-sheet {
-  position: relative;
-  width: 100%;
-  margin-top: auto;
-  margin-bottom: var(--wr-bottom-nav-height, 82px);
-  max-height: calc(100dvh - var(--wr-bottom-nav-height, 82px) - var(--wr-safe-top, 0px) - 6px);
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(390px, 100vw);
+  top: auto;
+  bottom: var(--wr-bottom-nav-height, 82px);
+  max-height: calc(100dvh - var(--wr-bottom-nav-height, 82px) - var(--wr-safe-top, 0px) - 8px);
   overflow: hidden;
   background: #f6f2ea;
   display: flex;
   flex-direction: column;
-  border-radius: 1.4rem 1.4rem 0 0;
-  padding: 0.6rem 0.78rem 0.72rem;
+  border-radius: 1.55rem 1.55rem 0 0;
+  padding: 0.72rem 0.86rem 0.78rem;
   box-shadow: 0 -14px 30px rgba(17, 24, 39, 0.22);
   border-top: 1px solid #e5e7eb;
-  z-index: 1;
-  pointer-events: auto;
+  z-index: 70;
   animation: wrSheetIn 280ms cubic-bezier(0.2, 0.75, 0.2, 1) both;
 }
 
 .wr-login-sheet-body {
-  margin-top: 0.4rem;
+  margin-top: 0.52rem;
   overflow-y: auto;
   min-height: 0;
   padding-right: 0.08rem;
@@ -383,17 +377,35 @@
   left: 0;
   right: 0;
   top: 0;
-  height: 1.7rem;
+  height: 2rem;
+}
+
+@supports not (height: 100dvh) {
+  .wr-login-sheet {
+    max-height: calc(100vh - var(--wr-bottom-nav-height, 82px) - var(--wr-safe-top, 0px) - 8px);
+  }
 }
 
 @media (max-width: 640px) {
+  .wr-login-sheet-backdrop {
+    top: 0;
+    left: 0;
+    transform: none;
+    width: 100%;
+  }
+
   .wr-login-sheet {
+    left: 0;
+    right: 0;
+    transform: none;
+    width: 100%;
+    max-height: calc(100dvh - var(--wr-bottom-nav-height, 82px) - var(--wr-safe-top, 0px) - 8px);
     animation: wrSheetInMobile 280ms cubic-bezier(0.2, 0.75, 0.2, 1) both;
   }
 }
 
 .wr-login-sheet-handle {
-  width: 2rem;
+  width: 2.2rem;
   height: 0.2rem;
   border-radius: 999px;
   margin: 0 auto;
@@ -402,10 +414,10 @@
 
 .wr-login-sheet-close {
   position: absolute;
-  right: 0.72rem;
-  top: 0.76rem;
-  width: 1.76rem;
-  height: 1.76rem;
+  right: 0.78rem;
+  top: 0.88rem;
+  width: 1.82rem;
+  height: 1.82rem;
   border: 1px solid #d5d9de;
   border-radius: 999px;
   background: #fff;
@@ -416,43 +428,43 @@
 }
 
 .wr-login-sheet-kicker {
-  margin: 0.5rem 0 0;
-  font-size: 0.58rem;
+  margin: 0.6rem 0 0;
+  font-size: 0.62rem;
   font-weight: 900;
   letter-spacing: 0.17em;
   color: #9f1239;
 }
 
 .wr-login-sheet h4 {
-  margin: 0.32rem 0 0;
-  max-width: 12.4rem;
-  font-size: clamp(1.28rem, 5vw, 1.52rem);
-  line-height: 1.04;
+  margin: 0.38rem 0 0;
+  max-width: 13.2rem;
+  font-size: clamp(1.45rem, 5.5vw, 1.68rem);
+  line-height: 1.08;
   letter-spacing: -0.03em;
 }
 
 .wr-login-sheet-desc {
-  margin: 0.4rem 0 0;
+  margin: 0.5rem 0 0;
   color: #617186;
-  font-size: 0.64rem;
-  line-height: 1.36;
+  font-size: 0.67rem;
+  line-height: 1.42;
 }
 
 .wr-login-sheet-actions {
-  margin-top: 0.64rem;
+  margin-top: 0.78rem;
   display: grid;
-  gap: 0.36rem;
+  gap: 0.42rem;
 }
 
 .wr-login-social-row {
-  margin-top: 0.6rem;
+  margin-top: 0.72rem;
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.48rem;
+  gap: 0.56rem;
 }
 
 .wr-login-social-btn {
-  height: 2.44rem;
+  height: 2.72rem;
   border-radius: 999px;
   border: 1px solid #d6dce3;
   background: #fff;
@@ -466,8 +478,8 @@
 }
 
 .wr-login-social-icon {
-  width: 1rem;
-  height: 1rem;
+  width: 1.08rem;
+  height: 1.08rem;
 }
 
 .wr-login-social-google {
@@ -486,9 +498,9 @@
 .wr-login-sheet-secondary {
   border-radius: 0.82rem;
   border: 1px solid transparent;
-  min-height: 2.5rem;
-  padding: 0.52rem 0.76rem;
-  font-size: 0.75rem;
+  min-height: 2.8rem;
+  padding: 0.62rem 0.82rem;
+  font-size: 0.8rem;
   font-weight: 800;
   display: inline-flex;
   align-items: center;
@@ -509,11 +521,11 @@
 }
 
 .wr-login-sheet-phone-link {
-  margin-top: 0.5rem;
+  margin-top: 0.58rem;
   border: none;
   background: transparent;
   color: #6f7f93;
-  font-size: 0.64rem;
+  font-size: 0.68rem;
   font-weight: 650;
   display: inline-flex;
   align-items: center;
@@ -521,17 +533,17 @@
 }
 
 .wr-login-sheet-error {
-  margin: 0.3rem 0 0;
+  margin: 0.36rem 0 0;
   color: #b42318;
-  font-size: 0.66rem;
+  font-size: 0.7rem;
   line-height: 1.3;
   font-weight: 700;
 }
 
 .wr-login-sheet-legal {
-  margin: 0.58rem 0 0;
+  margin: 0.68rem 0 0;
   color: #657790;
-  font-size: 0.6rem;
+  font-size: 0.64rem;
   line-height: 1.35;
 }
 
@@ -547,15 +559,15 @@
 }
 
 .wr-login-sheet-input {
-  margin-top: 0.52rem;
+  margin-top: 0.64rem;
   width: 100%;
   box-sizing: border-box;
   border: 1px solid #cfd6de;
   border-radius: 0.78rem;
-  min-height: 2.5rem;
-  padding: 0.5rem 0.68rem;
+  min-height: 2.8rem;
+  padding: 0.58rem 0.74rem;
   font: inherit;
-  font-size: 0.74rem;
+  font-size: 0.79rem;
   background: #fff;
 }
 
@@ -578,15 +590,15 @@
 }
 
 .wr-login-sheet-note {
-  margin-top: 0.56rem;
+  margin-top: 0.64rem;
   border-radius: 0.78rem;
   background: #eef3f0;
-  padding: 0.42rem 0.5rem;
+  padding: 0.48rem 0.56rem;
   display: flex;
   align-items: flex-start;
   gap: 0.34rem;
   color: #4d647f;
-  font-size: 0.56rem;
+  font-size: 0.6rem;
   line-height: 1.34;
 }
 
@@ -602,11 +614,11 @@
 @keyframes wrSheetIn {
   from {
     opacity: 0;
-    transform: translateY(24px) scale(0.985);
+    transform: translateX(-50%) translateY(24px) scale(0.985);
   }
   to {
     opacity: 1;
-    transform: translateY(0) scale(1);
+    transform: translateX(-50%) translateY(0) scale(1);
   }
 }
 
@@ -635,18 +647,6 @@
   .wr-login-sheet {
     padding-left: 0.82rem;
     padding-right: 0.82rem;
-  }
-
-  .wr-login-sheet h4 {
-    max-width: 11.2rem;
-    font-size: 1.2rem;
-  }
-
-  .wr-login-social-btn,
-  .wr-login-sheet-primary,
-  .wr-login-sheet-secondary,
-  .wr-login-sheet-input {
-    min-height: 2.36rem;
   }
 }
 
