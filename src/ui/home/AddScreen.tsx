@@ -20,6 +20,14 @@ import {
 import { upsertSavedPlace } from "./savedPlaces";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
+const LEGACY_ADD_STORAGE_KEYS = [
+  "wandreel_add_url",
+  "lastAnalyzedLink",
+  "demoLink",
+  "defaultUrl",
+  "pastedUrl",
+] as const;
 
 type ExtractionApiResponse = {
   ok: boolean;
@@ -69,6 +77,72 @@ export function AddScreen() {
   const analyzeRunRef = useRef(0);
   const locationDebounceTimerRef = useRef<number | null>(null);
   const isResolvingFinal = pendingJobs.length > 0;
+  const logAddScreenState = (label: string) => {
+    console.log(label, {
+      url: linkInput,
+      hasAnalyzed,
+      detectedPlaces,
+      source: "AddScreen",
+      viewport: window.innerWidth,
+      storageUrl: window.localStorage.getItem("wandreel_add_url"),
+      lastAnalyzedLink: window.localStorage.getItem("lastAnalyzedLink"),
+      persistedDraft: window.localStorage.getItem("wr_add_detected_draft_v2"),
+    });
+  };
+
+  const clearLegacyAddStorage = () => {
+    for (const key of LEGACY_ADD_STORAGE_KEYS) {
+      window.localStorage.removeItem(key);
+    }
+  };
+
+  const restoreDraftState = (draft: {
+    detectedPlaces: DetectedPlace[];
+    selectedDetectedCategory: "Auto-detect" | DetectedCategory;
+    selectedPreviewIndex: number;
+    isPreviewVisible: boolean;
+    linkInput: string;
+    pendingJobs: PendingDetectionJob[];
+  }) => {
+    setLinkInput(draft.linkInput || "");
+    setHasAnalyzed(draft.detectedPlaces.length > 0 || draft.pendingJobs.length > 0);
+    setSelectedDetectedCategory(draft.pendingJobs.length > 0 ? "Auto-detect" : draft.selectedDetectedCategory || "Auto-detect");
+    setSelectedPreviewIndex(draft.selectedPreviewIndex || 0);
+    setDetectedPlaces(Array.isArray(draft.detectedPlaces) ? draft.detectedPlaces : []);
+    setIsPreviewVisible(draft.isPreviewVisible ?? true);
+    setPendingJobs(Array.isArray(draft.pendingJobs) ? draft.pendingJobs : []);
+    setIsAnalyzing(false);
+  };
+
+  const resetAddFlowState = (options?: { clearPersisted?: boolean }) => {
+    analyzeRunRef.current = Date.now();
+    setLinkInput("");
+    setIsAnalyzing(false);
+    setHasAnalyzed(false);
+    setSelectedDetectedCategory("Auto-detect");
+    setSelectedPreviewIndex(0);
+    setDetectedPlaces([]);
+    setIsPreviewVisible(true);
+    setSaveMessage("");
+    setSavedPlaceIds(new Set());
+    setIsEditing(false);
+    setEditName("");
+    setEditCategory("Taste");
+    setEditLocality("");
+    setEditAddress("");
+    setEditPlaceId(null);
+    setEditCoords({ lat: null, lng: null });
+    setLocationSuggestions([]);
+    setIsLocationSearching(false);
+    setPendingJobs([]);
+    setRemovingPlaceId(null);
+    setAutoSelectFirstSuggestion(true);
+    if (options?.clearPersisted ?? true) {
+      clearReviewRunId();
+      clearPersistedAddDraft();
+      clearLegacyAddStorage();
+    }
+  };
 
   useEffect(() => {
     if (!saveMessage) return;
@@ -81,6 +155,17 @@ export function AddScreen() {
     for (const item of detectedPlaces) base[item.category] += 1;
     return { total: detectedPlaces.length, ...base };
   }, [detectedPlaces]);
+  const displayedCategoryCounts = useMemo(() => {
+    if (!isResolvingFinal) return categoryCounts;
+    return {
+      total: detectedPlaces.length,
+      Taste: 0,
+      Activity: 0,
+      Stay: 0,
+      Explore: 0,
+    };
+  }, [categoryCounts, detectedPlaces.length, isResolvingFinal]);
+  const shouldShowDetectedSection = hasAnalyzed && (categoryCounts.total > 0 || isResolvingFinal);
 
   const visibleDetectedPlaces = useMemo(() => {
     if (selectedDetectedCategory === "Auto-detect") return detectedPlaces;
@@ -168,67 +253,50 @@ export function AddScreen() {
   }, [isEditing]);
 
   useEffect(() => {
-    try {
-      const parsed = readPersistedAddDraft();
-      if (!parsed) return;
-      setDetectedPlaces(parsed.detectedPlaces);
-      setHasAnalyzed(true);
-      setSelectedDetectedCategory(parsed.selectedDetectedCategory);
-      setSelectedPreviewIndex(parsed.selectedPreviewIndex);
-      setIsPreviewVisible(parsed.isPreviewVisible);
-      setLinkInput(parsed.linkInput);
-      setPendingJobs(parsed.pendingJobs);
-    } catch {
-      clearPersistedAddDraft();
+    const draft = readPersistedAddDraft();
+    const shouldRestore = Boolean(draft && (draft.pendingJobs.length > 0 || peekReviewRunId() !== null));
+    if (draft && shouldRestore) {
+      restoreDraftState(draft);
+    } else {
+      resetAddFlowState({ clearPersisted: true });
     }
+    console.log("AddScreen mounted", {
+      url: shouldRestore ? draft?.linkInput || "" : "",
+      hasAnalyzed: shouldRestore ? Boolean((draft?.detectedPlaces.length || 0) > 0 || (draft?.pendingJobs.length || 0) > 0) : false,
+      detectedPlaces: shouldRestore ? draft?.detectedPlaces || [] : [],
+      source: "AddScreen",
+      viewport: window.innerWidth,
+      storageUrl: window.localStorage.getItem("wandreel_add_url"),
+      lastAnalyzedLink: window.localStorage.getItem("lastAnalyzedLink"),
+      persistedDraft: window.localStorage.getItem("wr_add_detected_draft_v2"),
+    });
+  }, []);
+
+  useEffect(() => () => {
+    clearReviewRunId();
+    clearLegacyAddStorage();
   }, []);
 
   useEffect(() => {
     const syncFromStorage = () => {
-      const parsed = readPersistedAddDraft();
-      if (!parsed) return;
-      setDetectedPlaces(parsed.detectedPlaces);
-      setHasAnalyzed(true);
-      setSelectedDetectedCategory(parsed.selectedDetectedCategory);
-      setSelectedPreviewIndex(parsed.selectedPreviewIndex);
-      setIsPreviewVisible(parsed.isPreviewVisible);
-      setLinkInput(parsed.linkInput);
-      setPendingJobs(parsed.pendingJobs);
+      const draft = readPersistedAddDraft();
+      if (!draft) return;
+      const shouldApply = draft.pendingJobs.length > 0 || pendingJobs.length > 0 || peekReviewRunId() !== null;
+      if (!shouldApply) return;
+      restoreDraftState(draft);
     };
     window.addEventListener(ADD_DRAFT_UPDATED_EVENT, syncFromStorage);
     return () => window.removeEventListener(ADD_DRAFT_UPDATED_EVENT, syncFromStorage);
+  }, [pendingJobs.length]);
+
+  useEffect(() => {
+    const handleAuthReset = () => {
+      resetAddFlowState({ clearPersisted: true });
+      logAddScreenState("AddScreen auth reset");
+    };
+    window.addEventListener(AUTH_SESSION_UPDATED_EVENT, handleAuthReset);
+    return () => window.removeEventListener(AUTH_SESSION_UPDATED_EVENT, handleAuthReset);
   }, []);
-
-  useEffect(() => {
-    const runId = peekReviewRunId();
-    if (!runId) return;
-    const index = detectedPlaces.findIndex((item) => item.runId === runId);
-    if (index < 0) return;
-    setSelectedDetectedCategory("Auto-detect");
-    setSelectedPreviewIndex(index);
-    setIsPreviewVisible(true);
-    clearReviewRunId();
-  }, [detectedPlaces]);
-
-  useEffect(() => {
-    if (!hasAnalyzed) return;
-    writePersistedAddDraft({
-      detectedPlaces,
-      selectedDetectedCategory,
-      selectedPreviewIndex,
-      isPreviewVisible,
-      linkInput: linkInput.trim(),
-      pendingJobs,
-    });
-  }, [
-    hasAnalyzed,
-    detectedPlaces,
-    selectedDetectedCategory,
-    selectedPreviewIndex,
-    isPreviewVisible,
-    linkInput,
-    pendingJobs,
-  ]);
 
   const sourceLabelFromPlatform = (platform?: string) => {
     if (platform === "instagram") return "Instagram Reel";
@@ -236,23 +304,56 @@ export function AddScreen() {
     return "Web Link";
   };
 
-  const toDraftPlace = (extraction: ExtractionApiResponse, runId: number): DetectedPlace => {
-    const platformSource = sourceLabelFromPlatform(extraction.metadata?.platform);
-    const imageUrl = extraction.metadata?.imageUrl || categoryFallbackImage.Taste;
-    const rawTitle = extraction.metadata?.title?.trim() || "";
-    const rawDesc = extraction.metadata?.description?.trim() || "";
+  const inferDraftCategory = (text: string): DetectedCategory => {
+    const normalized = text.toLowerCase();
+    if (/(restaurant|cafe|café|biryani|bakery|breakfast|lunch|dinner|chai|dessert|kitchen|food|eatery)/i.test(normalized)) {
+      return "Taste";
+    }
+    if (/(hotel|resort|homestay|hostel|villa|stay|room|suite|retreat stay)/i.test(normalized)) {
+      return "Stay";
+    }
+    if (/(event|show|concert|workshop|class|ride|karting|boating|zipline|sports arena|activity zone)/i.test(normalized)) {
+      return "Activity";
+    }
+    if (/(hill|hills|viewpoint|fort|waterfall|lake|beach|temple|park|museum|palace|monument|trail|nature|sunrise|sunset|trek|trekking|camping|scenic|clouds|tourist|landmark)/i.test(normalized)) {
+      return "Explore";
+    }
+    return "Explore";
+  };
+
+  const inferDraftName = (rawTitle: string, rawDesc: string) => {
+    const sanitizedTitle = rawTitle.replace(/\s+/g, " ").trim();
+    if (sanitizedTitle && sanitizedTitle.toLowerCase() !== "untitled" && !/(^@)|(^follow\s+@)|(@\w+)/i.test(sanitizedTitle)) {
+      return sanitizedTitle.slice(0, 80);
+    }
+
     const descHint = rawDesc
       .split(/\n|[.!?]/)
       .map((line) => line.trim())
-      .find((line) => line.length > 3 && line.length < 80) || "";
-    const candidateName = rawTitle && rawTitle.toLowerCase() !== "untitled" ? rawTitle : descHint || "Detected place";
-    const draftName = /(^@)|(^follow\s+@)|(@\w+)/i.test(candidateName) ? "Detected place" : candidateName;
+      .find((line) => line.length > 3) || "";
+
+    const placePrefix =
+      descHint.match(/^([A-Z][A-Za-z0-9&' -]{2,60}?)(?:\s+is\b|\s+-\s+|\s+offers\b|\s+has\b)/)?.[1]?.trim() ||
+      descHint.match(/^([A-Z][A-Za-z0-9&' -]{2,60})/)?.[1]?.trim() ||
+      "";
+
+    const candidateName = placePrefix || descHint || "Detected place";
+    return /(^@)|(^follow\s+@)|(@\w+)/i.test(candidateName) ? "Detected place" : candidateName.slice(0, 80);
+  };
+
+  const toDraftPlace = (extraction: ExtractionApiResponse, runId: number): DetectedPlace => {
+    const platformSource = sourceLabelFromPlatform(extraction.metadata?.platform);
+    const rawTitle = extraction.metadata?.title?.trim() || "";
+    const rawDesc = extraction.metadata?.description?.trim() || "";
+    const draftCategory = inferDraftCategory(`${rawTitle} ${rawDesc}`);
+    const imageUrl = extraction.metadata?.imageUrl || categoryFallbackImage[draftCategory];
+    const draftName = inferDraftName(rawTitle, rawDesc);
 
     return {
       id: `draft-${Date.now()}`,
       runId,
       name: draftName,
-      category: "Taste",
+      category: draftCategory,
       locality: "Resolving locality...",
       source: platformSource,
       imageUrl,
@@ -269,7 +370,7 @@ export function AddScreen() {
 
   const clearPersistedDraftState = () => {
     try {
-      clearPersistedAddDraft();
+      resetAddFlowState({ clearPersisted: true });
     } catch {
       // Ignore localStorage failures.
     }
@@ -298,6 +399,7 @@ export function AddScreen() {
   const removeDetectedWithAnimation = (place: DetectedPlace) => {
     setRemovingPlaceId(place.id);
     window.setTimeout(() => {
+      const willBeEmpty = detectedPlaces.filter((item) => item.id !== place.id).length === 0;
       setDetectedPlaces((prev) => {
         const next = prev.filter((item) => item.id !== place.id);
         if (!next.length) clearPersistedDraftState();
@@ -315,6 +417,9 @@ export function AddScreen() {
       setIsPreviewVisible(true);
       setIsEditing(false);
       setRemovingPlaceId(null);
+      if (willBeEmpty) {
+        resetAddFlowState({ clearPersisted: true });
+      }
     }, 260);
   };
 
@@ -357,18 +462,15 @@ export function AddScreen() {
 
       if (analyzeRunRef.current !== runId) return;
       const draftPlace = toDraftPlace(extraction, runId);
-      const storedBeforeDraft = readPersistedAddDraft();
-      const baseBeforeDraft = storedBeforeDraft?.detectedPlaces ?? detectedPlaces;
-      const draftPlaces = [draftPlace, ...baseBeforeDraft.filter((item) => item.runId !== runId)];
+      setDetectedPlaces((prev) => [draftPlace, ...prev.filter((item) => item.runId !== runId)]);
       writePersistedAddDraft({
-        detectedPlaces: draftPlaces,
+        detectedPlaces: [draftPlace],
         selectedDetectedCategory: "Auto-detect",
         selectedPreviewIndex: 0,
         isPreviewVisible: true,
         linkInput: linkInput.trim(),
-        pendingJobs: storedBeforeDraft?.pendingJobs ?? [],
+        pendingJobs: [],
       });
-      setDetectedPlaces((prev) => [draftPlace, ...prev.filter((item) => item.runId !== runId)]);
       setIsAnalyzing(false);
       const startedAt = Date.now();
       setSelectedDetectedCategory("Auto-detect");
@@ -394,21 +496,11 @@ export function AddScreen() {
         runId,
       );
       const shownDraft = draftFromApi.length ? draftFromApi : [draftPlace];
-      const storedBeforeJob = readPersistedAddDraft();
-      const baseBeforeJob = storedBeforeJob?.detectedPlaces ?? detectedPlaces;
-      const shownPlaces = [...shownDraft, ...baseBeforeJob.filter((item) => item.runId !== runId)];
       setDetectedPlaces((prev) => [...shownDraft, ...prev.filter((item) => item.runId !== runId)]);
 
       const jobId = intelligence.jobId || null;
       if (!jobId) {
-        writePersistedAddDraft({
-          detectedPlaces: shownPlaces,
-          selectedDetectedCategory: "Auto-detect",
-          selectedPreviewIndex: 0,
-          isPreviewVisible: true,
-          linkInput: linkInput.trim(),
-          pendingJobs: storedBeforeJob?.pendingJobs?.filter((item) => item.runId !== runId) ?? [],
-        });
+        clearPersistedAddDraft();
         showToast({ message: "Link analyzed", variant: "success" });
         return;
       }
@@ -420,32 +512,31 @@ export function AddScreen() {
         imageUrl: extraction.metadata?.imageUrl || categoryFallbackImage.Taste,
         videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || linkInput.trim(),
       };
-      writePersistedAddDraft({
-        detectedPlaces: shownPlaces,
-        selectedDetectedCategory: "Auto-detect",
-        selectedPreviewIndex: 0,
-        isPreviewVisible: true,
-        linkInput: linkInput.trim(),
-        pendingJobs: [
-          pendingJob,
-          ...(storedBeforeJob?.pendingJobs ?? []).filter((item) => item.runId !== runId),
-        ],
-      });
       setPendingJobs((prev) => [
         pendingJob,
         ...prev.filter((item) => item.runId !== runId),
       ]);
+      writePersistedAddDraft({
+        detectedPlaces: shownDraft,
+        selectedDetectedCategory: "Auto-detect",
+        selectedPreviewIndex: 0,
+        isPreviewVisible: true,
+        linkInput: linkInput.trim(),
+        pendingJobs: [pendingJob],
+      });
     } catch {
       if (analyzeRunRef.current !== runId) return;
       setIsAnalyzing(false);
       setSelectedDetectedCategory("Auto-detect");
       setSelectedPreviewIndex(0);
       setIsPreviewVisible(true);
+      clearPersistedAddDraft();
       showToast({ message: "This link could not be analyzed.", variant: "error" });
     }
   };
 
   const handleCategorySelect = (next: "Auto-detect" | DetectedCategory) => {
+    if (isResolvingFinal && next !== "Auto-detect") return;
     setSelectedDetectedCategory(next);
     setSelectedPreviewIndex(0);
     setIsPreviewVisible(true);
@@ -562,19 +653,8 @@ export function AddScreen() {
   };
 
   const handleRefreshInput = () => {
-    analyzeRunRef.current = Date.now();
-    setLinkInput("");
-    setIsAnalyzing(false);
-    setHasAnalyzed(false);
-    setDetectedPlaces([]);
-    setPendingJobs([]);
-    setSelectedDetectedCategory("Auto-detect");
-    setSelectedPreviewIndex(0);
-    setIsPreviewVisible(true);
-    setSaveMessage("");
-    setSavedPlaceIds(new Set());
-    setIsEditing(false);
-    clearPersistedDraftState();
+    resetAddFlowState({ clearPersisted: true });
+    logAddScreenState("AddScreen refresh reset");
   };
 
   const handleDismissPreview = () => {
@@ -604,8 +684,8 @@ export function AddScreen() {
   };
 
   const getChipCount = (chip: "Auto-detect" | DetectedCategory) => {
-    if (chip === "Auto-detect") return categoryCounts.total;
-    return categoryCounts[chip];
+    if (chip === "Auto-detect") return displayedCategoryCounts.total;
+    return displayedCategoryCounts[chip];
   };
 
   return (
@@ -628,7 +708,17 @@ export function AddScreen() {
 
         <label className="wr-add-link-input-wrap">
           <Link2 size={16} className="wr-add-link-icon" />
-          <input type="url" value={linkInput} onChange={(event) => setLinkInput(event.target.value)} placeholder="Paste link here..." className="wr-add-link-input" />
+          <input
+            type="url"
+            value={linkInput}
+            onChange={(event) => setLinkInput(event.target.value)}
+            placeholder="Paste link here..."
+            className="wr-add-link-input"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
+          />
         </label>
 
         <button type="button" className={`wr-add-analyze-btn ${isAnalyzing ? "is-loading" : ""}`} disabled={isAnalyzing || !linkInput.trim()} onClick={handleAnalyze}>
@@ -637,7 +727,7 @@ export function AddScreen() {
         </button>
       </article>
 
-      {hasAnalyzed ? (
+      {shouldShowDetectedSection ? (
         <section className="wr-add-detected-wrap is-ready" aria-label="Detected places">
           <div className="wr-add-detected-head"><p>{isResolvingFinal ? "Resolving this link" : "Detected from this link"}</p><span>{categoryCounts.total} places</span></div>
 
@@ -646,7 +736,13 @@ export function AddScreen() {
               const count = getChipCount(chip);
               const isSelected = selectedDetectedCategory === chip;
               return (
-                <button type="button" key={chip} className={`wr-add-chip is-${chip.replace("Auto-detect", "auto").toLowerCase().replace(" ", "-")} ${isSelected ? "is-selected" : ""}`} onClick={() => handleCategorySelect(chip)}>
+                <button
+                  type="button"
+                  key={chip}
+                  className={`wr-add-chip is-${chip.replace("Auto-detect", "auto").toLowerCase().replace(" ", "-")} ${isSelected ? "is-selected" : ""}`}
+                  onClick={() => handleCategorySelect(chip)}
+                  disabled={isResolvingFinal && chip !== "Auto-detect"}
+                >
                   <span>{chip}</span><strong>{count}</strong>
                 </button>
               );
@@ -689,9 +785,7 @@ export function AddScreen() {
           <div className="wr-add-detected-skeleton chips" />
           <div className="wr-add-detected-skeleton card" />
         </section>
-      ) : (
-        <section className="wr-add-empty-state" aria-label="Detected preview empty state">Your detected place will appear here.</section>
-      )}
+      ) : null}
       {isEditing && selectedPreview ? (
         <div className="wr-add-edit-layer" role="presentation">
           <button type="button" className="wr-add-edit-backdrop" aria-label="Cancel edit" onClick={cancelEdit} />

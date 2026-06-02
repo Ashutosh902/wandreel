@@ -43,6 +43,7 @@ runHomeDataChecks();
 const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Login"];
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
+const ADD_INTELLIGENCE_TIMEOUT_MS = 45000;
 
 function PlaceholderPage({
   title,
@@ -65,41 +66,9 @@ function PlaceholderPage({
 }
 
 type HeroMode = "empty-memory" | "city-memory";
-
-function derivePrimaryCityFromSavedPlaces(places: SavedPlaceRecord[]) {
-  const cityCounts = new Map<string, number>();
-
-  for (const place of places) {
-    const candidates = [place.locality, place.fullAddress]
-      .map((value) => String(value || "").trim())
-      .filter(Boolean);
-
-    let resolvedCity = "";
-    for (const candidate of candidates) {
-      const parts = candidate.split(",").map((part) => part.trim()).filter(Boolean);
-      const preferred = parts[0] || candidate;
-      const normalized = preferred.replace(/\s+/g, " ").trim();
-      if (!normalized) continue;
-      if (/^unknown locality$/i.test(normalized)) continue;
-      resolvedCity = normalized;
-      break;
-    }
-
-    if (!resolvedCity) continue;
-    cityCounts.set(resolvedCity, (cityCounts.get(resolvedCity) || 0) + 1);
-  }
-
-  let primaryCity = "";
-  let maxCount = 0;
-  for (const [city, count] of cityCounts.entries()) {
-    if (count > maxCount) {
-      primaryCity = city;
-      maxCount = count;
-    }
-  }
-
-  return primaryCity;
-}
+const DEFAULT_DISCOVER_HERO_MODE: HeroMode = "empty-memory";
+const DEFAULT_DISCOVER_HERO_TITLE = "Your memories will start here";
+const DEFAULT_DISCOVER_HERO_SUBTITLE = "Save places, reels, and ideas to build your city memories.";
 
 function DiscoverPage({
   activeCategory,
@@ -112,7 +81,6 @@ function DiscoverPage({
   savedPlacesByCategory,
   visibleSavedPlaces,
   heroMode,
-  derivedPrimaryCity,
 }: {
   activeCategory: CategoryLabel | null;
   onSelectCategory: (category: CategoryLabel) => void;
@@ -124,15 +92,10 @@ function DiscoverPage({
   savedPlacesByCategory: Record<CategoryLabel, SavedPlaceRecord[]>;
   visibleSavedPlaces: SavedPlaceRecord[];
   heroMode: HeroMode;
-  derivedPrimaryCity: string;
 }) {
   const counts = getSavedPlaceCounts(savedPlacesByCategory);
-  const heroTitle = heroMode === "city-memory"
-    ? `${derivedPrimaryCity} memories, ready to stroll`
-    : "Your memories will start here";
-  const heroSubtitle = heroMode === "city-memory"
-    ? "Saved places, reels, and ideas are ready to shape your next stroll."
-    : "Save places, reels, and ideas to build your city memories.";
+  const heroTitle = DEFAULT_DISCOVER_HERO_TITLE;
+  const heroSubtitle = DEFAULT_DISCOVER_HERO_SUBTITLE;
 
   return (
     <>
@@ -263,11 +226,7 @@ export function HomeScreen() {
     if (!isAuthenticated) return createEmptySavedPlacesByCategory();
     return effectiveSavedPlacesByCategory;
   }, [effectiveSavedPlacesByCategory, isAuthenticated]);
-  const derivedPrimaryCity = useMemo(
-    () => derivePrimaryCityFromSavedPlaces(visibleSavedPlaces),
-    [visibleSavedPlaces],
-  );
-  const heroMode: HeroMode = visibleSavedPlaces.length > 0 && derivedPrimaryCity ? "city-memory" : "empty-memory";
+  const heroMode: HeroMode = DEFAULT_DISCOVER_HERO_MODE;
 
   const refreshSavedPlaces = useCallback(() => {
     setSavedPlacesByCategory(isAuthenticated ? readSavedPlacesByCategory() : createEmptySavedPlacesByCategory());
@@ -401,9 +360,15 @@ export function HomeScreen() {
           } else if (job.status === "failed") {
             nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
             didChange = true;
+          } else if (Date.now() - pending.startedAtMs >= ADD_INTELLIGENCE_TIMEOUT_MS) {
+            nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
+            didChange = true;
           }
         } catch {
-          // Keep the pending job for a later retry.
+          if (Date.now() - pending.startedAtMs >= ADD_INTELLIGENCE_TIMEOUT_MS) {
+            nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
+            didChange = true;
+          }
         }
       }
 
@@ -549,7 +514,6 @@ export function HomeScreen() {
           savedPlacesByCategory={visibleSavedPlacesByCategory}
           visibleSavedPlaces={visibleSavedPlaces}
           heroMode={heroMode}
-          derivedPrimaryCity={derivedPrimaryCity}
           onViewMap={(category) => {
             setTransitionDirection(1);
             setMapFocusedCategory(category);
@@ -601,7 +565,6 @@ export function HomeScreen() {
   }, [
     activeCategory,
     activeTab,
-    derivedPrimaryCity,
     heroMode,
     mapFocusedCategory,
     readyNotifications.length,
