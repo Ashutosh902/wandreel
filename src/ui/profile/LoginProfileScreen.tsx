@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ArrowLeft, ChevronRight, LogIn, Mail, ShieldCheck, UserRound, X } from "lucide-react";
 import { useUx } from "../layout/UxProvider";
+import { clearSavedPlacesByCategory } from "../home/savedPlaces";
 import {
   feedbackRows,
   legalRows,
@@ -35,6 +37,7 @@ type SessionUser = {
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const GOOGLE_OAUTH_SCOPE = "openid email profile";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
 
 function GoogleBrandIcon() {
   return (
@@ -141,6 +144,33 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
   const [activeLegalDoc, setActiveLegalDoc] = useState<LegalDocKey | null>(null);
   const sheetTouchStartYRef = useRef<number | null>(null);
   const isAuthHydrating = !isSessionResolved;
+  const logLoginScreenState = (label: string) => {
+    const overlayHost =
+      typeof document !== "undefined" ? document.querySelector(".wr-phone-shell") ?? document.body : null;
+    const serviceWorkerController =
+      typeof navigator !== "undefined" && "serviceWorker" in navigator
+        ? navigator.serviceWorker.controller?.scriptURL ?? null
+        : null;
+
+    console.log(label, {
+      source: "LoginProfileScreen",
+      viewport: typeof window !== "undefined" ? window.innerWidth : null,
+      userAgent: typeof navigator !== "undefined" ? navigator.userAgent : null,
+      isLoggedIn,
+      isSessionResolved,
+      showBottomSheet,
+      openSheetOnMount,
+      sheetMode,
+      overlayHostClass: overlayHost?.className || null,
+      overlayHostTag: overlayHost?.tagName || null,
+      googleClientConfigured: Boolean(String(import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim()),
+      serviceWorkerController,
+      standaloneDisplay:
+        typeof window !== "undefined" && "matchMedia" in window
+          ? window.matchMedia("(display-mode: standalone)").matches
+          : null,
+    });
+  };
 
   const greetingName = isLoggedIn ? sessionUser?.displayName || "Stroller" : "Stroller";
 
@@ -261,12 +291,14 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
   const closeSheet = () => {
     setShowBottomSheet(false);
     resetToJoinStep();
+    logLoginScreenState("LoginProfileScreen close sheet");
   };
 
   const openSheet = () => {
     if (isLoggedIn !== false) return;
     setShowBottomSheet(true);
     resetToJoinStep();
+    logLoginScreenState("LoginProfileScreen open sheet");
   };
 
   const syncSession = async ({ applyLoggedOutDefault = false }: { applyLoggedOutDefault?: boolean } = {}) => {
@@ -276,10 +308,12 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
       setIsLoggedIn(true);
       setDraftName(String(payload?.user?.displayName || "Stroller"));
       setShowBottomSheet(false);
+      window.dispatchEvent(new CustomEvent(AUTH_SESSION_UPDATED_EVENT));
     } catch {
       setSessionUser(null);
       setIsLoggedIn(false);
       setDraftName("Stroller");
+      window.dispatchEvent(new CustomEvent(AUTH_SESSION_UPDATED_EVENT));
       if (applyLoggedOutDefault) {
         setShowBottomSheet(openSheetOnMount);
       }
@@ -291,6 +325,15 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
   useEffect(() => {
     void syncSession({ applyLoggedOutDefault: true });
   }, []);
+
+  useEffect(() => {
+    logLoginScreenState("LoginProfileScreen mounted");
+  }, []);
+
+  useEffect(() => {
+    if (!isSessionResolved) return;
+    logLoginScreenState("LoginProfileScreen state changed");
+  }, [isLoggedIn, isSessionResolved, showBottomSheet, sheetMode]);
 
   useEffect(() => {
     if (!activeLegalDoc) return;
@@ -513,6 +556,8 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
     try {
       await apiFetch("/api/auth/logout", { method: "POST" });
     } finally {
+      clearSavedPlacesByCategory();
+      window.dispatchEvent(new CustomEvent(AUTH_SESSION_UPDATED_EVENT));
       setSessionUser(null);
       setIsLoggedIn(false);
       setDraftName("Stroller");
@@ -522,6 +567,178 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
       resetToJoinStep();
     }
   };
+
+  useEffect(() => {
+    if (!showBottomSheet || isLoggedIn !== false) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const surface = document.querySelector(".wr-home-surface") as HTMLDivElement | null;
+    const previousSurfaceOverflow = surface?.style.overflow;
+    const previousSurfaceTouchAction = surface?.style.touchAction;
+    const previousSurfaceOverscroll = surface?.style.overscrollBehavior;
+
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    if (surface) {
+      surface.style.overflow = "hidden";
+      surface.style.touchAction = "none";
+      surface.style.overscrollBehavior = "none";
+    }
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      if (surface) {
+        surface.style.overflow = previousSurfaceOverflow || "";
+        surface.style.touchAction = previousSurfaceTouchAction || "";
+        surface.style.overscrollBehavior = previousSurfaceOverscroll || "";
+      }
+    };
+  }, [isLoggedIn, showBottomSheet]);
+
+  const loginSheetOverlay = isSessionResolved && isLoggedIn === false && showBottomSheet ? (
+    <>
+      <button type="button" className="wr-login-sheet-backdrop" aria-label="Close login sheet backdrop" onClick={closeSheet} />
+      <div className="wr-login-sheet-layer" role="presentation">
+        <div className="wr-login-sheet" role="dialog" aria-modal="false" aria-label="Join Wandreel login sheet">
+        <div
+          className="wr-login-sheet-gesture-zone"
+          onTouchStart={(event) => {
+            sheetTouchStartYRef.current = event.touches[0].clientY;
+          }}
+          onTouchEnd={(event) => {
+            if (sheetTouchStartYRef.current === null) return;
+            const deltaY = event.changedTouches[0].clientY - sheetTouchStartYRef.current;
+            sheetTouchStartYRef.current = null;
+            if (deltaY > 72) closeSheet();
+          }}
+        />
+          <div className="wr-login-sheet-handle" />
+          <button type="button" aria-label="Close login sheet" className="wr-login-sheet-close" onClick={closeSheet}>
+            <X size={18} />
+          </button>
+
+          <p className="wr-login-sheet-kicker">JOIN WANDREEL</p>
+          <div className="wr-login-sheet-body">
+            {sheetMode === "join" ? (
+              <>
+                <h4>Save your scrolls. Start your strolls.</h4>
+                <p className="wr-login-sheet-desc">Log in to sync your saved reels, city bucketlists, and places across devices.</p>
+                <div className="wr-login-social-row" aria-label="Social login options">
+                  <button type="button" disabled={isSocialLoading} className="wr-login-social-btn wr-login-social-google" onClick={() => void continueWithProvider("GOOGLE")} aria-label="Continue with Google">
+                    <GoogleBrandIcon />
+                  </button>
+                  <button type="button" disabled={isSocialLoading} className="wr-login-social-btn wr-login-social-apple" onClick={() => void continueWithProvider("APPLE")} aria-label="Continue with Apple">
+                    <AppleBrandIcon />
+                  </button>
+                  <button type="button" disabled={isSocialLoading} className="wr-login-social-btn wr-login-social-facebook" onClick={() => void continueWithProvider("FACEBOOK")} aria-label="Continue with Facebook">
+                    <FacebookBrandIcon />
+                  </button>
+                </div>
+                <input
+                  type="email"
+                  className="wr-login-sheet-input"
+                  value={email}
+                  onChange={(event) => {
+                    setEmail(event.target.value);
+                    setEmailAuthMessage("");
+                    setEmailValidationError("");
+                  }}
+                  placeholder="Email address"
+                  aria-label="Email address"
+                />
+                {emailValidationError ? <p className="wr-login-sheet-error">{emailValidationError}</p> : null}
+                {isEmailOtpRequested ? (
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    className="wr-login-sheet-input"
+                    value={emailOtp}
+                    onChange={(event) => setEmailOtp(event.target.value.replace(/\D/g, "").slice(0, 6))}
+                    placeholder="Enter 6 digit OTP"
+                    aria-label="Email OTP"
+                  />
+                ) : null}
+                <div className="wr-login-sheet-actions">
+                  {!isEmailOtpRequested ? (
+                    <button type="button" disabled={isEmailLoading} className="wr-login-sheet-secondary" onClick={() => void sendEmailOtp()}>
+                      <Mail size={15} />
+                      {isEmailLoading ? "Please wait..." : "Continue with email"}
+                    </button>
+                  ) : (
+                    <button type="button" disabled={isEmailLoading} className="wr-login-sheet-primary" onClick={() => void verifyEmailOtpAndLogin()}>
+                      {isEmailLoading ? "Please wait..." : "Verify email OTP"}
+                    </button>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="wr-login-sheet-phone-link"
+                  onClick={() => {
+                    setPhoneAuthMessage("Phone login is optional and will be enabled in a later phase.");
+                    setSheetMode("phone");
+                  }}
+                >
+                  Use phone instead
+                </button>
+                {emailAuthMessage ? <p className="wr-login-sheet-desc">{emailAuthMessage}</p> : null}
+              </>
+            ) : null}
+
+            {sheetMode === "phone" ? (
+              <>
+                <h4>Continue with phone</h4>
+                <p className="wr-login-sheet-desc">{phoneAuthMessage || "Phone OTP will be enabled as optional account linking in a later phase."}</p>
+                <div className="wr-login-sheet-actions">
+                  <button type="button" className="wr-login-sheet-secondary" onClick={() => setSheetMode("join")}>
+                    Back
+                  </button>
+                </div>
+              </>
+            ) : null}
+
+            {sheetMode === "collectName" ? (
+              <>
+                <h4>What should we call you?</h4>
+                <p className="wr-login-sheet-desc">This helps us personalize your Wandreel experience.</p>
+                <input type="text" className="wr-login-sheet-input" value={displayNameInput} onChange={(event) => setDisplayNameInput(event.target.value)} placeholder="Your name" aria-label="Your name" />
+                <div className="wr-login-sheet-actions">
+                  <button type="button" className="wr-login-sheet-primary" onClick={() => void submitDisplayName()}>
+                    Continue
+                  </button>
+                  <button type="button" className="wr-login-sheet-secondary" onClick={() => setSheetMode("join")}>
+                    Back
+                  </button>
+                </div>
+                {emailAuthMessage ? <p className="wr-login-sheet-desc">{emailAuthMessage}</p> : null}
+              </>
+            ) : null}
+
+            <p className="wr-login-sheet-legal">
+              By continuing, you agree to our{" "}
+              <button type="button" onClick={() => openLegalDoc("terms")}>
+                Terms
+              </button>{" "}
+              and{" "}
+              <button type="button" onClick={() => openLegalDoc("privacy")}>
+                Privacy Policy
+              </button>
+              .
+            </p>
+
+            <div className="wr-login-sheet-note">
+              <ShieldCheck size={14} />
+              <span>We'll only use login to keep your saved places private and synced.</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  ) : null;
+
+  const overlayTarget =
+    typeof document !== "undefined" ? document.querySelector(".wr-phone-shell") ?? document.body : null;
 
   return (
     <section ref={screenRef} className="wr-profile-screen" aria-label="Profile page">
@@ -555,226 +772,103 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
         </button>
       </header>
 
-      <section className={`wr-profile-greeting-block${isAuthHydrating ? " is-hydrating" : ""}`}>
-        {isEditingName ? (
-          <div className="wr-profile-inline-edit">
-            <input value={draftName} onChange={(event) => setDraftName(event.target.value)} className="wr-profile-name-input" aria-label="Edit profile name" />
-            <button type="button" className="wr-profile-mini-btn" onClick={() => void saveInlineDisplayName()} disabled={isSavingName}>
-              {isSavingName ? "Saving..." : "Save"}
-            </button>
-          </div>
-        ) : isAuthHydrating ? (
-          <div className="wr-profile-skeleton-wrap" aria-hidden="true">
-            <span className="wr-profile-skeleton title" />
-            <span className="wr-profile-skeleton copy" />
-            <span className="wr-profile-skeleton copy short" />
-          </div>
-        ) : (
-          <h3 className={isAuthHydrating ? "wr-profile-greeting-title" : undefined}>
-            Hi, <strong>{greetingName}</strong>
-          </h3>
-        )}
-        <p className={isAuthHydrating ? "wr-profile-greeting-copy" : undefined}>Turn Reels, Shorts, TikToks and videos into your personal bucketlist.</p>
-
-        {isLoggedIn === false && isSessionResolved && !showBottomSheet ? (
-          <button type="button" className="wr-profile-login-signup" onClick={openSheet}>
-            <LogIn size={15} />
-            Log in or sign up
-          </button>
-        ) : null}
-
-        {isLoggedIn === true && !isEditingName ? (
-          <button type="button" className="wr-profile-edit-name-btn" onClick={() => setIsEditingName(true)}>
-            Edit name
-          </button>
-        ) : isAuthHydrating ? (
-          <span className="wr-profile-edit-name-placeholder" aria-hidden="true" />
-        ) : null}
-      </section>
-
-      <SettingSection title="Settings" rows={settingsRows} />
-      <section className="wr-profile-section" aria-label="Settings notifications toggle">
-        <button
-          type="button"
-          className="wr-profile-row wr-profile-row-toggle"
-          onClick={() => setNotificationsEnabled((current) => !current)}
-          aria-pressed={notificationsEnabled}
-          aria-label={`Notifications ${notificationsEnabled ? "on" : "off"}`}
-        >
-          <span>Notifications</span>
-          <span className="wr-profile-row-right">
-            <span className={`wr-notification-state ${notificationsEnabled ? "is-on" : "is-off"}`}>
-              {notificationsEnabled ? "ON" : "OFF"}
-            </span>
-            <span className={`wr-notification-switch ${notificationsEnabled ? "is-on" : "is-off"}`} aria-hidden="true">
-              <span className="wr-notification-switch-thumb" />
-            </span>
-          </span>
-        </button>
-      </section>
-      <SettingSection title="Support" rows={supportRows} />
-      <SettingSection title="Feedback" rows={feedbackRows} />
-      <SettingSection
-        title="Legal"
-        rows={legalRows}
-        onRowPress={(row) => {
-          const doc = resolveLegalDocFromLabel(row.label);
-          if (doc) openLegalDoc(doc);
-        }}
-      />
-
-      {isLoggedIn === true ? (
-        <section className="wr-profile-section" aria-label="Account actions">
-          <button type="button" className="wr-profile-row wr-profile-logout" onClick={logout}>
-            <span>Log out</span>
-            <span className="wr-profile-row-right">
-              <ChevronRight size={16} />
-            </span>
-          </button>
-        </section>
-      ) : null}
-
-      <footer className="wr-profile-version">Version 0.1.0</footer>
-
-      {isSessionResolved && isLoggedIn === false && showBottomSheet ? (
-        <>
-          <button type="button" className="wr-login-sheet-backdrop" aria-label="Close login sheet backdrop" onClick={closeSheet} />
-          <div className="wr-login-sheet" role="dialog" aria-modal="false" aria-label="Join Wandreel login sheet">
-          <div
-            className="wr-login-sheet-gesture-zone"
-            onTouchStart={(event) => {
-              sheetTouchStartYRef.current = event.touches[0].clientY;
-            }}
-            onTouchEnd={(event) => {
-              if (sheetTouchStartYRef.current === null) return;
-              const deltaY = event.changedTouches[0].clientY - sheetTouchStartYRef.current;
-              sheetTouchStartYRef.current = null;
-              if (deltaY > 72) closeSheet();
-            }}
-          />
-            <div className="wr-login-sheet-handle" />
-            <button type="button" aria-label="Close login sheet" className="wr-login-sheet-close" onClick={closeSheet}>
-              <X size={18} />
-            </button>
-
-            <p className="wr-login-sheet-kicker">JOIN WANDREEL</p>
-            <div className="wr-login-sheet-body">
-              {sheetMode === "join" ? (
-                <>
-                  <h4>Save your scrolls. Start your strolls.</h4>
-                  <p className="wr-login-sheet-desc">Log in to sync your saved reels, city bucketlists, and places across devices.</p>
-                  <div className="wr-login-social-row" aria-label="Social login options">
-                    <button type="button" disabled={isSocialLoading} className="wr-login-social-btn wr-login-social-google" onClick={() => void continueWithProvider("GOOGLE")} aria-label="Continue with Google">
-                      <GoogleBrandIcon />
-                    </button>
-                    <button type="button" disabled={isSocialLoading} className="wr-login-social-btn wr-login-social-apple" onClick={() => void continueWithProvider("APPLE")} aria-label="Continue with Apple">
-                      <AppleBrandIcon />
-                    </button>
-                    <button type="button" disabled={isSocialLoading} className="wr-login-social-btn wr-login-social-facebook" onClick={() => void continueWithProvider("FACEBOOK")} aria-label="Continue with Facebook">
-                      <FacebookBrandIcon />
-                    </button>
-                  </div>
-                  <input
-                    type="email"
-                    className="wr-login-sheet-input"
-                    value={email}
-                    onChange={(event) => {
-                      setEmail(event.target.value);
-                      setEmailAuthMessage("");
-                      setEmailValidationError("");
-                    }}
-                    placeholder="Email address"
-                    aria-label="Email address"
-                  />
-                  {emailValidationError ? <p className="wr-login-sheet-error">{emailValidationError}</p> : null}
-                  {isEmailOtpRequested ? (
-                    <input
-                      type="text"
-                      inputMode="numeric"
-                      className="wr-login-sheet-input"
-                      value={emailOtp}
-                      onChange={(event) => setEmailOtp(event.target.value.replace(/\D/g, "").slice(0, 6))}
-                      placeholder="Enter 6 digit OTP"
-                      aria-label="Email OTP"
-                    />
-                  ) : null}
-                  <div className="wr-login-sheet-actions">
-                    {!isEmailOtpRequested ? (
-                      <button type="button" disabled={isEmailLoading} className="wr-login-sheet-secondary" onClick={() => void sendEmailOtp()}>
-                        <Mail size={15} />
-                        {isEmailLoading ? "Please wait..." : "Continue with email"}
-                      </button>
-                    ) : (
-                      <button type="button" disabled={isEmailLoading} className="wr-login-sheet-primary" onClick={() => void verifyEmailOtpAndLogin()}>
-                        {isEmailLoading ? "Please wait..." : "Verify email OTP"}
-                      </button>
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    className="wr-login-sheet-phone-link"
-                    onClick={() => {
-                      setPhoneAuthMessage("Phone login is optional and will be enabled in a later phase.");
-                      setSheetMode("phone");
-                    }}
-                  >
-                    Use phone instead
-                  </button>
-                  {emailAuthMessage ? <p className="wr-login-sheet-desc">{emailAuthMessage}</p> : null}
-                </>
-              ) : null}
-
-              {sheetMode === "phone" ? (
-                <>
-                  <h4>Continue with phone</h4>
-                  <p className="wr-login-sheet-desc">{phoneAuthMessage || "Phone OTP will be enabled as optional account linking in a later phase."}</p>
-                  <div className="wr-login-sheet-actions">
-                    <button type="button" className="wr-login-sheet-secondary" onClick={() => setSheetMode("join")}>
-                      Back
-                    </button>
-                  </div>
-                </>
-              ) : null}
-
-              {sheetMode === "collectName" ? (
-                <>
-                  <h4>What should we call you?</h4>
-                  <p className="wr-login-sheet-desc">This helps us personalize your Wandreel experience.</p>
-                  <input type="text" className="wr-login-sheet-input" value={displayNameInput} onChange={(event) => setDisplayNameInput(event.target.value)} placeholder="Your name" aria-label="Your name" />
-                  <div className="wr-login-sheet-actions">
-                    <button type="button" className="wr-login-sheet-primary" onClick={() => void submitDisplayName()}>
-                      Continue
-                    </button>
-                    <button type="button" className="wr-login-sheet-secondary" onClick={() => setSheetMode("join")}>
-                      Back
-                    </button>
-                  </div>
-                  {emailAuthMessage ? <p className="wr-login-sheet-desc">{emailAuthMessage}</p> : null}
-                </>
-              ) : null}
-
-              <p className="wr-login-sheet-legal">
-                By continuing, you agree to our{" "}
-                <button type="button" onClick={() => openLegalDoc("terms")}>
-                  Terms
-                </button>{" "}
-                and{" "}
-                <button type="button" onClick={() => openLegalDoc("privacy")}>
-                  Privacy Policy
-                </button>
-                .
-              </p>
-
-              <div className="wr-login-sheet-note">
-                <ShieldCheck size={14} />
-                <span>We'll only use login to keep your saved places private and synced.</span>
-              </div>
+      {isAuthHydrating ? (
+        <section className="wr-profile-loading-state" aria-label="Loading profile">
+          <div className="wr-profile-loading-card">
+            <p className="wr-profile-loading-copy">Getting your profile ready...</p>
+            <div className="wr-profile-skeleton-wrap" aria-hidden="true">
+              <span className="wr-profile-skeleton title" />
+              <span className="wr-profile-skeleton copy" />
+              <span className="wr-profile-skeleton copy short" />
             </div>
           </div>
+          <div className="wr-profile-loading-section" aria-hidden="true">
+            <span className="wr-profile-loading-section-title" />
+            <span className="wr-profile-loading-row" />
+            <span className="wr-profile-loading-row" />
+            <span className="wr-profile-loading-row short" />
+          </div>
+        </section>
+      ) : (
+        <>
+          <section className="wr-profile-greeting-block">
+            {isEditingName ? (
+              <div className="wr-profile-inline-edit">
+                <input value={draftName} onChange={(event) => setDraftName(event.target.value)} className="wr-profile-name-input" aria-label="Edit profile name" />
+                <button type="button" className="wr-profile-mini-btn" onClick={() => void saveInlineDisplayName()} disabled={isSavingName}>
+                  {isSavingName ? "Saving..." : "Save"}
+                </button>
+              </div>
+            ) : (
+              <h3>
+                Hi, <strong>{greetingName}</strong>
+              </h3>
+            )}
+            <p>Turn Reels, Shorts, TikToks and videos into your personal bucketlist.</p>
+
+            {isLoggedIn === false && !showBottomSheet ? (
+              <button type="button" className="wr-profile-login-signup" onClick={openSheet}>
+                <LogIn size={15} />
+                Log in or sign up
+              </button>
+            ) : null}
+
+            {isLoggedIn === true && !isEditingName ? (
+              <button type="button" className="wr-profile-edit-name-btn" onClick={() => setIsEditingName(true)}>
+                Edit name
+              </button>
+            ) : null}
+          </section>
+
+          <SettingSection title="Settings" rows={settingsRows} />
+          <section className="wr-profile-section" aria-label="Settings notifications toggle">
+            <button
+              type="button"
+              className="wr-profile-row wr-profile-row-toggle"
+              onClick={() => setNotificationsEnabled((current) => !current)}
+              aria-pressed={notificationsEnabled}
+              aria-label={`Notifications ${notificationsEnabled ? "on" : "off"}`}
+            >
+              <span>Notifications</span>
+              <span className="wr-profile-row-right">
+                <span className={`wr-notification-state ${notificationsEnabled ? "is-on" : "is-off"}`}>
+                  {notificationsEnabled ? "ON" : "OFF"}
+                </span>
+                <span className={`wr-notification-switch ${notificationsEnabled ? "is-on" : "is-off"}`} aria-hidden="true">
+                  <span className="wr-notification-switch-thumb" />
+                </span>
+              </span>
+            </button>
+          </section>
+          <SettingSection title="Support" rows={supportRows} />
+          <SettingSection title="Feedback" rows={feedbackRows} />
+          <SettingSection
+            title="Legal"
+            rows={legalRows}
+            onRowPress={(row) => {
+              const doc = resolveLegalDocFromLabel(row.label);
+              if (doc) openLegalDoc(doc);
+            }}
+          />
+
+          {isLoggedIn === true ? (
+            <section className="wr-profile-section" aria-label="Account actions">
+              <button type="button" className="wr-profile-row wr-profile-logout" onClick={logout}>
+                <span>Log out</span>
+                <span className="wr-profile-row-right">
+                  <ChevronRight size={16} />
+                </span>
+              </button>
+            </section>
+          ) : null}
+
+          <footer className="wr-profile-version">Version 0.1.0</footer>
+        </>
+      )}
+
         </>
       ) : null}
-        </>
-      ) : null}
+      {overlayTarget && loginSheetOverlay ? createPortal(loginSheetOverlay, overlayTarget) : null}
     </section>
   );
 }

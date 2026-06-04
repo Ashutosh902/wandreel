@@ -324,6 +324,7 @@ export function HomeScreen() {
       let nextPendingJobs = draft.pendingJobs;
 
       for (const pending of draft.pendingJobs) {
+        if (!pending.jobId) continue;
         try {
           const response = await fetch(`${API_BASE_URL}/api/intelligence/jobs/${pending.jobId}`);
           const payload = await response.json();
@@ -334,15 +335,15 @@ export function HomeScreen() {
             const entities = (job.result?.output?.structuredEntities || []) as IntelligenceEntity[];
             const resolvedPlaces = mapEntitiesToPlaces(
               entities,
-              { source: pending.source, imageUrl: pending.imageUrl, videoUrl: pending.videoUrl },
+              { source: pending.source, imageUrl: pending.imageUrl, videoUrl: pending.videoUrl, sourceUrl: pending.sourceUrl },
               pending.runId,
             );
             const withoutRun = nextPlaces.filter((item) => item.runId !== pending.runId);
-            nextPlaces = resolvedPlaces.length ? [...resolvedPlaces, ...withoutRun] : withoutRun;
+            nextPlaces = resolvedPlaces.length ? [...resolvedPlaces, ...withoutRun] : [pending.fallbackPlace, ...withoutRun];
             nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
             didChange = true;
 
-            const readyPlace = resolvedPlaces[0];
+            const readyPlace = resolvedPlaces[0] || pending.fallbackPlace;
             if (readyPlace) {
               notifyReadyToSave({
                 id: `ready-${pending.jobId}`,
@@ -358,14 +359,20 @@ export function HomeScreen() {
               });
             }
           } else if (job.status === "failed") {
+            const withoutRun = nextPlaces.filter((item) => item.runId !== pending.runId);
+            nextPlaces = [pending.fallbackPlace, ...withoutRun];
             nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
             didChange = true;
           } else if (Date.now() - pending.startedAtMs >= ADD_INTELLIGENCE_TIMEOUT_MS) {
+            const withoutRun = nextPlaces.filter((item) => item.runId !== pending.runId);
+            nextPlaces = [pending.fallbackPlace, ...withoutRun];
             nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
             didChange = true;
           }
         } catch {
           if (Date.now() - pending.startedAtMs >= ADD_INTELLIGENCE_TIMEOUT_MS) {
+            const withoutRun = nextPlaces.filter((item) => item.runId !== pending.runId);
+            nextPlaces = [pending.fallbackPlace, ...withoutRun];
             nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
             didChange = true;
           }

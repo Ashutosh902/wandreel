@@ -49,6 +49,24 @@ type IntelligenceApiResponse = {
   };
 };
 
+type PreviewCard =
+  | {
+      key: string;
+      runId: number;
+      sourceUrl: string;
+      kind: "pending";
+      pending: PendingDetectionJob;
+      sortOrder: number;
+    }
+  | {
+      key: string;
+      runId: number;
+      sourceUrl: string;
+      kind: "resolved";
+      place: DetectedPlace;
+      sortOrder: number;
+    };
+
 const chipOrder: Array<"Auto-detect" | DetectedCategory> = ["Auto-detect", "Taste", "Activity", "Stay", "Explore"];
 
 export function AddScreen() {
@@ -57,12 +75,12 @@ export function AddScreen() {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [selectedDetectedCategory, setSelectedDetectedCategory] = useState<"Auto-detect" | DetectedCategory>("Auto-detect");
-  const [selectedPreviewIndex, setSelectedPreviewIndex] = useState(0);
   const [detectedPlaces, setDetectedPlaces] = useState<DetectedPlace[]>([]);
-  const [isPreviewVisible, setIsPreviewVisible] = useState(true);
+  const [activeRunId, setActiveRunId] = useState<number | null>(null);
   const [saveMessage, setSaveMessage] = useState("");
   const [savedPlaceIds, setSavedPlaceIds] = useState<Set<string>>(new Set());
   const [isEditing, setIsEditing] = useState(false);
+  const [editingPlaceId, setEditingPlaceId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editCategory, setEditCategory] = useState<DetectedCategory>("Taste");
   const [editLocality, setEditLocality] = useState("");
@@ -76,6 +94,8 @@ export function AddScreen() {
   const [autoSelectFirstSuggestion, setAutoSelectFirstSuggestion] = useState(true);
   const analyzeRunRef = useRef(0);
   const locationDebounceTimerRef = useRef<number | null>(null);
+  const detectedPlacesRef = useRef<DetectedPlace[]>([]);
+  const pendingJobsRef = useRef<PendingDetectionJob[]>([]);
   const isResolvingFinal = pendingJobs.length > 0;
   const logAddScreenState = (label: string) => {
     console.log(label, {
@@ -99,7 +119,6 @@ export function AddScreen() {
   const restoreDraftState = (draft: {
     detectedPlaces: DetectedPlace[];
     selectedDetectedCategory: "Auto-detect" | DetectedCategory;
-    selectedPreviewIndex: number;
     isPreviewVisible: boolean;
     linkInput: string;
     pendingJobs: PendingDetectionJob[];
@@ -107,9 +126,8 @@ export function AddScreen() {
     setLinkInput(draft.linkInput || "");
     setHasAnalyzed(draft.detectedPlaces.length > 0 || draft.pendingJobs.length > 0);
     setSelectedDetectedCategory(draft.pendingJobs.length > 0 ? "Auto-detect" : draft.selectedDetectedCategory || "Auto-detect");
-    setSelectedPreviewIndex(draft.selectedPreviewIndex || 0);
     setDetectedPlaces(Array.isArray(draft.detectedPlaces) ? draft.detectedPlaces : []);
-    setIsPreviewVisible(draft.isPreviewVisible ?? true);
+    setActiveRunId(draft.pendingJobs[0]?.runId ?? draft.detectedPlaces[0]?.runId ?? null);
     setPendingJobs(Array.isArray(draft.pendingJobs) ? draft.pendingJobs : []);
     setIsAnalyzing(false);
   };
@@ -120,12 +138,12 @@ export function AddScreen() {
     setIsAnalyzing(false);
     setHasAnalyzed(false);
     setSelectedDetectedCategory("Auto-detect");
-    setSelectedPreviewIndex(0);
     setDetectedPlaces([]);
-    setIsPreviewVisible(true);
+    setActiveRunId(null);
     setSaveMessage("");
     setSavedPlaceIds(new Set());
     setIsEditing(false);
+    setEditingPlaceId(null);
     setEditName("");
     setEditCategory("Taste");
     setEditLocality("");
@@ -145,6 +163,14 @@ export function AddScreen() {
   };
 
   useEffect(() => {
+    detectedPlacesRef.current = detectedPlaces;
+  }, [detectedPlaces]);
+
+  useEffect(() => {
+    pendingJobsRef.current = pendingJobs;
+  }, [pendingJobs]);
+
+  useEffect(() => {
     if (!saveMessage) return;
     const timer = window.setTimeout(() => setSaveMessage(""), 1800);
     return () => window.clearTimeout(timer);
@@ -155,37 +181,66 @@ export function AddScreen() {
     for (const item of detectedPlaces) base[item.category] += 1;
     return { total: detectedPlaces.length, ...base };
   }, [detectedPlaces]);
-  const displayedCategoryCounts = useMemo(() => {
-    if (!isResolvingFinal) return categoryCounts;
-    return {
-      total: detectedPlaces.length,
-      Taste: 0,
-      Activity: 0,
-      Stay: 0,
-      Explore: 0,
-    };
-  }, [categoryCounts, detectedPlaces.length, isResolvingFinal]);
-  const shouldShowDetectedSection = hasAnalyzed && (categoryCounts.total > 0 || isResolvingFinal);
+  const previewCards = useMemo<PreviewCard[]>(() => {
+    const resolvedCards = detectedPlaces
+      .filter((item) => selectedDetectedCategory === "Auto-detect" || item.category === selectedDetectedCategory)
+      .map((place, index) => ({
+        key: place.id,
+        runId: place.runId,
+        sourceUrl: place.sourceUrl,
+        kind: "resolved" as const,
+        place,
+        sortOrder: (place.runId * 1000) - index,
+      }));
 
-  const visibleDetectedPlaces = useMemo(() => {
-    if (selectedDetectedCategory === "Auto-detect") return detectedPlaces;
-    return detectedPlaces.filter((item) => item.category === selectedDetectedCategory);
-  }, [detectedPlaces, selectedDetectedCategory]);
+    const loadingCards =
+      selectedDetectedCategory === "Auto-detect"
+        ? pendingJobs.map((pending) => ({
+            key: `pending-${pending.runId}`,
+            runId: pending.runId,
+            sourceUrl: pending.sourceUrl,
+            kind: "pending" as const,
+            pending,
+            sortOrder: pending.runId * 1000 + 999,
+          }))
+        : [];
 
-  const selectedPreview = visibleDetectedPlaces[selectedPreviewIndex] ?? null;
+    return [...loadingCards, ...resolvedCards].sort((left, right) => right.sortOrder - left.sortOrder);
+  }, [detectedPlaces, pendingJobs, selectedDetectedCategory]);
+
+  const shouldShowDetectedSection = previewCards.length > 0;
+  const autoDetectCount = detectedPlaces.length + pendingJobs.length;
+
+  const activePreviewCard = useMemo(
+    () => previewCards.find((card) => card.runId === activeRunId) ?? previewCards[0] ?? null,
+    [activeRunId, previewCards],
+  );
+  const editingPlace = useMemo(
+    () => detectedPlaces.find((item) => item.id === editingPlaceId) ?? null,
+    [detectedPlaces, editingPlaceId],
+  );
 
   useEffect(() => {
-    if (!selectedPreview) return;
-    // Only update form fields if not currently editing to preserve user changes
-    if (!isEditing) {
-      setEditName(selectedPreview.name);
-      setEditCategory(selectedPreview.category);
-      setEditLocality(selectedPreview.locality);
-      setEditAddress(selectedPreview.fullAddress);
-      setEditPlaceId(selectedPreview.placeId ?? null);
-      setEditCoords({ lat: selectedPreview.lat ?? null, lng: selectedPreview.lng ?? null });
+    if (!previewCards.length) {
+      setActiveRunId(null);
+      return;
     }
-  }, [selectedPreview, isEditing]);
+    if (activeRunId === null || !previewCards.some((card) => card.runId === activeRunId)) {
+      setActiveRunId(previewCards[0].runId);
+    }
+  }, [activeRunId, previewCards]);
+
+  useEffect(() => {
+    if (!editingPlace) return;
+    if (!isEditing) {
+      setEditName(editingPlace.name);
+      setEditCategory(editingPlace.category);
+      setEditLocality(editingPlace.locality);
+      setEditAddress(editingPlace.fullAddress);
+      setEditPlaceId(editingPlace.placeId ?? null);
+      setEditCoords({ lat: editingPlace.lat ?? null, lng: editingPlace.lng ?? null });
+    }
+  }, [editingPlace, isEditing]);
 
   useEffect(() => {
     if (!isEditing) return;
@@ -254,7 +309,7 @@ export function AddScreen() {
 
   useEffect(() => {
     const draft = readPersistedAddDraft();
-    const shouldRestore = Boolean(draft && (draft.pendingJobs.length > 0 || peekReviewRunId() !== null));
+    const shouldRestore = Boolean(draft && (draft.detectedPlaces.length > 0 || draft.pendingJobs.length > 0 || peekReviewRunId() !== null));
     if (draft && shouldRestore) {
       restoreDraftState(draft);
     } else {
@@ -281,7 +336,7 @@ export function AddScreen() {
     const syncFromStorage = () => {
       const draft = readPersistedAddDraft();
       if (!draft) return;
-      const shouldApply = draft.pendingJobs.length > 0 || pendingJobs.length > 0 || peekReviewRunId() !== null;
+      const shouldApply = draft.detectedPlaces.length > 0 || draft.pendingJobs.length > 0 || pendingJobs.length > 0 || peekReviewRunId() !== null;
       if (!shouldApply) return;
       restoreDraftState(draft);
     };
@@ -341,7 +396,7 @@ export function AddScreen() {
     return /(^@)|(^follow\s+@)|(@\w+)/i.test(candidateName) ? "Detected place" : candidateName.slice(0, 80);
   };
 
-  const toDraftPlace = (extraction: ExtractionApiResponse, runId: number): DetectedPlace => {
+  const toDraftPlace = (extraction: ExtractionApiResponse, runId: number, sourceUrl: string): DetectedPlace => {
     const platformSource = sourceLabelFromPlatform(extraction.metadata?.platform);
     const rawTitle = extraction.metadata?.title?.trim() || "";
     const rawDesc = extraction.metadata?.description?.trim() || "";
@@ -352,6 +407,7 @@ export function AddScreen() {
     return {
       id: `draft-${Date.now()}`,
       runId,
+      sourceUrl,
       name: draftName,
       category: draftCategory,
       locality: "Resolving locality...",
@@ -368,13 +424,37 @@ export function AddScreen() {
     };
   };
 
-  const clearPersistedDraftState = () => {
-    try {
-      resetAddFlowState({ clearPersisted: true });
-    } catch {
-      // Ignore localStorage failures.
+  const syncDraftState = (
+    nextPlaces: DetectedPlace[],
+    nextPendingJobs: PendingDetectionJob[],
+    nextLinkInput: string,
+  ) => {
+    setDetectedPlaces(nextPlaces);
+    setPendingJobs(nextPendingJobs);
+    setHasAnalyzed(nextPlaces.length > 0 || nextPendingJobs.length > 0);
+    if (nextPlaces.length > 0 || nextPendingJobs.length > 0 || nextLinkInput.trim()) {
+      writePersistedAddDraft({
+        detectedPlaces: nextPlaces,
+        selectedDetectedCategory: "Auto-detect",
+        selectedPreviewIndex: 0,
+        isPreviewVisible: true,
+        linkInput: nextLinkInput,
+        pendingJobs: nextPendingJobs,
+      });
+      return;
     }
+    clearPersistedAddDraft();
   };
+
+  const replaceRunPlaces = (places: DetectedPlace[], runId: number, replacements: DetectedPlace[] = []) => [
+    ...replacements,
+    ...places.filter((item) => item.runId !== runId),
+  ];
+
+  const upsertPendingJob = (jobs: PendingDetectionJob[], pendingJob: PendingDetectionJob) => [
+    pendingJob,
+    ...jobs.filter((item) => item.runId !== pendingJob.runId),
+  ];
 
   const publishSavedToCategoryFeed = (place: DetectedPlace) => {
     upsertSavedPlace({
@@ -399,13 +479,10 @@ export function AddScreen() {
   const removeDetectedWithAnimation = (place: DetectedPlace) => {
     setRemovingPlaceId(place.id);
     window.setTimeout(() => {
-      const willBeEmpty = detectedPlaces.filter((item) => item.id !== place.id).length === 0;
-      setDetectedPlaces((prev) => {
-        const next = prev.filter((item) => item.id !== place.id);
-        if (!next.length) clearPersistedDraftState();
-        return next;
-      });
-      setPendingJobs((prev) => prev.filter((job) => job.runId !== place.runId));
+      const nextPlaces = detectedPlacesRef.current.filter((item) => item.id !== place.id);
+      const nextPendingJobs = pendingJobsRef.current.filter((job) => job.runId !== place.runId);
+      const willBeEmpty = nextPlaces.length === 0 && nextPendingJobs.length === 0;
+      syncDraftState(nextPlaces, nextPendingJobs, willBeEmpty ? "" : linkInput);
       removeReadyNotificationByRunId(place.runId);
       setSavedPlaceIds((prev) => {
         if (!prev.has(place.id)) return prev;
@@ -413,9 +490,8 @@ export function AddScreen() {
         next.delete(place.id);
         return next;
       });
-      setSelectedPreviewIndex(0);
-      setIsPreviewVisible(true);
       setIsEditing(false);
+      setEditingPlaceId(null);
       setRemovingPlaceId(null);
       if (willBeEmpty) {
         resetAddFlowState({ clearPersisted: true });
@@ -423,15 +499,16 @@ export function AddScreen() {
     }, 260);
   };
 
-  const handleAnalyze = async () => {
-    if (!linkInput.trim() || isAnalyzing) return;
+  const runAnalysis = async (sourceUrl: string, options?: { runId?: number }) => {
+    if (isAnalyzing) return;
     if (isOffline) {
       showToast({ message: "This link could not be analyzed.", variant: "error" });
       return;
     }
+
     let parsedUrl: URL;
     try {
-      parsedUrl = new URL(linkInput.trim());
+      parsedUrl = new URL(sourceUrl.trim());
     } catch {
       showToast({ message: "This link could not be analyzed.", variant: "error" });
       return;
@@ -441,41 +518,87 @@ export function AddScreen() {
       return;
     }
 
-    const runId = Date.now();
+    const normalizedSourceUrl = sourceUrl.trim();
+    const existingPending = pendingJobsRef.current.find(
+      (item) => item.sourceUrl === normalizedSourceUrl && item.runId !== options?.runId,
+    );
+    if (existingPending) {
+      setActiveRunId(existingPending.runId);
+      setSelectedDetectedCategory("Auto-detect");
+      showToast({ message: "This link is already being analyzed.", variant: "info" });
+      return;
+    }
+
+    const runId = options?.runId ?? Date.now();
+    const existingPlace = detectedPlacesRef.current.find((item) => item.runId === runId) ?? null;
+    const fallbackPlace: DetectedPlace =
+      existingPlace ?? {
+        id: `fallback-${runId}`,
+        runId,
+        sourceUrl: normalizedSourceUrl,
+        name: "Detected place",
+        category: inferDraftCategory(normalizedSourceUrl),
+        locality: "Unknown locality",
+        source: "Web Link",
+        imageUrl: categoryFallbackImage.Explore,
+        fullAddress: "Unknown locality",
+        videoUrl: normalizedSourceUrl,
+        placeId: null,
+        lat: null,
+        lng: null,
+        city: null,
+        state: null,
+        country: null,
+      };
+
     analyzeRunRef.current = runId;
     window.dispatchEvent(new CustomEvent(ADD_PROCESSING_STARTED_EVENT));
     setIsAnalyzing(true);
-    setHasAnalyzed(true);
-    setIsPreviewVisible(true);
     setSaveMessage("");
     setSelectedDetectedCategory("Auto-detect");
-    setSelectedPreviewIndex(0);
+    setActiveRunId(runId);
+    setLinkInput(normalizedSourceUrl);
+
+    const startedAt = Date.now();
+    const pendingDraft: PendingDetectionJob = {
+      runId,
+      jobId: "",
+      startedAtMs: startedAt,
+      sourceUrl: normalizedSourceUrl,
+      source: fallbackPlace.source,
+      imageUrl: fallbackPlace.imageUrl,
+      videoUrl: normalizedSourceUrl,
+      fallbackPlace,
+    };
+
+    const nextDraftPlaces = replaceRunPlaces(detectedPlacesRef.current, runId);
+    const nextDraftPendingJobs = upsertPendingJob(pendingJobsRef.current, pendingDraft);
+    syncDraftState(nextDraftPlaces, nextDraftPendingJobs, normalizedSourceUrl);
 
     try {
       const extractionResponse = await fetch(`${API_BASE_URL}/api/metadata/extract`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: linkInput.trim(), mode: "deep" }),
+        body: JSON.stringify({ url: normalizedSourceUrl, mode: "deep" }),
       });
       const extraction = (await extractionResponse.json()) as ExtractionApiResponse;
       if (!extractionResponse.ok || !extraction?.ok) throw new Error("extraction_failed");
 
       if (analyzeRunRef.current !== runId) return;
-      const draftPlace = toDraftPlace(extraction, runId);
-      setDetectedPlaces((prev) => [draftPlace, ...prev.filter((item) => item.runId !== runId)]);
-      writePersistedAddDraft({
-        detectedPlaces: [draftPlace],
-        selectedDetectedCategory: "Auto-detect",
-        selectedPreviewIndex: 0,
-        isPreviewVisible: true,
-        linkInput: linkInput.trim(),
-        pendingJobs: [],
-      });
-      setIsAnalyzing(false);
-      const startedAt = Date.now();
-      setSelectedDetectedCategory("Auto-detect");
-      setSelectedPreviewIndex(0);
-      setIsPreviewVisible(true);
+
+      const draftPlace = toDraftPlace(extraction, runId, normalizedSourceUrl);
+      const extractionPendingJob: PendingDetectionJob = {
+        ...pendingDraft,
+        source: sourceLabelFromPlatform(extraction.metadata?.platform),
+        imageUrl: extraction.metadata?.imageUrl || categoryFallbackImage[draftPlace.category],
+        videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || normalizedSourceUrl,
+        fallbackPlace: draftPlace,
+      };
+      syncDraftState(
+        replaceRunPlaces(detectedPlacesRef.current, runId),
+        upsertPendingJob(pendingJobsRef.current, extractionPendingJob),
+        normalizedSourceUrl,
+      );
 
       const intelligenceResponse = await fetch(`${API_BASE_URL}/api/intelligence/extract`, {
         method: "POST",
@@ -485,70 +608,65 @@ export function AddScreen() {
       const intelligence = (await intelligenceResponse.json()) as IntelligenceApiResponse;
       if (analyzeRunRef.current !== runId) return;
       if (!intelligenceResponse.ok || !intelligence?.ok) throw new Error("intelligence_failed");
+
       const entities = intelligence.output?.structuredEntities ?? [];
-      const draftFromApi = mapEntitiesToPlaces(
+      const resolvedPlaces = mapEntitiesToPlaces(
         entities,
         {
           source: sourceLabelFromPlatform(extraction.metadata?.platform),
-          imageUrl: extraction.metadata?.imageUrl || categoryFallbackImage.Taste,
-          videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || linkInput.trim(),
+          imageUrl: extraction.metadata?.imageUrl || categoryFallbackImage[draftPlace.category],
+          videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || normalizedSourceUrl,
+          sourceUrl: normalizedSourceUrl,
         },
         runId,
       );
-      const shownDraft = draftFromApi.length ? draftFromApi : [draftPlace];
-      setDetectedPlaces((prev) => [...shownDraft, ...prev.filter((item) => item.runId !== runId)]);
 
       const jobId = intelligence.jobId || null;
       if (!jobId) {
-        clearPersistedAddDraft();
+        const finalizedPlaces = resolvedPlaces.length ? resolvedPlaces : [draftPlace];
+        syncDraftState(
+          replaceRunPlaces(detectedPlacesRef.current, runId, finalizedPlaces),
+          pendingJobsRef.current.filter((item) => item.runId !== runId),
+          "",
+        );
+        setIsAnalyzing(false);
         showToast({ message: "Link analyzed", variant: "success" });
         return;
       }
-      const pendingJob = {
-        runId,
+
+      const queuedPendingJob: PendingDetectionJob = {
+        ...extractionPendingJob,
         jobId,
-        startedAtMs: startedAt,
-        source: sourceLabelFromPlatform(extraction.metadata?.platform),
-        imageUrl: extraction.metadata?.imageUrl || categoryFallbackImage.Taste,
-        videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || linkInput.trim(),
       };
-      setPendingJobs((prev) => [
-        pendingJob,
-        ...prev.filter((item) => item.runId !== runId),
-      ]);
-      writePersistedAddDraft({
-        detectedPlaces: shownDraft,
-        selectedDetectedCategory: "Auto-detect",
-        selectedPreviewIndex: 0,
-        isPreviewVisible: true,
-        linkInput: linkInput.trim(),
-        pendingJobs: [pendingJob],
-      });
+      syncDraftState(
+        replaceRunPlaces(detectedPlacesRef.current, runId),
+        upsertPendingJob(pendingJobsRef.current, queuedPendingJob),
+        normalizedSourceUrl,
+      );
+      setIsAnalyzing(false);
     } catch {
       if (analyzeRunRef.current !== runId) return;
+      syncDraftState(
+        replaceRunPlaces(detectedPlacesRef.current, runId, [fallbackPlace]),
+        pendingJobsRef.current.filter((item) => item.runId !== runId),
+        "",
+      );
       setIsAnalyzing(false);
-      setSelectedDetectedCategory("Auto-detect");
-      setSelectedPreviewIndex(0);
-      setIsPreviewVisible(true);
-      clearPersistedAddDraft();
       showToast({ message: "This link could not be analyzed.", variant: "error" });
     }
   };
 
-  const handleCategorySelect = (next: "Auto-detect" | DetectedCategory) => {
-    if (isResolvingFinal && next !== "Auto-detect") return;
-    setSelectedDetectedCategory(next);
-    setSelectedPreviewIndex(0);
-    setIsPreviewVisible(true);
+  const handleAnalyze = async () => {
+    if (!linkInput.trim()) return;
+    await runAnalysis(linkInput.trim());
   };
 
-  const handleSavePlace = async () => {
-    if (!selectedPreview) return;
-    await savePlace(selectedPreview);
+  const handleCategorySelect = (next: "Auto-detect" | DetectedCategory) => {
+    setSelectedDetectedCategory(next);
   };
 
   const handleApplyEdit = () => {
-    if (!selectedPreview) return;
+    if (!editingPlace) return;
     const name = editName.trim();
     const locality = editLocality.trim();
     const fullAddress = editAddress.trim();
@@ -556,7 +674,7 @@ export function AddScreen() {
       showToast({ message: "Name and locality are required.", variant: "error" });
       return;
     }
-    setDetectedPlaces((prev) => prev.map((item) => (item.id === selectedPreview.id ? {
+    const nextPlaces = detectedPlacesRef.current.map((item) => (item.id === editingPlace.id ? {
       ...item,
       name,
       category: editCategory,
@@ -565,26 +683,29 @@ export function AddScreen() {
       placeId: editPlaceId ?? item.placeId ?? null,
       lat: editCoords.lat ?? item.lat ?? null,
       lng: editCoords.lng ?? item.lng ?? null,
-    } : item)));
+    } : item));
+    syncDraftState(nextPlaces, pendingJobsRef.current, linkInput);
     setIsEditing(false);
+    setEditingPlaceId(null);
     showToast({ message: "Details updated", variant: "success" });
   };
 
   const cancelEdit = () => {
-    if (selectedPreview) {
-      setEditName(selectedPreview.name);
-      setEditCategory(selectedPreview.category);
-      setEditLocality(selectedPreview.locality);
-      setEditAddress(selectedPreview.fullAddress);
-      setEditPlaceId(selectedPreview.placeId ?? null);
-      setEditCoords({ lat: selectedPreview.lat ?? null, lng: selectedPreview.lng ?? null });
+    if (editingPlace) {
+      setEditName(editingPlace.name);
+      setEditCategory(editingPlace.category);
+      setEditLocality(editingPlace.locality);
+      setEditAddress(editingPlace.fullAddress);
+      setEditPlaceId(editingPlace.placeId ?? null);
+      setEditCoords({ lat: editingPlace.lat ?? null, lng: editingPlace.lng ?? null });
       setLocationSuggestions([]);
     }
     setIsEditing(false);
+    setEditingPlaceId(null);
   };
 
   const handleSaveEditedPlace = async () => {
-    if (!selectedPreview) return;
+    if (!editingPlace) return;
     const name = editName.trim();
     const locality = editLocality.trim();
     const fullAddress = editAddress.trim();
@@ -593,14 +714,14 @@ export function AddScreen() {
       return;
     }
     const editedPlace: DetectedPlace = {
-      ...selectedPreview,
+      ...editingPlace,
       name,
       category: editCategory,
       locality,
       fullAddress: fullAddress || locality,
-      placeId: editPlaceId ?? selectedPreview.placeId ?? null,
-      lat: editCoords.lat ?? selectedPreview.lat ?? null,
-      lng: editCoords.lng ?? selectedPreview.lng ?? null,
+      placeId: editPlaceId ?? editingPlace.placeId ?? null,
+      lat: editCoords.lat ?? editingPlace.lat ?? null,
+      lng: editCoords.lng ?? editingPlace.lng ?? null,
     };
     await savePlace(editedPlace);
   };
@@ -642,34 +763,46 @@ export function AddScreen() {
       }
       publishSavedToCategoryFeed(place);
       removeReadyNotificationByRunId(place.runId);
-      setSavedPlaceIds((current) => new Set(current).add(place.id));
-      setSaveMessage(`Saved to ${place.category}`);
-      showToast({ message: `Saved to ${place.category}`, variant: "success" });
-      setIsEditing(false);
-      removeDetectedWithAnimation(place);
-    } catch {
-      showToast({ message: "Couldn't connect. Please try again.", variant: "error" });
-    }
-  };
+        setSavedPlaceIds((current) => new Set(current).add(place.id));
+        setSaveMessage(`Saved to ${place.category}`);
+        showToast({ message: `Saved to ${place.category}`, variant: "success" });
+        setIsEditing(false);
+        setEditingPlaceId(null);
+        removeDetectedWithAnimation(place);
+      } catch {
+        showToast({ message: "Couldn't connect. Please try again.", variant: "error" });
+      }
+    };
 
   const handleRefreshInput = () => {
-    resetAddFlowState({ clearPersisted: true });
+    if (activePreviewCard) {
+      void runAnalysis(activePreviewCard.sourceUrl, { runId: activePreviewCard.runId });
+      logAddScreenState("AddScreen refresh reset");
+      return;
+    }
+    if (!linkInput.trim()) {
+      showToast({ message: "Paste a link to analyze", variant: "info" });
+      return;
+    }
+    void runAnalysis(linkInput.trim());
     logAddScreenState("AddScreen refresh reset");
   };
 
-  const handleDismissPreview = () => {
-    if (!selectedPreview) {
-      setIsPreviewVisible(false);
+  const handleDismissPreview = (card: PreviewCard) => {
+    if (card.kind === "pending") {
+      const nextPlaces = replaceRunPlaces(detectedPlacesRef.current, card.runId);
+      const nextPendingJobs = pendingJobsRef.current.filter((item) => item.runId !== card.runId);
+      syncDraftState(nextPlaces, nextPendingJobs, activeRunId === card.runId ? "" : linkInput);
+      removeReadyNotificationByRunId(card.runId);
+      setIsEditing(false);
+      setEditingPlaceId(null);
+      showToast({ message: "Place removed", variant: "info" });
       return;
     }
 
-    setDetectedPlaces((prev) => {
-      const next = prev.filter((item) => item.id !== selectedPreview.id);
-      if (!next.length) {
-        clearPersistedDraftState();
-      }
-      return next;
-    });
+    const selectedPreview = card.place;
+    const nextPlaces = detectedPlacesRef.current.filter((item) => item.id !== selectedPreview.id);
+    syncDraftState(nextPlaces, pendingJobsRef.current, nextPlaces.length || pendingJobsRef.current.length ? linkInput : "");
     setSavedPlaceIds((prev) => {
       if (!prev.has(selectedPreview.id)) return prev;
       const next = new Set(prev);
@@ -677,15 +810,14 @@ export function AddScreen() {
       return next;
     });
     removeReadyNotificationByRunId(selectedPreview.runId);
-    setSelectedPreviewIndex(0);
-    setIsPreviewVisible(true);
     setIsEditing(false);
+    setEditingPlaceId(null);
     showToast({ message: "Place removed", variant: "info" });
   };
 
   const getChipCount = (chip: "Auto-detect" | DetectedCategory) => {
-    if (chip === "Auto-detect") return displayedCategoryCounts.total;
-    return displayedCategoryCounts[chip];
+    if (chip === "Auto-detect") return autoDetectCount;
+    return categoryCounts[chip];
   };
 
   return (
@@ -727,66 +859,111 @@ export function AddScreen() {
         </button>
       </article>
 
-      {shouldShowDetectedSection ? (
-        <section className="wr-add-detected-wrap is-ready" aria-label="Detected places">
-          <div className="wr-add-detected-head"><p>{isResolvingFinal ? "Resolving this link" : "Detected from this link"}</p><span>{categoryCounts.total} places</span></div>
+        {shouldShowDetectedSection ? (
+          <section className="wr-add-detected-wrap is-ready" aria-label="Detected places">
+            <div className="wr-add-detected-head"><p>{isResolvingFinal ? "Resolving this link" : "Detected from this link"}</p><span>{previewCards.length} places</span></div>
 
-          <div className="wr-add-chip-row">
-            {chipOrder.map((chip) => {
-              const count = getChipCount(chip);
-              const isSelected = selectedDetectedCategory === chip;
+            <div className="wr-add-chip-row">
+              {chipOrder.map((chip) => {
+                const count = getChipCount(chip);
+                const isSelected = selectedDetectedCategory === chip;
               return (
                 <button
-                  type="button"
-                  key={chip}
-                  className={`wr-add-chip is-${chip.replace("Auto-detect", "auto").toLowerCase().replace(" ", "-")} ${isSelected ? "is-selected" : ""}`}
-                  onClick={() => handleCategorySelect(chip)}
-                  disabled={isResolvingFinal && chip !== "Auto-detect"}
-                >
-                  <span>{chip}</span><strong>{count}</strong>
-                </button>
-              );
-            })}
-          </div>
+                    type="button"
+                    key={chip}
+                    className={`wr-add-chip is-${chip.replace("Auto-detect", "auto").toLowerCase().replace(" ", "-")} ${isSelected ? "is-selected" : ""}`}
+                    onClick={() => handleCategorySelect(chip)}
+                  >
+                    <span>{chip}</span><strong>{count}</strong>
+                  </button>
+                );
+              })}
+            </div>
 
-          {isPreviewVisible && selectedPreview ? (
-            <article className={`wr-add-preview-card ${removingPlaceId === selectedPreview.id ? "is-removing" : ""}`}>
-              <button type="button" className="wr-add-preview-close" aria-label="Close preview card" onClick={handleDismissPreview}><X size={14} /></button>
-              <img src={selectedPreview.imageUrl} alt={selectedPreview.name} className="wr-add-preview-image" />
-              <div className="wr-add-preview-body">
-                <p className="wr-add-preview-kicker">DETECTED PREVIEW {selectedPreviewIndex + 1} OF {visibleDetectedPlaces.length || 1}</p>
-                <h4>{isResolvingFinal ? "Finding place details..." : selectedPreview.name}</h4>
-                {isResolvingFinal ? (
-                  <>
-                    <p>We're fetching the info for you.</p>
-                    <p>Keep scrolling - come back anytime to save it.</p>
-                  </>
-                ) : (
-                  <>
-                    <p>{selectedPreview.category} · {selectedPreview.locality}</p>
-                    <p>From {selectedPreview.source}</p>
-                  </>
-                )}
-                <div className="wr-add-preview-actions">
-                  <button type="button" className="wr-add-preview-btn" onClick={() => setIsEditing(true)} disabled={isResolvingFinal}>Edit details</button>
-                  <button type="button" className="wr-add-preview-btn is-primary" onClick={handleSavePlace} disabled={isResolvingFinal}>Save place</button>
-                </div>
+            {previewCards.length ? (
+              <div className="wr-add-preview-stack">
+                {previewCards.map((card, index) => (
+                  card.kind === "pending" ? (
+                    <article
+                      key={card.key}
+                      className={`wr-add-preview-card wr-add-preview-card-loading ${activePreviewCard?.runId === card.runId ? "is-active" : ""}`}
+                      onClick={() => setActiveRunId(card.runId)}
+                    >
+                      <button type="button" className="wr-add-preview-close" aria-label="Close preview card" onClick={(event) => { event.stopPropagation(); handleDismissPreview(card); }}><X size={14} /></button>
+                      <div className="wr-add-preview-loading-visual" aria-hidden="true">
+                        <span className="wr-add-preview-loading-ring" />
+                        <span className="wr-add-preview-loading-core" />
+                      </div>
+                      <div className="wr-add-preview-body">
+                        <p className="wr-add-preview-kicker">PROCESSING PREVIEW {index + 1} OF {previewCards.length}</p>
+                        <h4>Finding place details...</h4>
+                        <p>We're fetching the info for you.</p>
+                        <p>Keep scrolling - come back anytime to save it.</p>
+                        <div className="wr-add-preview-actions">
+                          <button type="button" className="wr-add-preview-btn" onClick={(event) => { event.stopPropagation(); void runAnalysis(card.sourceUrl, { runId: card.runId }); }}>Refresh</button>
+                        </div>
+                      </div>
+                    </article>
+                  ) : (
+                    <article
+                      key={card.key}
+                      className={`wr-add-preview-card ${removingPlaceId === card.place.id ? "is-removing" : ""} ${activePreviewCard?.runId === card.runId ? "is-active" : ""}`}
+                      onClick={() => setActiveRunId(card.runId)}
+                    >
+                      <button type="button" className="wr-add-preview-close" aria-label="Close preview card" onClick={(event) => { event.stopPropagation(); handleDismissPreview(card); }}><X size={14} /></button>
+                      <img src={card.place.imageUrl} alt={card.place.name} className="wr-add-preview-image" />
+                      <div className="wr-add-preview-body">
+                        <p className="wr-add-preview-kicker">DETECTED PREVIEW {index + 1} OF {previewCards.length}</p>
+                        <h4>{card.place.name}</h4>
+                        <p>{card.place.category} · {card.place.locality}</p>
+                        <p>From {card.place.source}</p>
+                        <div className="wr-add-preview-actions">
+                          <button
+                            type="button"
+                            className="wr-add-preview-btn"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setActiveRunId(card.runId);
+                              setEditingPlaceId(card.place.id);
+                              setIsEditing(true);
+                            }}
+                          >
+                            Edit details
+                          </button>
+                          <button
+                            type="button"
+                            className="wr-add-preview-btn"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void runAnalysis(card.sourceUrl, { runId: card.runId });
+                            }}
+                          >
+                            Refresh
+                          </button>
+                          <button
+                            type="button"
+                            className="wr-add-preview-btn is-primary"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              void savePlace(card.place);
+                            }}
+                          >
+                            Save place
+                          </button>
+                        </div>
+                      </div>
+                    </article>
+                  )
+                ))}
               </div>
-            </article>
-          ) : (
-            <article className="wr-add-empty-state" aria-label="No preview for selected category">No places in this category yet.</article>
-          )}
+            ) : (
+              <article className="wr-add-empty-state" aria-label="No preview for selected category">No places in this category yet.</article>
+            )}
 
-          {saveMessage ? <p className="wr-add-save-toast">{saveMessage}</p> : null}
-        </section>
-      ) : isAnalyzing ? (
-        <section className="wr-add-detected-wrap is-skeleton" aria-label="Detected places loading">
-          <div className="wr-add-detected-skeleton head" />
-          <div className="wr-add-detected-skeleton chips" />
-          <div className="wr-add-detected-skeleton card" />
-        </section>
-      ) : null}
-      {isEditing && selectedPreview ? (
+            {saveMessage ? <p className="wr-add-save-toast">{saveMessage}</p> : null}
+          </section>
+        ) : null}
+      {isEditing && editingPlace ? (
         <div className="wr-add-edit-layer" role="presentation">
           <button type="button" className="wr-add-edit-backdrop" aria-label="Cancel edit" onClick={cancelEdit} />
           <section className="wr-add-edit-sheet" role="dialog" aria-modal="true" aria-label="Edit detected place">

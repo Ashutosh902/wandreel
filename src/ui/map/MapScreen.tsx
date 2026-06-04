@@ -239,14 +239,6 @@ export function MapScreen({
     [activeMapCategories, savedPlaces],
   );
 
-  const placesMissingCoordinates = useMemo(
-    () =>
-      filteredSavedPlaces.filter(
-        (place) => typeof place.lat !== "number" || typeof place.lng !== "number",
-      ),
-    [filteredSavedPlaces],
-  );
-
   const mapPlaces = useMemo(
     () =>
       filteredSavedPlaces.filter(
@@ -267,12 +259,6 @@ export function MapScreen({
       ),
     [mapCenter, mapPlaces, radiusKm],
   );
-
-  useEffect(() => {
-    console.log("savedPlaces for map:", savedPlaces);
-    console.log("mapPlaces with coordinates:", mapPlaces);
-    console.log("places missing coordinates:", placesMissingCoordinates);
-  }, [mapPlaces, placesMissingCoordinates, savedPlaces]);
 
   const visiblePins = useMemo(() => {
     const places = inRadiusMapPlaces;
@@ -525,35 +511,16 @@ export function MapScreen({
           <span className="wr-map-in-range-count">{inRangeCount}</span>
           <span className="wr-map-in-range-label">{inRangeNoun}</span>
         </div>
-        {filteredSavedPlaces.length === 0 ? (
+        {visiblePins.length === 0 ? (
           <div className="wr-map-empty-state" aria-live="polite">
-            <p className="wr-map-empty-title">No places added yet</p>
-            <p className="wr-map-empty-copy">Save your first reel or place to see it on the map.</p>
+            <p className="wr-map-empty-title">No mapped places yet</p>
+            <p className="wr-map-empty-copy">Add or update location details to see places on your map.</p>
             <div className="wr-map-empty-actions">
               <button type="button" className="wr-map-empty-btn is-primary" onClick={() => onAddLink?.()}>
                 Add place
               </button>
             </div>
           </div>
-        ) : null}
-        {placesMissingCoordinates.length ? (
-          <section className="wr-map-missing-card" aria-label="Saved places without location">
-            <div className="wr-map-missing-head">
-              <h3>Saved places without location</h3>
-              <span>{placesMissingCoordinates.length}</span>
-            </div>
-            <div className="wr-map-missing-list">
-              {placesMissingCoordinates.slice(0, 4).map((place) => (
-                <article key={place.id} className="wr-map-missing-item">
-                  <div className="wr-map-missing-copy">
-                    <p>{place.title}</p>
-                    <span>{place.locality}</span>
-                  </div>
-                  <strong>{place.category}</strong>
-                </article>
-              ))}
-            </div>
-          </section>
         ) : null}
         <div className="wr-map-radius-vertical" aria-label="Map search radius control">
           <p className="wr-map-radius-value">{radiusKm} km</p>

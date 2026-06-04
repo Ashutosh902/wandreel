@@ -3,6 +3,7 @@ export type DetectedCategory = "Taste" | "Activity" | "Stay" | "Explore";
 export type DetectedPlace = {
   id: string;
   runId: number;
+  sourceUrl: string;
   name: string;
   category: DetectedCategory;
   locality: string;
@@ -36,9 +37,11 @@ export type PendingDetectionJob = {
   runId: number;
   jobId: string;
   startedAtMs: number;
+  sourceUrl: string;
   source: string;
   imageUrl: string;
   videoUrl: string;
+  fallbackPlace: DetectedPlace;
 };
 
 export type PersistedAddDraft = {
@@ -84,12 +87,47 @@ export function readPersistedAddDraft(): PersistedAddDraft | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as PersistedAddDraft;
     return {
-      detectedPlaces: Array.isArray(parsed.detectedPlaces) ? parsed.detectedPlaces : [],
+      detectedPlaces: Array.isArray(parsed.detectedPlaces)
+        ? parsed.detectedPlaces.map((item) => ({
+            ...item,
+            sourceUrl: item.sourceUrl || item.videoUrl || "",
+          }))
+        : [],
       selectedDetectedCategory: parsed.selectedDetectedCategory || "Auto-detect",
       selectedPreviewIndex: parsed.selectedPreviewIndex || 0,
       isPreviewVisible: parsed.isPreviewVisible ?? true,
       linkInput: parsed.linkInput || "",
-      pendingJobs: Array.isArray(parsed.pendingJobs) ? parsed.pendingJobs : [],
+      pendingJobs: Array.isArray(parsed.pendingJobs)
+        ? parsed.pendingJobs
+            .map((item) => ({
+              ...item,
+              jobId: item.jobId || "",
+              sourceUrl: item.sourceUrl || item.videoUrl || item.fallbackPlace?.sourceUrl || "",
+              fallbackPlace: item.fallbackPlace
+                ? {
+                    ...item.fallbackPlace,
+                    sourceUrl: item.fallbackPlace.sourceUrl || item.videoUrl || "",
+                  }
+                : {
+                    id: `fallback-${item.runId}`,
+                    runId: item.runId,
+                    sourceUrl: item.sourceUrl || item.videoUrl || "",
+                    name: "Detected place",
+                    category: "Explore",
+                    locality: "Unknown locality",
+                    source: item.source || "Web Link",
+                    imageUrl: item.imageUrl || categoryFallbackImage.Explore,
+                    fullAddress: "Unknown locality",
+                    videoUrl: item.videoUrl || item.sourceUrl || "",
+                    placeId: null,
+                    lat: null,
+                    lng: null,
+                    city: null,
+                    state: null,
+                    country: null,
+                  },
+            }))
+        : [],
     };
   } catch {
     return null;
@@ -163,7 +201,7 @@ export function mapCategory(category: IntelligenceEntity["category"]): DetectedC
 
 export function mapEntitiesToPlaces(
   entities: IntelligenceEntity[],
-  defaults: { source: string; imageUrl: string; videoUrl: string },
+  defaults: { source: string; imageUrl: string; videoUrl: string; sourceUrl: string },
   runId: number,
 ): DetectedPlace[] {
   return entities
@@ -175,6 +213,7 @@ export function mapEntitiesToPlaces(
       return {
         id: `${mapped}-${entity.name}-${index}`.toLowerCase().replace(/\s+/g, "-"),
         runId,
+        sourceUrl: defaults.sourceUrl,
         name: entity.name,
         category: mapped,
         locality,
