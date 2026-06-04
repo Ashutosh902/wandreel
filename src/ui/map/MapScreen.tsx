@@ -3,6 +3,7 @@ import { ArrowLeft, LocateFixed, MapPin, Search, X } from "lucide-react";
 import { CircleF, GoogleMap, MarkerF, useJsApiLoader } from "@react-google-maps/api";
 import { mapCategoryStyles, runMapDataChecks, type MapCategoryLabel } from "./map.data";
 import { useUx } from "../layout/UxProvider";
+import { bearingRadians, distanceKm, type LatLng } from "../geo";
 import type { SavedPlaceRecord } from "../home/savedPlaces";
 import "./map.css";
 
@@ -36,26 +37,6 @@ function hexToRgba(hex: string, alpha: number): string {
   const green = Number.parseInt(normalized.slice(2, 4), 16);
   const blue = Number.parseInt(normalized.slice(4, 6), 16);
   return `rgba(${red}, ${green}, ${blue}, ${alpha})`;
-}
-
-function toRadians(value: number): number {
-  return (value * Math.PI) / 180;
-}
-
-function distanceBetweenKm(
-  start: { lat: number; lng: number },
-  end: { lat: number; lng: number },
-): number {
-  const earthRadiusKm = 6371;
-  const latDelta = toRadians(end.lat - start.lat);
-  const lngDelta = toRadians(end.lng - start.lng);
-  const startLat = toRadians(start.lat);
-  const endLat = toRadians(end.lat);
-  const haversine =
-    Math.sin(latDelta / 2) ** 2 +
-    Math.cos(startLat) * Math.cos(endLat) * Math.sin(lngDelta / 2) ** 2;
-
-  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
 }
 
 function getGoogleZoomForRadius(radiusKm: number): number {
@@ -116,8 +97,8 @@ function MapCategorySegmentedControl({
       {categories.map((category, index) => {
         const Icon = category.icon;
         const isActive = activeCategories.includes(category.label);
-        const tint = hexToRgba(category.color, 0.1);
-        const indicator = hexToRgba(category.color, 0.22);
+        const tint = hexToRgba(category.color, 0.22);
+        const indicator = hexToRgba(category.color, 0.46);
 
         return (
           <button
@@ -252,7 +233,7 @@ export function MapScreen({
   const inRadiusMapPlaces = useMemo(
     () =>
       mapPlaces.filter((place) =>
-        distanceBetweenKm(mapCenter, {
+        distanceKm(mapCenter, {
           lat: place.lat as number,
           lng: place.lng as number,
         }) <= radiusKm,
@@ -266,13 +247,12 @@ export function MapScreen({
     if (!places.length) return [];
 
     return places.map((place, index) => {
-      const lat = place.lat as number;
-      const lng = place.lng as number;
-      const latKmOffset = (lat - mapCenter.lat) * 111;
-      const lngKmOffset =
-        (lng - mapCenter.lng) * 111 * Math.cos(toRadians(mapCenter.lat));
-      const x = MAP_CENTER.x + (lngKmOffset / Math.max(radiusKm, 1)) * 44;
-      const y = MAP_CENTER.y - (latKmOffset / Math.max(radiusKm, 1)) * 44;
+      const placeCoords: LatLng = { lat: place.lat as number, lng: place.lng as number };
+      const distanceRatio = Math.min(1, distanceKm(mapCenter, placeCoords) / Math.max(radiusKm, 1));
+      const bearing = bearingRadians(mapCenter, placeCoords);
+      const visualRadius = distanceRatio * 44;
+      const x = MAP_CENTER.x + Math.sin(bearing) * visualRadius;
+      const y = MAP_CENTER.y - Math.cos(bearing) * visualRadius;
       const style = mapCategoryStyles.find((item) => item.label === place.category);
       return {
         ...place,
@@ -452,6 +432,18 @@ export function MapScreen({
                 clickable: false,
               }}
             />
+            <MarkerF
+              position={mapCenter}
+              icon={{
+                path: window.google.maps.SymbolPath.CIRCLE,
+                scale: 7,
+                fillColor: "#2b77f5",
+                fillOpacity: 1,
+                strokeColor: "#ffffff",
+                strokeWeight: 3,
+              }}
+              zIndex={1001}
+            />
             {visiblePins.map((pin) => (
               <MarkerF
                 key={pin.id}
@@ -470,7 +462,8 @@ export function MapScreen({
             ))}
           </GoogleMap>
         ) : null}
-        <div className="wr-map-current-area" aria-hidden="true">
+        {!isMapReady ? (
+          <div className="wr-map-current-area" aria-hidden="true">
           <div
             className="wr-map-radius-overlay"
             style={{
@@ -482,7 +475,8 @@ export function MapScreen({
             <div className="wr-map-center-pulse" />
             <div className="wr-map-center-dot" />
           </div>
-        </div>
+          </div>
+        ) : null}
         {!isMapReady ? <div className="wr-map-base" /> : null}
         {!isMapReady ? <div className="wr-map-block wr-map-block-a" /> : null}
         {!isMapReady ? <div className="wr-map-block wr-map-block-b" /> : null}
@@ -513,8 +507,8 @@ export function MapScreen({
         </div>
         {visiblePins.length === 0 ? (
           <div className="wr-map-empty-state" aria-live="polite">
-            <p className="wr-map-empty-title">No mapped places yet</p>
-            <p className="wr-map-empty-copy">Add or update location details to see places on your map.</p>
+            <p className="wr-map-empty-title">No mapped places in range</p>
+            <p className="wr-map-empty-copy">Increase the radius or update location details to see places on your map.</p>
             <div className="wr-map-empty-actions">
               <button type="button" className="wr-map-empty-btn is-primary" onClick={() => onAddLink?.()}>
                 Add place

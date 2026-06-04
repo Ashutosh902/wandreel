@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { Pencil, Search, Trash2, X } from "lucide-react";
 import type { CategoryLabel } from "./home.data";
 import { useUx } from "../layout/UxProvider";
+import { distanceKm } from "../geo";
 import {
   removeSavedPlace,
   upsertSavedPlace,
@@ -136,21 +137,11 @@ export function CategoryDetailPage({
 
   const distanceAwarePlaces = useMemo(() => {
     if (!currentCoords) return savedPlaces;
-    const toRad = (value: number) => (value * Math.PI) / 180;
-    const haversineKm = (lat1: number, lng1: number, lat2: number, lng2: number) => {
-      const R = 6371;
-      const dLat = toRad(lat2 - lat1);
-      const dLng = toRad(lng2 - lng1);
-      const a =
-        Math.sin(dLat / 2) ** 2 +
-        Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
-      return 2 * R * Math.asin(Math.sqrt(a));
-    };
     return savedPlaces.map((place) => {
       if (typeof place.lat !== "number" || typeof place.lng !== "number") return place;
       return {
         ...place,
-        distanceKm: Number(haversineKm(currentCoords.lat, currentCoords.lng, place.lat, place.lng).toFixed(1)),
+        distanceKm: Number(distanceKm(currentCoords, { lat: place.lat, lng: place.lng }).toFixed(1)),
       };
     });
   }, [savedPlaces, currentCoords]);
