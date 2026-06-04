@@ -62,7 +62,7 @@ export function ConnectScreen({
           <span>Connect</span>
         </div>
         <h2>Share places. Discover through people.</h2>
-        <p>Recommendations from your circle and the Wandreel community.</p>
+        <p>Places recommended by friends and the Wandreel community.</p>
       </header>
 
       <div className="wr-connect-segmented" role="tablist" aria-label="Connect tabs">

@@ -18,9 +18,15 @@ import {
   type PendingDetectionJob,
 } from "./addFlowState";
 import { upsertSavedPlace } from "./savedPlaces";
+import {
+  SHARED_INTENT_RECEIVED_EVENT,
+  consumePendingSharedIntent,
+  getSharedIntentPrefill,
+} from "../../pwa/shareTarget";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
+const IS_DEV = import.meta.env.DEV;
 const LEGACY_ADD_STORAGE_KEYS = [
   "wandreel_add_url",
   "lastAnalyzedLink",
@@ -90,6 +96,7 @@ export function AddScreen() {
   const [locationSuggestions, setLocationSuggestions] = useState<Array<{ placeId: string; label: string; secondaryText: string | null; description: string | null }>>([]);
   const [isLocationSearching, setIsLocationSearching] = useState(false);
   const [pendingJobs, setPendingJobs] = useState<PendingDetectionJob[]>([]);
+  const [queuedSharedLink, setQueuedSharedLink] = useState<string | null>(null);
   const [removingPlaceId, setRemovingPlaceId] = useState<string | null>(null);
   const [autoSelectFirstSuggestion, setAutoSelectFirstSuggestion] = useState(true);
   const analyzeRunRef = useRef(0);
@@ -98,6 +105,7 @@ export function AddScreen() {
   const pendingJobsRef = useRef<PendingDetectionJob[]>([]);
   const isResolvingFinal = pendingJobs.length > 0;
   const logAddScreenState = (label: string) => {
+    if (!IS_DEV) return;
     console.log(label, {
       url: linkInput,
       hasAnalyzed,
@@ -315,16 +323,18 @@ export function AddScreen() {
     } else {
       resetAddFlowState({ clearPersisted: true });
     }
-    console.log("AddScreen mounted", {
-      url: shouldRestore ? draft?.linkInput || "" : "",
-      hasAnalyzed: shouldRestore ? Boolean((draft?.detectedPlaces.length || 0) > 0 || (draft?.pendingJobs.length || 0) > 0) : false,
-      detectedPlaces: shouldRestore ? draft?.detectedPlaces || [] : [],
-      source: "AddScreen",
-      viewport: window.innerWidth,
-      storageUrl: window.localStorage.getItem("wandreel_add_url"),
-      lastAnalyzedLink: window.localStorage.getItem("lastAnalyzedLink"),
-      persistedDraft: window.localStorage.getItem("wr_add_detected_draft_v2"),
-    });
+    if (IS_DEV) {
+      console.debug("AddScreen mounted", {
+        url: shouldRestore ? draft?.linkInput || "" : "",
+        hasAnalyzed: shouldRestore ? Boolean((draft?.detectedPlaces.length || 0) > 0 || (draft?.pendingJobs.length || 0) > 0) : false,
+        detectedPlaces: shouldRestore ? draft?.detectedPlaces || [] : [],
+        source: "AddScreen",
+        viewport: window.innerWidth,
+        storageUrl: window.localStorage.getItem("wandreel_add_url"),
+        lastAnalyzedLink: window.localStorage.getItem("lastAnalyzedLink"),
+        persistedDraft: window.localStorage.getItem("wr_add_detected_draft_v2"),
+      });
+    }
   }, []);
 
   useEffect(() => () => {
@@ -352,6 +362,13 @@ export function AddScreen() {
     window.addEventListener(AUTH_SESSION_UPDATED_EVENT, handleAuthReset);
     return () => window.removeEventListener(AUTH_SESSION_UPDATED_EVENT, handleAuthReset);
   }, []);
+
+  useEffect(() => {
+    if (isAnalyzing || !queuedSharedLink) return;
+    const nextSharedLink = queuedSharedLink;
+    setQueuedSharedLink(null);
+    void runAnalysis(nextSharedLink);
+  }, [isAnalyzing, queuedSharedLink]);
 
   const sourceLabelFromPlatform = (platform?: string) => {
     if (platform === "instagram") return "Instagram Reel";
@@ -655,6 +672,54 @@ export function AddScreen() {
       showToast({ message: "This link could not be analyzed.", variant: "error" });
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const consumeSharedIntentIntoAdd = async () => {
+      const sharedIntent = await consumePendingSharedIntent();
+      if (!sharedIntent || cancelled) return;
+
+      const nextInput = getSharedIntentPrefill(sharedIntent);
+      if (!nextInput) return;
+
+      if (IS_DEV) {
+        console.debug("[share-target] Add consumed shared intent", {
+          intentId: sharedIntent.intentId,
+          extractedUrl: sharedIntent.extractedUrl || null,
+          prefill: nextInput,
+        });
+      }
+
+      setLinkInput(nextInput);
+      setSelectedDetectedCategory("Auto-detect");
+      showToast({ message: "Added from share", variant: "success" });
+
+      if (!sharedIntent.extractedUrl) {
+        showToast({ message: "Couldn’t find a shareable link. Check the text before analyzing.", variant: "info" });
+        return;
+      }
+
+      if (isAnalyzing) {
+        setQueuedSharedLink(sharedIntent.extractedUrl);
+        return;
+      }
+
+      void runAnalysis(sharedIntent.extractedUrl);
+    };
+
+    void consumeSharedIntentIntoAdd();
+
+    const handleSharedIntent = () => {
+      void consumeSharedIntentIntoAdd();
+    };
+
+    window.addEventListener(SHARED_INTENT_RECEIVED_EVENT, handleSharedIntent);
+    return () => {
+      cancelled = true;
+      window.removeEventListener(SHARED_INTENT_RECEIVED_EVENT, handleSharedIntent);
+    };
+  }, [isAnalyzing, showToast]);
 
   const handleAnalyze = async () => {
     if (!linkInput.trim()) return;

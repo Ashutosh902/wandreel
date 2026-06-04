@@ -533,7 +533,14 @@ export function CategoryDetailPage({
               }
             }}
           >
-            <img src={place.imageUrl} alt={place.title} className="wr-taste-row-thumb" />
+            <div className="wr-taste-row-thumb-wrap">
+              <img src={place.imageUrl} alt={place.title} className="wr-taste-row-thumb" />
+              {isPlaceGlobal(place) ? (
+                <span className="wr-taste-row-global-marker" aria-label="Globally recommended place">
+                  <Globe2 size={11} />
+                </span>
+              ) : null}
+            </div>
             <div className="wr-taste-row-main">
               <div className="wr-taste-row-top">
                 <p className="wr-taste-row-name">{place.title}</p>

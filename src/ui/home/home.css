@@ -897,16 +897,36 @@
   gap: 0.62rem;
   align-items: flex-start;
 }
-.wr-taste-row-thumb {
+.wr-taste-row-thumb-wrap {
+  position: relative;
   width: 4rem;
   height: 4rem;
   flex-shrink: 0;
+}
+.wr-taste-row-thumb {
+  width: 4rem;
+  height: 4rem;
   border-radius: 0.72rem;
   object-fit: cover;
   object-position: center 18%;
   transform: scale(1.07);
   transform-origin: center;
   display: block;
+}
+.wr-taste-row-global-marker {
+  position: absolute;
+  right: -0.12rem;
+  bottom: -0.08rem;
+  width: 1.32rem;
+  height: 1.32rem;
+  border-radius: 999px;
+  border: 2px solid #fff;
+  background: linear-gradient(135deg, #22c55e 0%, #0f766e 100%);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 7px 16px rgba(15, 118, 110, 0.26);
 }
 .wr-taste-row-main {
   min-width: 0;
@@ -1361,11 +1381,11 @@
 .wr-connect-screen {
   position: relative;
   z-index: 1;
-  margin-top: 1.25rem;
+  margin-top: 1.15rem;
   min-height: min(82vh, 46rem);
   display: grid;
   align-content: start;
-  gap: 0.95rem;
+  gap: 0.78rem;
 }
 
 .wr-connect-header {
@@ -1373,7 +1393,7 @@
   border: 1px solid rgba(255, 255, 255, 0.78);
   background: rgba(255, 255, 255, 0.86);
   box-shadow: 0 14px 28px rgba(17, 24, 39, 0.1);
-  padding: 1rem 1rem 0.95rem;
+  padding: 0.96rem 1rem 0.9rem;
 }
 
 .wr-connect-kicker {
@@ -1391,7 +1411,7 @@
 }
 
 .wr-connect-header h2 {
-  margin: 0.72rem 0 0;
+  margin: 0.64rem 0 0;
   font-size: 27px;
   line-height: 1.05;
   letter-spacing: -0.04em;
@@ -1399,7 +1419,7 @@
 }
 
 .wr-connect-header p {
-  margin: 0.44rem 0 0;
+  margin: 0.38rem 0 0;
   max-width: 18.5rem;
   font-size: 12.8px;
   line-height: 1.45;
@@ -1426,7 +1446,11 @@
   color: #6b7280;
   font-size: 12.4px;
   font-weight: 850;
-  transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  transition:
+    background-color 190ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    color 190ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    box-shadow 190ms cubic-bezier(0.22, 0.61, 0.36, 1),
+    transform 190ms cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 
 .wr-connect-segment.is-active {
@@ -1443,10 +1467,11 @@
 
 .wr-connect-empty-card {
   border-radius: 1.18rem;
-  border: 1px dashed #d8e0ea;
-  background: rgba(255, 255, 255, 0.76);
-  box-shadow: 0 12px 24px rgba(17, 24, 39, 0.06);
-  padding: 1rem 0.92rem;
+  border: 1px solid rgba(231, 219, 208, 0.92);
+  background:
+    linear-gradient(180deg, rgba(255, 252, 247, 0.96) 0%, rgba(255, 247, 239, 0.9) 100%);
+  box-shadow: 0 12px 24px rgba(17, 24, 39, 0.055);
+  padding: 0.92rem 0.92rem 0.96rem;
   text-align: center;
 }
 
@@ -1464,14 +1489,14 @@
 }
 
 .wr-connect-empty-card h3 {
-  margin: 0.68rem 0 0;
+  margin: 0.58rem 0 0;
   font-size: 17px;
   line-height: 1.12;
   color: #10213f;
 }
 
 .wr-connect-empty-card p {
-  margin: 0.34rem auto 0;
+  margin: 0.28rem auto 0;
   max-width: 16.5rem;
   font-size: 12.2px;
   line-height: 1.4;
@@ -1480,7 +1505,7 @@
 }
 
 .wr-connect-cta {
-  margin-top: 0.78rem;
+  margin-top: 0.68rem;
   min-height: 2.4rem;
   border: none;
   border-radius: 0.82rem;

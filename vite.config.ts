@@ -6,12 +6,14 @@ import { cloudflare } from "@cloudflare/vite-plugin";
 
 export default defineConfig({
   plugins: [react(), VitePWA({
+    strategies: 'injectManifest',
+    srcDir: 'src',
+    filename: 'sw.ts',
     registerType: 'autoUpdate',
     includeAssets: ['favicon.svg'],
-    workbox: {
-      clientsClaim: true,
-      skipWaiting: true,
-      cleanupOutdatedCaches: true,
+    injectManifest: {
+      globPatterns: ['**/*.{js,css,html,svg,png,webmanifest}'],
+      maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
     },
     manifest: {
       name: 'Wandreel',
@@ -21,6 +23,16 @@ export default defineConfig({
       background_color: '#f8fafc',
       display: 'standalone',
       start_url: '/',
+      share_target: {
+        action: '/share-target',
+        method: 'POST',
+        enctype: 'multipart/form-data',
+        params: {
+          title: 'title',
+          text: 'text',
+          url: 'url',
+        },
+      },
       icons: [
         {
           src: '/favicon.svg',

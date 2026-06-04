@@ -15,6 +15,12 @@ import { LoginProfileScreen } from "../profile/LoginProfileScreen";
 import { MapScreen } from "../map/MapScreen";
 import { useUx } from "../layout/UxProvider";
 import {
+  SHARED_INTENT_ADD_TAB_VALUE,
+  SHARED_INTENT_QUERY_KEY,
+  SHARED_INTENT_RECEIVED_EVENT,
+  SHARED_INTENT_TAB_KEY,
+} from "../../pwa/shareTarget";
+import {
   ADD_DRAFT_UPDATED_EVENT,
   ADD_PROCESSING_STARTED_EVENT,
   ADD_READY_UPDATED_EVENT,
@@ -216,6 +222,33 @@ export function HomeScreen() {
   const refreshReadyNotifications = useCallback(() => {
     setReadyNotifications(readReadyNotifications());
   }, []);
+
+  useEffect(() => {
+    const url = new URL(window.location.href);
+    const requestedTab = url.searchParams.get(SHARED_INTENT_TAB_KEY);
+    const hasSharedFlag = url.searchParams.get(SHARED_INTENT_QUERY_KEY) === "1";
+    if (requestedTab !== SHARED_INTENT_ADD_TAB_VALUE && !hasSharedFlag) return;
+
+    setActiveTab("Add");
+    setActiveCategory(null);
+    setMapFocusedCategory(null);
+
+    url.searchParams.delete(SHARED_INTENT_TAB_KEY);
+    url.searchParams.delete(SHARED_INTENT_QUERY_KEY);
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
+
+  useEffect(() => {
+    const handleSharedIntent = () => {
+      setTransitionDirection(getTabOrderIndex("Add") >= getTabOrderIndex(activeTab) ? 1 : -1);
+      setActiveCategory(null);
+      setMapFocusedCategory(null);
+      setActiveTab("Add");
+    };
+
+    window.addEventListener(SHARED_INTENT_RECEIVED_EVENT, handleSharedIntent);
+    return () => window.removeEventListener(SHARED_INTENT_RECEIVED_EVENT, handleSharedIntent);
+  }, [activeTab]);
 
   useEffect(() => {
     const syncAuthState = () => {
