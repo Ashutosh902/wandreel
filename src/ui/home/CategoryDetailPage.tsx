@@ -1,14 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Pencil, Search, Trash2, X } from "lucide-react";
+import { Globe2, Pencil, Search, Share2, Trash2, X } from "lucide-react";
 import type { CategoryLabel } from "./home.data";
 import { useUx } from "../layout/UxProvider";
 import { distanceKm } from "../geo";
 import {
+  isPlaceGlobal,
   removeSavedPlace,
+  togglePlaceGlobal,
   upsertSavedPlace,
   type SavedPlaceRecord,
 } from "./savedPlaces";
+import { buildPlaceMapsUrl, sharePlaceExternally } from "./shareHelpers";
 
 type CategoryFilterChip =
   | "All"
@@ -203,6 +206,28 @@ export function CategoryDetailPage({
     showToast({ message: "Card deleted", variant: "info" });
   };
 
+  const handleRecommendPlace = (place: CategoryPlaceRow) => {
+    const nextPlace = togglePlaceGlobal(place);
+    setActivePlace(nextPlace);
+    showToast({
+      message: isPlaceGlobal(nextPlace)
+        ? "This place is now global. Others can discover it in Connect."
+        : "Removed from global recommendations.",
+      variant: isPlaceGlobal(nextPlace) ? "success" : "info",
+    });
+  };
+
+  const handleSharePlace = async (place: CategoryPlaceRow) => {
+    try {
+      const result = await sharePlaceExternally(place);
+      if (result === "copied") {
+        showToast({ message: "Share link copied", variant: "success" });
+      }
+    } catch {
+      showToast({ message: "Could not open the share sheet right now.", variant: "error" });
+    }
+  };
+
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const allChipLabel = `All ${distanceAwarePlaces.length}`;
   const filteredPlaces = useMemo(
@@ -241,6 +266,22 @@ export function CategoryDetailPage({
             <div className="wr-taste-sheet-toolbar">
               <button
                 type="button"
+                className={`wr-taste-sheet-icon-btn ${isPlaceGlobal(activePlace) ? "is-active" : ""}`}
+                aria-label={isPlaceGlobal(activePlace) ? "Remove from global recommendations" : "Recommend place"}
+                onClick={() => handleRecommendPlace(activePlace)}
+              >
+                <Globe2 size={15} />
+              </button>
+              <button
+                type="button"
+                className="wr-taste-sheet-icon-btn"
+                aria-label="Share place"
+                onClick={() => void handleSharePlace(activePlace)}
+              >
+                <Share2 size={15} />
+              </button>
+              <button
+                type="button"
                 className="wr-taste-sheet-icon-btn"
                 aria-label="Edit card"
                 onClick={() => openCategoryEdit(activePlace)}
@@ -265,7 +306,7 @@ export function CategoryDetailPage({
               <p className="wr-taste-sheet-address">Full address: {activePlace.fullAddress}</p>
               <div className="wr-taste-sheet-actions">
                 <a
-                  href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activePlace.fullAddress)}`}
+                  href={buildPlaceMapsUrl(activePlace)}
                   target="_blank"
                   rel="noreferrer"
                   className="wr-taste-sheet-action-btn"

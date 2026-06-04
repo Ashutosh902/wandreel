@@ -8,6 +8,7 @@ import { AddScreen } from "./AddScreen";
 import { HeroCard } from "./HeroCard";
 import { LocationSelector } from "./LocationSelector";
 import { RecentlyAddedCarousel } from "./RecentlyAddedCarousel";
+import { ConnectScreen } from "./ConnectScreen";
 import type { CategoryLabel, NavLabel } from "./home.data";
 import { runHomeDataChecks } from "./home.data";
 import { LoginProfileScreen } from "../profile/LoginProfileScreen";
@@ -44,26 +45,6 @@ const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Login"];
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
 const ADD_INTELLIGENCE_TIMEOUT_MS = 45000;
-
-function PlaceholderPage({
-  title,
-  message,
-  fullHeight = false,
-}: {
-  title: string;
-  message: string;
-  fullHeight?: boolean;
-}) {
-  return (
-    <section
-      className={`wr-tab-placeholder ${fullHeight ? "wr-tab-placeholder-full" : ""}`}
-      aria-label={`${title} page`}
-    >
-      <h2>{title}</h2>
-      <p>{message}</p>
-    </section>
-  );
-}
 
 type HeroMode = "empty-memory" | "city-memory";
 const DEFAULT_DISCOVER_HERO_MODE: HeroMode = "empty-memory";
@@ -560,10 +541,14 @@ export function HomeScreen() {
 
     if (activeTab === "Connect") {
       return (
-        <PlaceholderPage
-          title="Connect"
-          message="Collaborate and share curated lists with your people."
-          fullHeight
+        <ConnectScreen
+          savedPlacesByCategory={visibleSavedPlacesByCategory}
+          onViewSavedPlaces={() => {
+            setTransitionDirection(-1);
+            setActiveCategory(null);
+            setMapFocusedCategory(null);
+            setActiveTab("Discover");
+          }}
         />
       );
     }

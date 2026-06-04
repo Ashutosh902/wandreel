@@ -16,6 +16,9 @@ export type SavedPlaceRecord = {
   tags: string[];
   lat?: number | null;
   lng?: number | null;
+  isGlobal?: boolean;
+  sharedVisibility?: "private" | "global";
+  sharedAt?: number;
   createdAtMs: number;
 };
 
@@ -30,6 +33,9 @@ export type SavedPlaceApiItem = {
     imageUrl?: string | null;
     lat?: number | null;
     lng?: number | null;
+    isGlobal?: boolean | null;
+    sharedVisibility?: "private" | "global" | null;
+    sharedAt?: number | null;
   } | null;
 };
 
@@ -85,16 +91,30 @@ export function getSavedPlaceCounts(byCategory: Record<CategoryLabel, SavedPlace
   };
 }
 
+export function isPlaceGlobal(
+  place: Pick<SavedPlaceRecord, "isGlobal" | "sharedVisibility">,
+) {
+  return place.sharedVisibility === "global" || place.isGlobal === true;
+}
+
+export function getGlobalSavedPlaces(byCategory: Record<CategoryLabel, SavedPlaceRecord[]>) {
+  return flattenSavedPlaces(byCategory)
+    .filter((place) => isPlaceGlobal(place))
+    .sort((a, b) => (b.sharedAt || b.createdAtMs) - (a.sharedAt || a.createdAtMs));
+}
+
 export function upsertSavedPlace(place: SavedPlaceRecord) {
   const current = readSavedPlacesByCategory();
   const next = createEmptySavedPlacesByCategory();
-  const placeKey = getSavedPlaceKey(place);
+  const normalizedPlace = normalizeSavedPlace(place, place.category);
+  if (!normalizedPlace) return;
+  const placeKey = getSavedPlaceKey(normalizedPlace);
 
   for (const category of categoryOrder) {
     next[category] = current[category].filter((item) => getSavedPlaceKey(item) !== placeKey);
   }
 
-  next[place.category] = [place, ...next[place.category]].slice(0, 100);
+  next[normalizedPlace.category] = [normalizedPlace, ...next[normalizedPlace.category]].slice(0, 100);
   writeSavedPlacesByCategory(next);
 }
 
@@ -131,6 +151,23 @@ export function mergeSavedPlacesFromApi(items: SavedPlaceApiItem[]) {
   writeSavedPlacesByCategory(next);
 }
 
+export function togglePlaceGlobal(place: SavedPlaceRecord, nextGlobal = !isPlaceGlobal(place)) {
+  const nextPlace = normalizeSavedPlace(
+    {
+      ...place,
+      isGlobal: nextGlobal,
+      sharedVisibility: nextGlobal ? "global" : "private",
+      sharedAt: nextGlobal ? place.sharedAt ?? Date.now() : undefined,
+    },
+    place.category,
+  );
+  if (!nextPlace) {
+    throw new Error("Unable to toggle global visibility for saved place.");
+  }
+  upsertSavedPlace(nextPlace);
+  return nextPlace;
+}
+
 export function mapSavedPlaceApiItem(item: SavedPlaceApiItem): SavedPlaceRecord | null {
   const category = normalizeCategory(item.category);
   if (!category) return null;
@@ -156,6 +193,10 @@ export function mapSavedPlaceApiItem(item: SavedPlaceApiItem): SavedPlaceRecord 
     tags: ["Saved", "Visited"],
     lat: typeof item.metadata?.lat === "number" ? item.metadata.lat : null,
     lng: typeof item.metadata?.lng === "number" ? item.metadata.lng : null,
+    isGlobal: item.metadata?.sharedVisibility === "global" || item.metadata?.isGlobal === true,
+    sharedVisibility:
+      item.metadata?.sharedVisibility === "global" || item.metadata?.isGlobal === true ? "global" : "private",
+    sharedAt: typeof item.metadata?.sharedAt === "number" ? item.metadata.sharedAt : undefined,
     createdAtMs: Date.now(),
   };
 }
@@ -193,6 +234,10 @@ function normalizeSavedPlace(
     tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === "string") : ["Saved"],
     lat: typeof item.lat === "number" ? item.lat : null,
     lng: typeof item.lng === "number" ? item.lng : null,
+    isGlobal: item.sharedVisibility === "global" || item.isGlobal === true,
+    sharedVisibility:
+      item.sharedVisibility === "global" || item.isGlobal === true ? "global" : "private",
+    sharedAt: typeof item.sharedAt === "number" ? item.sharedAt : undefined,
     createdAtMs: typeof item.createdAtMs === "number" ? item.createdAtMs : Date.now(),
   };
 }
