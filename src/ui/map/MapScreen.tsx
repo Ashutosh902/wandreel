@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowLeft, LocateFixed, MapPin, Search, X } from "lucide-react";
-import { CircleF, GoogleMap, MarkerF, useJsApiLoader } from "@react-google-maps/api";
+import {
+  CircleF,
+  GoogleMap,
+  MarkerF,
+  OVERLAY_MOUSE_TARGET,
+  OverlayViewF,
+  useJsApiLoader,
+} from "@react-google-maps/api";
 import { mapCategoryStyles, runMapDataChecks, type MapCategoryLabel } from "./map.data";
 import { useUx } from "../layout/UxProvider";
 import { bearingRadians, distanceKm, type LatLng } from "../geo";
@@ -14,14 +21,24 @@ const MAX_RADIUS_VISUAL_RATIO = 0.44;
 const FALLBACK_MAP_CENTER = { lat: 25.5941, lng: 85.1376 };
 const GOOGLE_MAP_LIBRARIES: ("places")[] = ["places"];
 const LIGHT_MAP_STYLES: google.maps.MapTypeStyle[] = [
-  { featureType: "poi", elementType: "labels", stylers: [{ visibility: "off" }] },
-  { featureType: "transit", elementType: "all", stylers: [{ visibility: "off" }] },
+  { featureType: "poi.business", elementType: "labels", stylers: [{ visibility: "off" }] },
+  { featureType: "transit.station", elementType: "labels", stylers: [{ visibility: "off" }] },
   { featureType: "road", elementType: "labels.icon", stylers: [{ visibility: "off" }] },
-  { featureType: "administrative", elementType: "labels.text.fill", stylers: [{ color: "#94a3b8" }] },
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#e0f2fe" }] },
-  { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#f8fafc" }] },
+  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#d8e3ef" }] },
+  { featureType: "administrative.neighborhood", elementType: "labels.text.fill", stylers: [{ color: "#748397" }] },
+  { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#5d6c80" }] },
+  { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#eef4f8" }] },
+  { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#dcefdc" }] },
+  { featureType: "poi.park", elementType: "labels.text.fill", stylers: [{ color: "#6d8d70" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#cfe8ff" }] },
+  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#5b7ea6" }] },
   { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
-  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#e2e8f0" }] },
+  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#d6dee8" }] },
+  { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#f9fbfd" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#f8f1df" }] },
+  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#e7d7a4" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#6a7a8f" }] },
+  { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#73849a" }] },
 ];
 
 type MapPlacePin = SavedPlaceRecord & {
@@ -78,6 +95,36 @@ function MapPinMarker({
       <div className="wr-map-pin-tail" style={{ borderTopColor: pin.color }} />
       <div className="wr-map-pin-tooltip">{pin.title}</div>
     </button>
+  );
+}
+
+function GoogleMapPinLabel({
+  pin,
+  selected,
+  onSelect,
+}: {
+  pin: MapPlacePin;
+  selected: boolean;
+  onSelect: (pin: MapPlacePin) => void;
+}) {
+  return (
+    <OverlayViewF
+      position={{ lat: pin.lat as number, lng: pin.lng as number }}
+      mapPaneName={OVERLAY_MOUSE_TARGET}
+      getPixelPositionOffset={(width, height) => ({
+        x: Math.round(-width / 2),
+        y: Math.round(-(height + 28)),
+      })}
+    >
+      <button
+        type="button"
+        className={`wr-map-google-label ${selected ? "is-selected" : ""}`}
+        onClick={() => onSelect(pin)}
+        aria-label={`Open ${pin.title} details`}
+      >
+        {pin.title}
+      </button>
+    </OverlayViewF>
   );
 }
 
@@ -230,7 +277,7 @@ export function MapScreen({
   const mapCenter = currentCoords || deviceCoords || FALLBACK_MAP_CENTER;
   const radiusMapZoom = useMemo(() => getGoogleZoomForRadius(radiusKm), [radiusKm]);
 
-  const inRadiusMapPlaces = useMemo(
+  const visibleMapPlaces = useMemo(
     () =>
       mapPlaces.filter((place) =>
         distanceKm(mapCenter, {
@@ -242,7 +289,7 @@ export function MapScreen({
   );
 
   const visiblePins = useMemo(() => {
-    const places = inRadiusMapPlaces;
+    const places = visibleMapPlaces;
 
     if (!places.length) return [];
 
@@ -261,14 +308,15 @@ export function MapScreen({
         y: `${Math.max(14, Math.min(88, y))}%`,
       };
     });
-  }, [inRadiusMapPlaces, mapCenter, radiusKm]);
+  }, [visibleMapPlaces, mapCenter, radiusKm]);
 
   const sliderPercent = ((radiusKm - 2) / 98) * 100;
   const isCategoryLockActive = focusedCategory !== null;
   const radiusProgress = (radiusKm - 2) / 98;
   const radiusVisualPx = radiusProgress * mapMinDimensionPx * MAX_RADIUS_VISUAL_RATIO;
-  const inRangeCount = visiblePins.length;
-  const inRangeNoun = inRangeCount === 1 ? "place" : "places";
+  const visiblePlaceCount = visiblePins.length;
+  const hasVisiblePins = visiblePlaceCount > 0;
+  const inRangeNoun = visiblePlaceCount === 1 ? "place" : "places";
   const closePinPreview = () => setActivePinPreview(null);
 
   useEffect(() => {
@@ -281,7 +329,7 @@ export function MapScreen({
     setIsCountBump(true);
     const timer = window.setTimeout(() => setIsCountBump(false), 180);
     return () => window.clearTimeout(timer);
-  }, [inRangeCount]);
+  }, [visiblePlaceCount]);
 
   useEffect(() => {
     if (!isLocationMenuOpen) return;
@@ -445,20 +493,26 @@ export function MapScreen({
               zIndex={1001}
             />
             {visiblePins.map((pin) => (
-              <MarkerF
-                key={pin.id}
-                position={{ lat: pin.lat as number, lng: pin.lng as number }}
-                onClick={() => setActivePinPreview(pin)}
-                icon={{
-                  path: window.google.maps.SymbolPath.CIRCLE,
-                  scale: activePinPreview?.id === pin.id ? 10 : 8,
-                  fillColor: pin.color,
-                  fillOpacity: 1,
-                  strokeColor: "#ffffff",
-                  strokeWeight: 3,
-                }}
-                zIndex={activePinPreview?.id === pin.id ? 1000 : 10}
-              />
+              <Fragment key={pin.id}>
+                <MarkerF
+                  position={{ lat: pin.lat as number, lng: pin.lng as number }}
+                  onClick={() => setActivePinPreview(pin)}
+                  icon={{
+                    path: window.google.maps.SymbolPath.CIRCLE,
+                    scale: activePinPreview?.id === pin.id ? 10 : 8,
+                    fillColor: pin.color,
+                    fillOpacity: 1,
+                    strokeColor: "#ffffff",
+                    strokeWeight: 3,
+                  }}
+                  zIndex={activePinPreview?.id === pin.id ? 1000 : 10}
+                />
+                <GoogleMapPinLabel
+                  pin={pin}
+                  selected={activePinPreview?.id === pin.id}
+                  onSelect={setActivePinPreview}
+                />
+              </Fragment>
             ))}
           </GoogleMap>
         ) : null}
@@ -502,10 +556,10 @@ export function MapScreen({
         </button>
 
         <div className={`wr-map-in-range-pill ${isCountBump ? "is-bump" : ""}`} aria-live="polite">
-          <span className="wr-map-in-range-count">{inRangeCount}</span>
+          <span className="wr-map-in-range-count">{visiblePlaceCount}</span>
           <span className="wr-map-in-range-label">{inRangeNoun}</span>
         </div>
-        {visiblePins.length === 0 ? (
+        {!hasVisiblePins ? (
           <div className="wr-map-empty-state" aria-live="polite">
             <p className="wr-map-empty-title">No mapped places in range</p>
             <p className="wr-map-empty-copy">Increase the radius or update location details to see places on your map.</p>
