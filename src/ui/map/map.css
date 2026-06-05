@@ -536,8 +536,9 @@
   border-radius: 0.62rem;
   min-height: 1.7rem;
   padding: 0.24rem 0.5rem;
-  font-size: 0.6rem;
-  font-weight: 800;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
 }
 
 .wr-map-empty-btn.is-primary {
