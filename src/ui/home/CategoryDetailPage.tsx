@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+﻿import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Globe2, Pencil, Search, Share2, Trash2, X } from "lucide-react";
 import type { CategoryLabel } from "./home.data";
@@ -49,6 +49,8 @@ type CategoryScreenConfig = {
   chips: CategoryFilterChip[];
 };
 
+type CategorySortOption = "nearest" | "az" | "recent";
+
 const CATEGORY_LEVEL2_ENABLED = String(import.meta.env.VITE_CATEGORY_LEVEL2_ENABLED ?? "true").toLowerCase() !== "false";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 
@@ -71,6 +73,13 @@ const categoryConfigs: Record<CategoryLabel, CategoryScreenConfig> = {
     searchPlaceholder: "Search saved places...",
     chips: CATEGORY_LEVEL2_ENABLED ? ["All", "Saved", "Visited"] : ["All", "Saved"],
   },
+};
+
+const CATEGORY_COLORS: Record<CategoryLabel, string> = {
+  Taste: "#E85D75",
+  Activity: "#F59E0B",
+  Stay: "#7C3AED",
+  Explore: "#0891B2",
 };
 
 export function CategoryDetailPage({
@@ -97,6 +106,7 @@ export function CategoryDetailPage({
   const sheetTouchStartYRef = useRef<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedChip, setSelectedChip] = useState<CategoryFilterChip>("All");
+  const [sortBy, setSortBy] = useState<CategorySortOption>("nearest");
 
   useEffect(() => {
     if (!isSheetClosing) return;
@@ -244,6 +254,45 @@ export function CategoryDetailPage({
       }),
     [distanceAwarePlaces, normalizedQuery, selectedChip],
   );
+
+  const sortedPlaces = useMemo(() => {
+    const items = [...filteredPlaces];
+
+    const getPlaceDistanceValue = (place: CategoryPlaceRow) => {
+      if (currentCoords && typeof place.lat === "number" && typeof place.lng === "number") {
+        return distanceKm(currentCoords, { lat: place.lat, lng: place.lng });
+      }
+      if (typeof place.distanceKm === "number" && Number.isFinite(place.distanceKm)) {
+        return place.distanceKm;
+      }
+      return Number.POSITIVE_INFINITY;
+    };
+
+    if (sortBy === "nearest") {
+      return items.sort((a, b) => getPlaceDistanceValue(a) - getPlaceDistanceValue(b));
+    }
+
+    if (sortBy === "az") {
+      return items.sort((a, b) =>
+        a.title.localeCompare(b.title, undefined, {
+          sensitivity: "base",
+        }),
+      );
+    }
+
+    return items.sort((a, b) => (b.createdAtMs || 0) - (a.createdAtMs || 0));
+  }, [currentCoords, filteredPlaces, sortBy]);
+
+  const getPlaceSubtitle = (place: CategoryPlaceRow) => {
+    const secondary = place.metaSecondary.trim();
+    const locality = place.locality.trim();
+    const showSecondary = secondary.length > 0 && secondary.toLowerCase() !== "saved";
+    if (showSecondary && locality && secondary.toLowerCase() !== locality.toLowerCase()) {
+      return `${secondary} · ${locality}`;
+    }
+    if (showSecondary) return secondary;
+    return locality;
+  };
 
   const overlays = (
     <>
@@ -483,12 +532,26 @@ export function CategoryDetailPage({
           className="wr-taste-search-input"
         />
       </label>
-      <div className="wr-taste-top-row" aria-label={`${category} header controls`}>
-        <div className="wr-taste-title-block">
-          <h2 className="wr-taste-page-title">{category}</h2>
+        <div className="wr-taste-top-row" aria-label={`${category} header controls`}>
+          <div className="wr-taste-title-block">
+            <h2 className="wr-taste-page-title">{category}</h2>
+          </div>
+          <div className="wr-taste-top-actions">
+            <label className="wr-taste-sort-control" aria-label={`Sort ${category.toLowerCase()} places`}>
+              <span className="wr-taste-sort-label">Sort</span>
+              <select
+                value={sortBy}
+                onChange={(event) => setSortBy(event.target.value as CategorySortOption)}
+                className="wr-taste-sort-select"
+              >
+                <option value="nearest">Nearest</option>
+                <option value="az">A-Z</option>
+                <option value="recent">Recent</option>
+              </select>
+            </label>
+            <button type="button" className="wr-taste-view-map" onClick={() => onViewMap(category)}>View map</button>
+          </div>
         </div>
-        <button type="button" className="wr-taste-view-map" onClick={() => onViewMap(category)}>View map</button>
-      </div>
         <div className="wr-taste-chip-row" aria-label={`${category} filters`}>
           {config.chips.map((chip) => (
             <button
@@ -502,8 +565,8 @@ export function CategoryDetailPage({
           ))}
         </div>
 
-      <section className="wr-taste-list" aria-label={`${category} saved places nearest first`}>
-        {filteredPlaces.length === 0 ? (
+      <section className="wr-taste-list" aria-label={`${category} saved places`}>
+        {sortedPlaces.length === 0 ? (
           <article className="wr-category-empty-state" aria-live="polite">
             <h3>{category === "Taste" ? "No restaurants yet" : category === "Activity" ? "No activities yet" : category === "Stay" ? "No stays yet" : "No places yet"}</h3>
             <p>
@@ -519,7 +582,7 @@ export function CategoryDetailPage({
               Add place
             </button>
           </article>
-        ) : filteredPlaces.map((place) => (
+        ) : sortedPlaces.map((place) => (
           <article
             key={place.id}
             className="wr-taste-row-card"
@@ -546,8 +609,10 @@ export function CategoryDetailPage({
                 <p className="wr-taste-row-name">{place.title}</p>
                 <p className="wr-taste-row-distance">{place.distanceKm.toFixed(1)} km</p>
               </div>
-              <p className="wr-taste-row-line">{place.metaPrimary} · {place.metaSecondary}</p>
-              <p className="wr-taste-row-line">{place.locality}</p>
+              <p className="wr-taste-row-category" style={{ color: CATEGORY_COLORS[place.category] }}>
+                {place.category}
+              </p>
+              <p className="wr-taste-row-line">{getPlaceSubtitle(place)}</p>
             </div>
           </article>
         ))}
@@ -558,3 +623,4 @@ export function CategoryDetailPage({
     </>
   );
 }
+

@@ -1,12 +1,12 @@
-import { Bookmark, Compass, MapPin } from "lucide-react";
+import { Compass, MapPin } from "lucide-react";
 import type { CategoryLabel } from "./home.data";
 import type { SavedPlaceRecord } from "./savedPlaces";
 
 const categoryColors: Record<CategoryLabel, string> = {
-  Taste: "#B45309",
-  Activity: "#D97706",
-  Stay: "#6D28D9",
-  Explore: "#0E7490",
+  Taste: "#E85D75",
+  Activity: "#F59E0B",
+  Stay: "#7C3AED",
+  Explore: "#0891B2",
 };
 
 export function RecentlyAddedCarousel({
@@ -58,14 +58,10 @@ export function RecentlyAddedCarousel({
                 loading="lazy"
               />
               <div className="wr-recent-image-overlay" />
-              <button type="button" aria-label={`${card.title} saved`} className="wr-recent-save">
-                <Bookmark size={17} className="wr-recent-save-icon" />
-              </button>
-              <span className="wr-recent-pill" style={{ backgroundColor: `${categoryColors[card.category]}CC` }}>{card.category}</span>
             </div>
             <div className="wr-recent-body">
               <p className="wr-recent-title">{card.title}</p>
-              <p className="wr-recent-meta">{card.metaPrimary} · {card.metaSecondary}</p>
+              <p className="wr-recent-meta" style={{ color: categoryColors[card.category] }}>{card.category}</p>
               <div className="wr-recent-place"><MapPin size={13} className="wr-recent-place-icon" />{card.locality}</div>
             </div>
           </article>

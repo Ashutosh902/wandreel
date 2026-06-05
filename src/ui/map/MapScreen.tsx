@@ -1,5 +1,6 @@
-import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { ArrowLeft, Bookmark, LocateFixed, MapPin, Search, X } from "lucide-react";
+﻿import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
+import { ArrowLeft, Globe2, LocateFixed, MapPin, Pencil, Search, Share2, Trash2, X } from "lucide-react";
 import {
   CircleF,
   GoogleMap,
@@ -11,7 +12,17 @@ import {
 import { mapCategoryStyles, runMapDataChecks, type MapCategoryLabel } from "./map.data";
 import { useUx } from "../layout/UxProvider";
 import { bearingRadians, distanceKm, type LatLng } from "../geo";
-import type { SavedPlaceRecord } from "../home/savedPlaces";
+import {
+  buildPlaceMapsUrl,
+  sharePlaceExternally,
+} from "../home/shareHelpers";
+import {
+  isPlaceGlobal,
+  removeSavedPlace,
+  togglePlaceGlobal,
+  upsertSavedPlace,
+  type SavedPlaceRecord,
+} from "../home/savedPlaces";
 import "./map.css";
 
 runMapDataChecks();
@@ -20,6 +31,7 @@ const MAP_CENTER = { x: 51, y: 56 };
 const MAX_RADIUS_VISUAL_RATIO = 0.44;
 const FALLBACK_MAP_CENTER = { lat: 25.5941, lng: 85.1376 };
 const GOOGLE_MAP_LIBRARIES: ("places")[] = ["places"];
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const LIGHT_MAP_STYLES: google.maps.MapTypeStyle[] = [
   { featureType: "poi.business", elementType: "labels", stylers: [{ visibility: "off" }] },
   { featureType: "road", elementType: "labels.icon", stylers: [{ visibility: "off" }] },
@@ -215,6 +227,13 @@ export function MapScreen({
   const [mapMinDimensionPx, setMapMinDimensionPx] = useState(320);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const [activePinPreview, setActivePinPreview] = useState<MapPlacePin | null>(null);
+  const [editingPlace, setEditingPlace] = useState<MapPlacePin | null>(null);
+  const [deleteConfirmPlace, setDeleteConfirmPlace] = useState<MapPlacePin | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editLocality, setEditLocality] = useState("");
+  const [editAddress, setEditAddress] = useState("");
+  const [editCategory, setEditCategory] = useState<MapCategoryLabel>("Explore");
+  const [isSheetClosing, setIsSheetClosing] = useState(false);
   const sheetTouchStartYRef = useRef<number | null>(null);
   const [isCountBump, setIsCountBump] = useState(false);
   const [isLocationMenuOpen, setIsLocationMenuOpen] = useState(false);
@@ -326,12 +345,24 @@ export function MapScreen({
   const visiblePlaceCount = visiblePins.length;
   const hasVisiblePins = visiblePlaceCount > 0;
   const inRangeNoun = visiblePlaceCount === 1 ? "place" : "places";
-  const closePinPreview = () => setActivePinPreview(null);
-  const activePinDistanceLabel = useMemo(() => {
-    if (!activePinPreview) return null;
-    if (!Number.isFinite(activePinPreview.distanceKm)) return null;
-    return `${activePinPreview.distanceKm.toFixed(1)} km away`;
-  }, [activePinPreview]);
+  const hasOverlayOpen = Boolean(activePinPreview || editingPlace || deleteConfirmPlace);
+  const overlayTarget =
+    typeof document !== "undefined"
+      ? (document.querySelector(".wr-phone-shell") as HTMLElement | null) || document.body
+      : null;
+  const closePinPreview = () => {
+    if (!activePinPreview || isSheetClosing) return;
+    setIsSheetClosing(true);
+  };
+
+  useEffect(() => {
+    if (!isSheetClosing) return;
+    const timer = window.setTimeout(() => {
+      setActivePinPreview(null);
+      setIsSheetClosing(false);
+    }, 190);
+    return () => window.clearTimeout(timer);
+  }, [isSheetClosing]);
 
   useEffect(() => {
     if (activePinPreview && !visiblePins.some((pin) => pin.id === activePinPreview.id)) {
@@ -340,10 +371,306 @@ export function MapScreen({
   }, [activePinPreview, visiblePins]);
 
   useEffect(() => {
+    if (!hasOverlayOpen) return;
+    const previousBodyOverflow = document.body.style.overflow;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const surface = document.querySelector(".wr-home-surface") as HTMLDivElement | null;
+    const previousSurfaceOverflow = surface?.style.overflow;
+    const previousSurfaceTouchAction = surface?.style.touchAction;
+    const previousSurfaceOverscroll = surface?.style.overscrollBehavior;
+
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+
+    if (surface) {
+      surface.style.overflow = "hidden";
+      surface.style.touchAction = "none";
+      surface.style.overscrollBehavior = "none";
+    }
+
+    return () => {
+      document.body.style.overflow = previousBodyOverflow;
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      if (surface) {
+        surface.style.overflow = previousSurfaceOverflow || "";
+        surface.style.touchAction = previousSurfaceTouchAction || "";
+        surface.style.overscrollBehavior = previousSurfaceOverscroll || "";
+      }
+    };
+  }, [hasOverlayOpen]);
+
+  const openEditPlace = (place: MapPlacePin) => {
+    setEditTitle(place.title);
+    setEditLocality(place.locality);
+    setEditAddress(place.fullAddress);
+    setEditCategory(place.category);
+    setEditingPlace(place);
+  };
+
+  const savePlaceEdit = () => {
+    if (!editingPlace) return;
+    const title = editTitle.trim();
+    const locality = editLocality.trim();
+    const fullAddress = editAddress.trim() || locality;
+    if (!title || !locality) {
+      showToast({ message: "Title and location are required.", variant: "error" });
+      return;
+    }
+
+    const updated: MapPlacePin = {
+      ...editingPlace,
+      title,
+      locality,
+      fullAddress,
+      category: editCategory,
+      metaPrimary: editCategory,
+    };
+
+    upsertSavedPlace(updated);
+    setActivePinPreview(updated);
+    setEditingPlace(null);
+    showToast({ message: "Card updated", variant: "success" });
+  };
+
+  const handleRecommendPlace = (place: MapPlacePin) => {
+    const nextPlace = togglePlaceGlobal(place);
+    setActivePinPreview((current) => (current?.id === place.id ? { ...current, ...nextPlace } : current));
+    showToast({
+      message: isPlaceGlobal(nextPlace)
+        ? "This place is now global. Others can discover it in Connect."
+        : "Removed from global recommendations.",
+      variant: isPlaceGlobal(nextPlace) ? "success" : "info",
+    });
+  };
+
+  const handleSharePlace = async (place: MapPlacePin) => {
+    try {
+      const result = await sharePlaceExternally(place);
+      if (result === "copied") {
+        showToast({ message: "Share link copied", variant: "success" });
+      }
+    } catch {
+      showToast({ message: "Could not open the share sheet right now.", variant: "error" });
+    }
+  };
+
+  const deletePlace = async (place: MapPlacePin) => {
+    removeSavedPlace(place);
+    if (place.placeId) {
+      fetch(`${API_BASE_URL}/api/saved-places/${encodeURIComponent(place.placeId)}`, {
+        method: "DELETE",
+        credentials: "include",
+      }).catch(() => undefined);
+    }
+    setActivePinPreview(null);
+    setEditingPlace(null);
+    setDeleteConfirmPlace(null);
+    showToast({ message: "Card deleted", variant: "info" });
+  };
+
+  useEffect(() => {
     setIsCountBump(true);
     const timer = window.setTimeout(() => setIsCountBump(false), 180);
     return () => window.clearTimeout(timer);
   }, [visiblePlaceCount]);
+
+  const overlays =
+    overlayTarget && (activePinPreview || editingPlace || deleteConfirmPlace)
+      ? createPortal(
+          <>
+            {activePinPreview ? (
+              <div
+                className={`wr-taste-sheet-layer ${isSheetClosing ? "is-closing" : ""}`}
+                onClick={closePinPreview}
+                role="presentation"
+              >
+                <article
+                  className="wr-taste-sheet wr-map-place-sheet"
+                  onClick={(event) => event.stopPropagation()}
+                  onTouchStart={(event) => {
+                    sheetTouchStartYRef.current = event.touches[0].clientY;
+                  }}
+                  onTouchEnd={(event) => {
+                    if (sheetTouchStartYRef.current === null) return;
+                    const deltaY = event.changedTouches[0].clientY - sheetTouchStartYRef.current;
+                    sheetTouchStartYRef.current = null;
+                    if (deltaY > 72) closePinPreview();
+                  }}
+                  aria-label={`${activePinPreview.title} details`}
+                >
+                  <div className="wr-taste-sheet-toolbar place-sheet-actions">
+                    <button
+                      type="button"
+                      className={`wr-taste-sheet-icon-btn ${isPlaceGlobal(activePinPreview) ? "is-active" : ""}`}
+                      aria-label={isPlaceGlobal(activePinPreview) ? "Remove from Connect" : "Recommend in Connect"}
+                      onClick={() => handleRecommendPlace(activePinPreview)}
+                    >
+                      <Globe2 size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className="wr-taste-sheet-icon-btn"
+                      aria-label="Share place"
+                      onClick={() => void handleSharePlace(activePinPreview)}
+                    >
+                      <Share2 size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className="wr-taste-sheet-icon-btn"
+                      aria-label="Edit place"
+                      onClick={() => openEditPlace(activePinPreview)}
+                    >
+                      <Pencil size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className="wr-taste-sheet-icon-btn is-delete"
+                      aria-label="Delete place"
+                      onClick={() => setDeleteConfirmPlace(activePinPreview)}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      className="wr-taste-sheet-icon-btn"
+                      aria-label="Close details"
+                      onClick={closePinPreview}
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+
+                  <div className="wr-taste-sheet-body place-sheet-content">
+                    {activePinPreview.imageUrl ? (
+                      <img src={activePinPreview.imageUrl} alt={activePinPreview.title} className="wr-taste-sheet-image" />
+                    ) : (
+                      <div className="wr-taste-sheet-image wr-map-place-sheet-placeholder" aria-hidden="true" />
+                    )}
+                    <h3 className="wr-taste-sheet-title">{activePinPreview.title}</h3>
+                    <p className="wr-taste-sheet-address">
+                      <strong>Full address:</strong> {activePinPreview.fullAddress || activePinPreview.locality}
+                    </p>
+                    <div className="wr-taste-sheet-actions">
+                      <a
+                        href={buildPlaceMapsUrl(activePinPreview)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="wr-taste-sheet-action-btn"
+                      >
+                        Directions
+                      </a>
+                      <a
+                        href={activePinPreview.videoUrl || "#"}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="wr-taste-sheet-action-btn is-video"
+                        aria-disabled={!activePinPreview.videoUrl}
+                        onClick={(event) => {
+                          if (!activePinPreview.videoUrl) {
+                            event.preventDefault();
+                            showToast({ message: "No video link available yet.", variant: "info" });
+                          }
+                        }}
+                      >
+                        Watch video
+                      </a>
+                    </div>
+                  </div>
+                </article>
+              </div>
+            ) : null}
+
+            {editingPlace ? (
+              <div className="wr-add-edit-layer" role="presentation">
+                <div className="wr-add-edit-backdrop" onClick={() => setEditingPlace(null)} />
+                <section className="wr-add-edit-sheet" aria-label="Edit saved place">
+                  <div className="wr-add-edit-header">
+                    <div>
+                      <p className="wr-add-edit-eyebrow">Saved place</p>
+                      <h3>Edit card details</h3>
+                    </div>
+                    <button type="button" className="wr-add-edit-close" onClick={() => setEditingPlace(null)} aria-label="Close edit form">
+                      <X size={16} />
+                    </button>
+                  </div>
+
+                  <label className="wr-add-edit-field">
+                    <span>Place name</span>
+                    <input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} placeholder="Place name" />
+                  </label>
+
+                  <label className="wr-add-edit-field">
+                    <span>Locality</span>
+                    <input value={editLocality} onChange={(event) => setEditLocality(event.target.value)} placeholder="Locality or city" />
+                  </label>
+
+                  <label className="wr-add-edit-field">
+                    <span>Full address</span>
+                    <textarea
+                      value={editAddress}
+                      onChange={(event) => setEditAddress(event.target.value)}
+                      rows={3}
+                      placeholder="Full address"
+                    />
+                  </label>
+
+                  <label className="wr-add-edit-field">
+                    <span>Category</span>
+                    <select value={editCategory} onChange={(event) => setEditCategory(event.target.value as MapCategoryLabel)}>
+                      <option value="Taste">Taste</option>
+                      <option value="Activity">Activity</option>
+                      <option value="Stay">Stay</option>
+                      <option value="Explore">Explore</option>
+                    </select>
+                  </label>
+
+                  <div className="wr-add-edit-actions">
+                    <button type="button" className="wr-add-edit-btn is-secondary" onClick={() => setEditingPlace(null)}>
+                      Cancel
+                    </button>
+                    <button type="button" className="wr-add-edit-btn is-primary" onClick={savePlaceEdit}>
+                      Save changes
+                    </button>
+                  </div>
+                </section>
+              </div>
+            ) : null}
+
+            {deleteConfirmPlace ? (
+              <div className="wr-add-edit-layer" role="presentation">
+                <div className="wr-add-edit-backdrop" onClick={() => setDeleteConfirmPlace(null)} />
+                <section className="wr-delete-confirm-sheet" aria-label="Delete saved place">
+                  <div className="wr-delete-confirm-icon">
+                    <Trash2 size={18} />
+                  </div>
+                  <h3>Delete this card?</h3>
+                  <p>
+                    Remove <strong>{deleteConfirmPlace.title}</strong> from your saved places?
+                  </p>
+                  <div className="wr-delete-confirm-actions">
+                    <button
+                      type="button"
+                      className="wr-delete-confirm-btn is-secondary"
+                      onClick={() => setDeleteConfirmPlace(null)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="wr-delete-confirm-btn is-danger"
+                      onClick={() => void deletePlace(deleteConfirmPlace)}
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </section>
+              </div>
+            ) : null}
+          </>,
+          overlayTarget,
+        )
+      : null;
 
   useEffect(() => {
     if (!isLocationMenuOpen) return;
@@ -486,12 +813,13 @@ export function MapScreen({
               center={mapCenter}
               radius={radiusKm * 1000}
               options={{
-                fillColor: "#2b77f5",
-                fillOpacity: 0.05,
-                strokeColor: "#2b77f5",
-                strokeOpacity: 0.14,
-                strokeWeight: 1.6,
+                fillColor: "#2F80ED",
+                fillOpacity: 0.1,
+                strokeColor: "#2F80ED",
+                strokeOpacity: 0.55,
+                strokeWeight: 2,
                 clickable: false,
+                zIndex: 1,
               }}
             />
             <MarkerF
@@ -605,54 +933,10 @@ export function MapScreen({
           </div>
         </div>
       </div>
-      {activePinPreview ? (
-        <div className="wr-map-sheet-layer" role="presentation">
-          <article
-            className="wr-map-sheet"
-            onTouchStart={(event) => {
-              sheetTouchStartYRef.current = event.touches[0].clientY;
-            }}
-            onTouchEnd={(event) => {
-              if (sheetTouchStartYRef.current === null) return;
-              const deltaY = event.changedTouches[0].clientY - sheetTouchStartYRef.current;
-              sheetTouchStartYRef.current = null;
-              if (deltaY > 72) closePinPreview();
-            }}
-            aria-label={`${activePinPreview.title} details`}
-          >
-            <button type="button" className="wr-map-sheet-close" aria-label="Close map place details" onClick={closePinPreview}>
-              <X size={16} />
-            </button>
-            <div className="wr-map-sheet-main">
-              <img src={activePinPreview.imageUrl} alt={activePinPreview.title} className="wr-map-sheet-image" />
-              <div className="wr-map-sheet-copy">
-                <div className="wr-map-sheet-badges">
-                  <span className="wr-map-sheet-category-pill">{activePinPreview.category}</span>
-                  <span className="wr-map-sheet-saved-pill">
-                    <Bookmark size={12} />
-                    Saved
-                  </span>
-                </div>
-                <h3 className="wr-map-sheet-title">{activePinPreview.title}</h3>
-                <p className="wr-map-sheet-meta">{activePinPreview.locality}</p>
-                <p className="wr-map-sheet-address">{activePinPreview.fullAddress}</p>
-                {activePinDistanceLabel ? <p className="wr-map-sheet-distance">{activePinDistanceLabel}</p> : null}
-              </div>
-            </div>
-            <p className="wr-map-sheet-timing">{activePinPreview.metaPrimary} · {activePinPreview.metaSecondary}</p>
-            <div className="wr-map-sheet-actions">
-              <a
-                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activePinPreview.fullAddress)}`}
-                target="_blank"
-                rel="noreferrer"
-                className="wr-map-sheet-action-btn"
-              >
-                Open
-              </a>
-            </div>
-          </article>
-        </div>
-      ) : null}
+      {overlays}
     </section>
   );
 }
+
+
+
