@@ -241,6 +241,8 @@
 .wr-map-google-surface {
   position: absolute;
   inset: 0;
+  opacity: 1;
+  filter: saturate(0.9) contrast(1.05) brightness(1.02);
 }
 
 .wr-map-google-label {
@@ -621,36 +623,27 @@
 }
 
 .wr-map-sheet-layer {
-  position: fixed;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(390px, 100vw);
-  top: 0;
-  bottom: 0;
-  padding-bottom: var(--wr-bottom-nav-height);
-  box-sizing: border-box;
-  background: rgba(15, 23, 42, 0.32);
-  backdrop-filter: blur(1.5px);
-  z-index: 70;
-  display: flex;
-  align-items: flex-end;
-  animation: wrMapSheetBackdropIn 220ms ease-out both;
+  position: absolute;
+  left: 1rem;
+  right: 1rem;
+  bottom: calc(var(--wr-bottom-nav-offset, 4.3rem) + 0.75rem);
+  z-index: 9;
+  pointer-events: none;
 }
 
 .wr-map-sheet {
   width: 100%;
-  margin-bottom: 0;
-  max-height: calc(100% - 0.5rem);
+  max-height: min(14.5rem, calc(100% - var(--wr-safe-top) - 6rem));
   overflow-y: auto;
-  border-top-left-radius: 1.1rem;
-  border-top-right-radius: 1.1rem;
-  background: #fffdf8;
-  border-top: 1px solid #efe5dc;
-  box-shadow: 0 -18px 30px rgba(15, 23, 42, 0.22);
-  padding: 0.62rem 0.9rem 1rem;
-  animation: wrMapSheetIn 280ms cubic-bezier(0.2, 0.75, 0.2, 1) both;
+  border-radius: 1.15rem;
+  background: rgba(255, 253, 248, 0.98);
+  border: 1px solid rgba(239, 229, 220, 0.96);
+  box-shadow: 0 18px 32px rgba(15, 23, 42, 0.22);
+  padding: 0.72rem 0.88rem 0.88rem;
+  animation: wrMapSheetIn 260ms cubic-bezier(0.2, 0.75, 0.2, 1) both;
   position: relative;
   touch-action: pan-y;
+  pointer-events: auto;
 }
 
 .wr-map-sheet::before {
@@ -678,45 +671,99 @@
   justify-content: center;
 }
 
+.wr-map-sheet-main {
+  display: grid;
+  grid-template-columns: 4.8rem minmax(0, 1fr);
+  gap: 0.72rem;
+  align-items: start;
+}
+
 .wr-map-sheet-image {
-  width: 100%;
-  height: 8.4rem;
+  width: 4.8rem;
+  height: 4.8rem;
   object-fit: cover;
-  border-radius: 0.78rem;
+  border-radius: 0.88rem;
   display: block;
 }
 
-.wr-map-sheet-title {
-  margin: 0.72rem 0 0;
-  font-size: 17px;
+.wr-map-sheet-copy {
+  min-width: 0;
+}
+
+.wr-map-sheet-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.34rem;
+  align-items: center;
+}
+
+.wr-map-sheet-category-pill,
+.wr-map-sheet-saved-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24rem;
+  min-height: 1.3rem;
+  border-radius: 999px;
+  padding: 0.15rem 0.46rem;
+  font-size: 10px;
   font-weight: 900;
+}
+
+.wr-map-sheet-category-pill {
+  background: #fff3eb;
+  color: #9a3412;
+  border: 1px solid #f2d4bf;
+}
+
+.wr-map-sheet-saved-pill {
+  background: #f7fafc;
+  color: #516274;
+  border: 1px solid #dce5ee;
+}
+
+.wr-map-sheet-title {
+  margin: 0.38rem 0 0;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1.12;
   color: #10213f;
 }
 
 .wr-map-sheet-meta {
-  margin: 0.3rem 0 0;
-  font-size: 12px;
+  margin: 0.22rem 0 0;
+  font-size: 11.6px;
   font-weight: 700;
   color: #5d6672;
 }
 
 .wr-map-sheet-address {
-  margin: 0.32rem 0 0;
-  font-size: 11.8px;
-  line-height: 1.42;
+  margin: 0.18rem 0 0;
+  font-size: 11.2px;
+  line-height: 1.35;
   font-weight: 700;
   color: #4b5563;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.wr-map-sheet-distance {
+  margin: 0.24rem 0 0;
+  font-size: 10.8px;
+  font-weight: 800;
+  color: #0e7490;
 }
 
 .wr-map-sheet-timing {
-  margin: 0.34rem 0 0;
-  font-size: 11.6px;
+  margin: 0.5rem 0 0;
+  font-size: 11.2px;
   font-weight: 700;
   color: #7a3a13;
 }
 
 .wr-map-sheet-actions {
-  margin-top: 0.72rem;
+  margin-top: 0.62rem;
   display: flex;
   gap: 0.55rem;
 }

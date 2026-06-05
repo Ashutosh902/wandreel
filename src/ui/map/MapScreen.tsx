@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { ArrowLeft, LocateFixed, MapPin, Search, X } from "lucide-react";
+import { ArrowLeft, Bookmark, LocateFixed, MapPin, Search, X } from "lucide-react";
 import {
   CircleF,
   GoogleMap,
@@ -22,23 +22,24 @@ const FALLBACK_MAP_CENTER = { lat: 25.5941, lng: 85.1376 };
 const GOOGLE_MAP_LIBRARIES: ("places")[] = ["places"];
 const LIGHT_MAP_STYLES: google.maps.MapTypeStyle[] = [
   { featureType: "poi.business", elementType: "labels", stylers: [{ visibility: "off" }] },
-  { featureType: "transit.station", elementType: "labels", stylers: [{ visibility: "off" }] },
   { featureType: "road", elementType: "labels.icon", stylers: [{ visibility: "off" }] },
-  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#d8e3ef" }] },
-  { featureType: "administrative.neighborhood", elementType: "labels.text.fill", stylers: [{ color: "#748397" }] },
-  { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#5d6c80" }] },
-  { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#eef4f8" }] },
-  { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#dcefdc" }] },
-  { featureType: "poi.park", elementType: "labels.text.fill", stylers: [{ color: "#6d8d70" }] },
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#cfe8ff" }] },
-  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#5b7ea6" }] },
+  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#c7d4e1" }, { weight: 1 }] },
+  { featureType: "administrative.neighborhood", elementType: "labels.text.fill", stylers: [{ color: "#67778a" }] },
+  { featureType: "administrative.locality", elementType: "labels.text.fill", stylers: [{ color: "#516274" }] },
+  { featureType: "landscape", elementType: "geometry", stylers: [{ color: "#edf3f5" }] },
+  { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#d5e8d0" }] },
+  { featureType: "poi.park", elementType: "labels.text.fill", stylers: [{ color: "#5e7d61" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#b9dcfb" }] },
+  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#4f739d" }] },
   { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
-  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#d6dee8" }] },
-  { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#f9fbfd" }] },
-  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#f8f1df" }] },
-  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#e7d7a4" }] },
-  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#6a7a8f" }] },
-  { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#73849a" }] },
+  { featureType: "road.local", elementType: "geometry", stylers: [{ color: "#fdfefe" }] },
+  { featureType: "road.local", elementType: "geometry.stroke", stylers: [{ color: "#d7e0ea" }] },
+  { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#f7f9fb" }] },
+  { featureType: "road.arterial", elementType: "geometry.stroke", stylers: [{ color: "#ccd7e2" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#f7ebcf" }] },
+  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#dcc58a" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#5b6d82" }] },
+  { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#687b90" }] },
 ];
 
 type MapPlacePin = SavedPlaceRecord & {
@@ -274,7 +275,15 @@ export function MapScreen({
       ),
     [filteredSavedPlaces],
   );
-  const mapCenter = currentCoords || deviceCoords || FALLBACK_MAP_CENTER;
+  const mapCenter = useMemo(() => {
+    if (currentCoords) {
+      return { lat: currentCoords.lat, lng: currentCoords.lng };
+    }
+    if (deviceCoords) {
+      return { lat: deviceCoords.lat, lng: deviceCoords.lng };
+    }
+    return FALLBACK_MAP_CENTER;
+  }, [currentCoords?.lat, currentCoords?.lng, deviceCoords?.lat, deviceCoords?.lng]);
   const radiusMapZoom = useMemo(() => getGoogleZoomForRadius(radiusKm), [radiusKm]);
 
   const visibleMapPlaces = useMemo(
@@ -318,6 +327,11 @@ export function MapScreen({
   const hasVisiblePins = visiblePlaceCount > 0;
   const inRangeNoun = visiblePlaceCount === 1 ? "place" : "places";
   const closePinPreview = () => setActivePinPreview(null);
+  const activePinDistanceLabel = useMemo(() => {
+    if (!activePinPreview) return null;
+    if (!Number.isFinite(activePinPreview.distanceKm)) return null;
+    return `${activePinPreview.distanceKm.toFixed(1)} km away`;
+  }, [activePinPreview]);
 
   useEffect(() => {
     if (activePinPreview && !visiblePins.some((pin) => pin.id === activePinPreview.id)) {
@@ -473,9 +487,9 @@ export function MapScreen({
               radius={radiusKm * 1000}
               options={{
                 fillColor: "#2b77f5",
-                fillOpacity: 0.07,
+                fillOpacity: 0.05,
                 strokeColor: "#2b77f5",
-                strokeOpacity: 0.18,
+                strokeOpacity: 0.14,
                 strokeWeight: 1.6,
                 clickable: false,
               }}
@@ -507,11 +521,13 @@ export function MapScreen({
                   }}
                   zIndex={activePinPreview?.id === pin.id ? 1000 : 10}
                 />
-                <GoogleMapPinLabel
-                  pin={pin}
-                  selected={activePinPreview?.id === pin.id}
-                  onSelect={setActivePinPreview}
-                />
+                {activePinPreview?.id === pin.id ? (
+                  <GoogleMapPinLabel
+                    pin={pin}
+                    selected
+                    onSelect={setActivePinPreview}
+                  />
+                ) : null}
               </Fragment>
             ))}
           </GoogleMap>
@@ -590,10 +606,9 @@ export function MapScreen({
         </div>
       </div>
       {activePinPreview ? (
-        <div className="wr-map-sheet-layer" onClick={closePinPreview} role="presentation">
+        <div className="wr-map-sheet-layer" role="presentation">
           <article
             className="wr-map-sheet"
-            onClick={(event) => event.stopPropagation()}
             onTouchStart={(event) => {
               sheetTouchStartYRef.current = event.touches[0].clientY;
             }}
@@ -608,10 +623,22 @@ export function MapScreen({
             <button type="button" className="wr-map-sheet-close" aria-label="Close map place details" onClick={closePinPreview}>
               <X size={16} />
             </button>
-            <img src={activePinPreview.imageUrl} alt={activePinPreview.title} className="wr-map-sheet-image" />
-            <h3 className="wr-map-sheet-title">{activePinPreview.title}</h3>
-            <p className="wr-map-sheet-meta">{activePinPreview.category} · {activePinPreview.locality}</p>
-            <p className="wr-map-sheet-address">{activePinPreview.fullAddress}</p>
+            <div className="wr-map-sheet-main">
+              <img src={activePinPreview.imageUrl} alt={activePinPreview.title} className="wr-map-sheet-image" />
+              <div className="wr-map-sheet-copy">
+                <div className="wr-map-sheet-badges">
+                  <span className="wr-map-sheet-category-pill">{activePinPreview.category}</span>
+                  <span className="wr-map-sheet-saved-pill">
+                    <Bookmark size={12} />
+                    Saved
+                  </span>
+                </div>
+                <h3 className="wr-map-sheet-title">{activePinPreview.title}</h3>
+                <p className="wr-map-sheet-meta">{activePinPreview.locality}</p>
+                <p className="wr-map-sheet-address">{activePinPreview.fullAddress}</p>
+                {activePinDistanceLabel ? <p className="wr-map-sheet-distance">{activePinDistanceLabel}</p> : null}
+              </div>
+            </div>
             <p className="wr-map-sheet-timing">{activePinPreview.metaPrimary} · {activePinPreview.metaSecondary}</p>
             <div className="wr-map-sheet-actions">
               <a
@@ -620,7 +647,7 @@ export function MapScreen({
                 rel="noreferrer"
                 className="wr-map-sheet-action-btn"
               >
-                Directions
+                Open
               </a>
             </div>
           </article>
