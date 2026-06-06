@@ -597,8 +597,9 @@
   writing-mode: vertical-lr;
   direction: rtl;
   appearance: none;
-  width: 20px;
-  height: 95px;
+  width: 26px;
+  height: 128px;
+  padding: 6px 0;
   border-radius: 999px;
   background: linear-gradient(
     0deg,
@@ -607,25 +608,28 @@
     #d2dae4 var(--wr-map-slider, 10%),
     #d2dae4 100%
   );
+  touch-action: none;
 }
 
 .wr-map-radius-slider-vertical::-webkit-slider-thumb {
   appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: #1f7cf0;
   border: 2px solid #fff;
   box-shadow: 0 2px 6px rgba(17, 24, 39, 0.3);
+  cursor: grab;
 }
 
 .wr-map-radius-slider-vertical::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   background: #1f7cf0;
   border: 2px solid #fff;
   box-shadow: 0 2px 6px rgba(17, 24, 39, 0.3);
+  cursor: grab;
 }
 
 .wr-map-sheet-layer {

@@ -327,6 +327,11 @@ export function MapScreen({
   const hasVisiblePins = visiblePlaceCount > 0;
   const inRangeNoun = visiblePlaceCount === 1 ? "place" : "places";
   const closePinPreview = () => setActivePinPreview(null);
+  const handleRadiusChange = (value: string) => {
+    const nextRadius = Number(value);
+    if (!Number.isFinite(nextRadius)) return;
+    setRadiusKm(Math.max(2, Math.min(100, nextRadius)));
+  };
   const activePinDistanceLabel = useMemo(() => {
     if (!activePinPreview) return null;
     if (!Number.isFinite(activePinPreview.distanceKm)) return null;
@@ -631,9 +636,14 @@ export function MapScreen({
               max={100}
               step={1}
               value={radiusKm}
-              onChange={(event) => setRadiusKm(Number(event.target.value))}
+              onInput={(event) => handleRadiusChange(event.currentTarget.value)}
+              onChange={(event) => handleRadiusChange(event.currentTarget.value)}
               className="wr-map-radius-slider-vertical"
               aria-label="Map search radius in kilometers"
+              aria-valuemin={2}
+              aria-valuemax={100}
+              aria-valuenow={radiusKm}
+              aria-valuetext={`${radiusKm} km`}
               style={{ "--wr-map-slider": `${sliderPercent}%` } as { [key: string]: string }}
             />
             <span className="wr-map-radius-limit">2</span>
