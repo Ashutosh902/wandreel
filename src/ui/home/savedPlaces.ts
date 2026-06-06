@@ -133,7 +133,6 @@ export function removeSavedPlace(place: SavedPlaceRecord) {
 export function mergeSavedPlacesFromApi(items: SavedPlaceApiItem[]) {
   const current = readSavedPlacesByCategory();
   const next = createEmptySavedPlacesByCategory();
-  const currentFlatPlaces = flattenSavedPlaces(current);
 
   for (const category of categoryOrder) {
     next[category] = [...current[category]];
@@ -143,12 +142,10 @@ export function mergeSavedPlacesFromApi(items: SavedPlaceApiItem[]) {
     const mapped = mapSavedPlaceApiItem(item);
     if (!mapped) continue;
     const placeKey = getSavedPlaceKey(mapped);
-    const existingLocal = currentFlatPlaces.find((entry) => getSavedPlaceKey(entry) === placeKey);
-    const merged = mergeSavedPlaceWithLocalIntent(mapped, existingLocal, item);
     for (const category of categoryOrder) {
       next[category] = next[category].filter((entry) => getSavedPlaceKey(entry) !== placeKey);
     }
-    next[merged.category] = [merged, ...next[merged.category]].slice(0, 100);
+    next[mapped.category] = [mapped, ...next[mapped.category]].slice(0, 100);
   }
 
   writeSavedPlacesByCategory(next);
@@ -211,35 +208,6 @@ export function getSavedPlaceKey(place: Pick<SavedPlaceRecord, "id" | "placeId" 
 function normalizeCategory(value?: string | null): CategoryLabel | null {
   if (value === "Taste" || value === "Activity" || value === "Stay" || value === "Explore") return value;
   return null;
-}
-
-function hasExplicitSharedState(metadata?: SavedPlaceApiItem["metadata"]) {
-  if (!metadata) return false;
-  return (
-    typeof metadata.isGlobal === "boolean" ||
-    metadata.sharedVisibility === "global" ||
-    metadata.sharedVisibility === "private" ||
-    typeof metadata.sharedAt === "number" ||
-    metadata.sharedAt === null
-  );
-}
-
-function mergeSavedPlaceWithLocalIntent(
-  mapped: SavedPlaceRecord,
-  localExisting: SavedPlaceRecord | undefined,
-  apiItem: SavedPlaceApiItem,
-): SavedPlaceRecord {
-  if (!localExisting) return mapped;
-
-  const keepLocalSharedIntent = !hasExplicitSharedState(apiItem.metadata);
-
-  return {
-    ...mapped,
-    createdAtMs: localExisting.createdAtMs || mapped.createdAtMs,
-    isGlobal: keepLocalSharedIntent ? localExisting.isGlobal : mapped.isGlobal,
-    sharedVisibility: keepLocalSharedIntent ? localExisting.sharedVisibility : mapped.sharedVisibility,
-    sharedAt: keepLocalSharedIntent ? localExisting.sharedAt : mapped.sharedAt,
-  };
 }
 
 function normalizeSavedPlace(

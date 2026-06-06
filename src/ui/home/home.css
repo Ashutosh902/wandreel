@@ -805,13 +805,6 @@
   justify-content: space-between;
   gap: 0.82rem;
 }
-.wr-taste-top-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  min-width: 0;
-  flex-shrink: 0;
-}
 .wr-taste-title-block {
   position: relative;
   padding-left: 0.55rem;
@@ -833,35 +826,6 @@
   font-weight: 900;
   letter-spacing: -0.02em;
   color: #10213f;
-}
-.wr-taste-sort-control {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.34rem;
-  min-height: 2rem;
-  border: 1px solid rgba(17, 24, 39, 0.09);
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.88);
-  padding: 0 0.38rem 0 0.62rem;
-  box-shadow: 0 4px 12px rgba(17, 24, 39, 0.06);
-}
-.wr-taste-sort-label {
-  font-size: 10.8px;
-  font-weight: 800;
-  color: #687385;
-  white-space: nowrap;
-}
-.wr-taste-sort-select {
-  border: none;
-  background: transparent;
-  color: #10213f;
-  font-size: 11.2px;
-  font-weight: 900;
-  line-height: 1.2;
-  outline: none;
-  padding: 0.36rem 0.2rem 0.36rem 0;
-  min-width: 4.5rem;
-  appearance: none;
 }
 .wr-taste-chip-row {
   margin-top: 0.68rem;
@@ -988,12 +952,6 @@
   font-weight: 900;
   color: var(--wr-category-accent-3);
   flex-shrink: 0;
-}
-.wr-taste-row-category {
-  margin: 0.22rem 0 0;
-  font-size: 12px;
-  font-weight: 700;
-  line-height: 1.2;
 }
 .wr-taste-row-line {
   margin: 0.2rem 0 0;
@@ -1338,9 +1296,12 @@
 .wr-recent-image { position: relative; height: 122px; width: 100%; border-top-left-radius: 1rem; border-top-right-radius: 1rem; }
 .wr-recent-image-photo { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
 .wr-recent-image-overlay { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(0,0,0,0.05) 0%, transparent 45%, rgba(0,0,0,0.45) 100%); }
+.wr-recent-save { position: absolute; right: 0.75rem; top: 0.75rem; width: 2.25rem; height: 2.25rem; border-radius: 999px; border: none; background: #fff; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 6px 14px rgba(17,24,39,0.2); }
+.wr-recent-save-icon { color: #10213f; }
+.wr-recent-pill { position: absolute; left: 0.75rem; top: 0.75rem; border-radius: 999px; padding: 0.25rem 0.625rem; font-size: 10px; font-weight: 800; color: #fff; backdrop-filter: blur(6px); }
 .wr-recent-body { padding: 1.1rem 1rem 1.08rem; background: #fff; }
 .wr-recent-title { margin: 0; font-size: 15.5px; font-weight: 900; line-height: 1.28; letter-spacing: -0.02em; color: #111827; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.wr-recent-meta { margin: 0.32rem 0 0; font-size: 12px; font-weight: 800; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.wr-recent-meta { margin: 0.32rem 0 0; font-size: 12.5px; font-weight: 700; line-height: 1.38; color: #4b5563; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .wr-recent-place { margin-top: 0.62rem; display: flex; align-items: center; gap: 0.32rem; font-size: 11.5px; font-weight: 700; line-height: 1.32; color: #5f6772; }
 .wr-recent-place-icon { color: #0f766e; opacity: 0.92; }
 
