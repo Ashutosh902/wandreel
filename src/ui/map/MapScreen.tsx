@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { ArrowLeft, Bookmark, LocateFixed, MapPin, Search, X } from "lucide-react";
+import { ArrowLeft, LocateFixed, MapPin, Search, X } from "lucide-react";
 import {
   GoogleMap,
   MarkerF,
@@ -663,18 +663,12 @@ export function MapScreen({
               <div className="wr-map-sheet-copy">
                 <div className="wr-map-sheet-badges">
                   <span className="wr-map-sheet-category-pill">{activePinPreview.category}</span>
-                  <span className="wr-map-sheet-saved-pill">
-                    <Bookmark size={12} />
-                    Saved
-                  </span>
                 </div>
                 <h3 className="wr-map-sheet-title">{activePinPreview.title}</h3>
                 <p className="wr-map-sheet-meta">{activePinPreview.locality}</p>
-                <p className="wr-map-sheet-address">{activePinPreview.fullAddress}</p>
                 {activePinDistanceLabel ? <p className="wr-map-sheet-distance">{activePinDistanceLabel}</p> : null}
               </div>
             </div>
-            <p className="wr-map-sheet-timing">{activePinPreview.metaPrimary} · {activePinPreview.metaSecondary}</p>
             <div className="wr-map-sheet-actions">
               <a
                 href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(activePinPreview.fullAddress)}`}
@@ -682,8 +676,26 @@ export function MapScreen({
                 rel="noreferrer"
                 className="wr-map-sheet-action-btn"
               >
-                Open
+                Direction
               </a>
+              {activePinPreview.videoUrl ? (
+                <a
+                  href={activePinPreview.videoUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="wr-map-sheet-action-btn"
+                >
+                  Watch Video
+                </a>
+              ) : (
+                <button
+                  type="button"
+                  className="wr-map-sheet-action-btn"
+                  onClick={() => {}}
+                >
+                  Watch Video
+                </button>
+              )}
             </div>
           </article>
         </div>
