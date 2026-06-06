@@ -7,7 +7,7 @@ import { distanceKm } from "../geo";
 import {
   isPlaceGlobal,
   removeSavedPlace,
-  togglePlaceGlobal,
+  togglePlaceGlobalPersisted,
   upsertSavedPlace,
   type SavedPlaceRecord,
 } from "./savedPlaces";
@@ -260,15 +260,20 @@ export function CategoryDetailPage({
     showToast({ message: "Card deleted", variant: "info" });
   };
 
-  const handleRecommendPlace = (place: CategoryPlaceRow) => {
-    const nextPlace = togglePlaceGlobal(place);
-    setActivePlace(nextPlace);
-    showToast({
-      message: isPlaceGlobal(nextPlace)
-        ? "This place is now global. Others can discover it in Connect."
-        : "Removed from global recommendations.",
-      variant: isPlaceGlobal(nextPlace) ? "success" : "info",
-    });
+  const handleRecommendPlace = async (place: CategoryPlaceRow) => {
+    try {
+      const nextPlace = await togglePlaceGlobalPersisted(place);
+      setActivePlace(nextPlace);
+      showToast({
+        message: isPlaceGlobal(nextPlace)
+          ? "This place is now global. Others can discover it in Connect."
+          : "Removed from global recommendations.",
+        variant: isPlaceGlobal(nextPlace) ? "success" : "info",
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not update global recommendations.";
+      showToast({ message, variant: "error" });
+    }
   };
 
   const handleSharePlace = async (place: CategoryPlaceRow) => {
@@ -323,7 +328,7 @@ export function CategoryDetailPage({
                 type="button"
                 className={`wr-taste-sheet-icon-btn ${isPlaceGlobal(activePlace) ? "is-active" : ""}`}
                 aria-label={isPlaceGlobal(activePlace) ? "Remove from global recommendations" : "Recommend place"}
-                onClick={() => handleRecommendPlace(activePlace)}
+                onClick={() => void handleRecommendPlace(activePlace)}
               >
                 <Globe2 size={15} />
               </button>

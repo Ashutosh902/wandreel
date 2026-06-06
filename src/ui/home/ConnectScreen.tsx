@@ -3,7 +3,7 @@ import { Camera, Globe2, Share2, Sparkles, Users } from "lucide-react";
 import { categories, type CategoryLabel } from "./home.data";
 import {
   getGlobalSavedPlaces,
-  togglePlaceGlobal,
+  togglePlaceGlobalPersisted,
   type SavedPlaceRecord,
 } from "./savedPlaces";
 import { shareAppExternally, sharePlaceExternally } from "./shareHelpers";
@@ -49,9 +49,14 @@ export function ConnectScreen({
     }
   };
 
-  const handleRemoveSharedPlace = (place: SavedPlaceRecord) => {
-    togglePlaceGlobal(place, false);
-    showToast({ message: "Removed from global recommendations.", variant: "info" });
+  const handleRemoveSharedPlace = async (place: SavedPlaceRecord) => {
+    try {
+      await togglePlaceGlobalPersisted(place, false);
+      showToast({ message: "Removed from global recommendations.", variant: "info" });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not update global recommendations.";
+      showToast({ message, variant: "error" });
+    }
   };
 
   return (
@@ -127,7 +132,7 @@ export function ConnectScreen({
                     <button
                       type="button"
                       className="wr-connect-card-btn is-secondary"
-                      onClick={() => handleRemoveSharedPlace(place)}
+                      onClick={() => void handleRemoveSharedPlace(place)}
                     >
                       Remove
                     </button>

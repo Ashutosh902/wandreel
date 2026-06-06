@@ -1,6 +1,8 @@
 import type { CategoryLabel } from "./home.data";
 import { CATEGORY_FEED_CACHE_KEY } from "./addFlowState";
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+
 export type SavedPlaceRecord = {
   id: string;
   placeId?: string | null;
@@ -166,6 +168,62 @@ export function togglePlaceGlobal(place: SavedPlaceRecord, nextGlobal = !isPlace
   }
   upsertSavedPlace(nextPlace);
   return nextPlace;
+}
+
+export async function persistSavedPlace(place: SavedPlaceRecord) {
+  const response = await fetch(`${API_BASE_URL}/api/saved-places`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({
+      placeId: place.placeId || place.id,
+      title: place.title,
+      category: place.category,
+      metadata: {
+        locality: place.locality,
+        fullAddress: place.fullAddress,
+        videoUrl: place.videoUrl,
+        imageUrl: place.imageUrl,
+        lat: place.lat ?? null,
+        lng: place.lng ?? null,
+        isGlobal: place.isGlobal === true,
+        sharedVisibility: place.sharedVisibility || "private",
+        sharedAt: place.sharedAt ?? null,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    if (response.status === 401) {
+      throw new Error("Please log in to save places.");
+    }
+    throw new Error("Could not save place.");
+  }
+
+  const payload = (await response.json().catch(() => null)) as { ok?: boolean; item?: SavedPlaceApiItem } | null;
+  if (payload?.ok && payload.item) {
+    mergeSavedPlacesFromApi([payload.item]);
+  }
+}
+
+export async function togglePlaceGlobalPersisted(
+  place: SavedPlaceRecord,
+  nextGlobal = !isPlaceGlobal(place),
+) {
+  const previousPlace = normalizeSavedPlace(place, place.category);
+  if (!previousPlace) {
+    throw new Error("Unable to toggle global visibility for saved place.");
+  }
+
+  const nextPlace = togglePlaceGlobal(previousPlace, nextGlobal);
+
+  try {
+    await persistSavedPlace(nextPlace);
+    return nextPlace;
+  } catch (error) {
+    upsertSavedPlace(previousPlace);
+    throw error;
+  }
 }
 
 export function mapSavedPlaceApiItem(item: SavedPlaceApiItem): SavedPlaceRecord | null {
