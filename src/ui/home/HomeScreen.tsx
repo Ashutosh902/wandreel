@@ -51,6 +51,7 @@ const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Login"];
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
 const ADD_INTELLIGENCE_TIMEOUT_MS = 45000;
+const DISMISSED_READY_NOTIFICATION_IDS_KEY = "wr_dismissed_ready_notification_ids_v1";
 
 type HeroMode = "empty-memory" | "city-memory";
 const DEFAULT_DISCOVER_HERO_MODE: HeroMode = "empty-memory";
@@ -132,10 +133,12 @@ function ReadyNotificationsSheet({
   items,
   onClose,
   onReview,
+  onDismissNotification,
 }: {
   items: AddReadyNotification[];
   onClose: () => void;
   onReview: (runId: number) => void;
+  onDismissNotification: (id: string) => void;
 }) {
   return (
     <div className="wr-ready-sheet-layer" role="presentation">
@@ -154,6 +157,17 @@ function ReadyNotificationsSheet({
           <div className="wr-ready-list">
             {items.map((item) => (
               <article className="wr-ready-item" key={item.id}>
+                <button
+                  type="button"
+                  className="wr-ready-item-dismiss"
+                  aria-label={`Dismiss ${item.placeName} notification`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDismissNotification(item.id);
+                  }}
+                >
+                  x
+                </button>
                 <img src={item.imageUrl} alt="" className="wr-ready-item-image" />
                 <div className="wr-ready-item-body">
                   <h4>{item.placeName}</h4>
@@ -183,6 +197,15 @@ export function HomeScreen() {
   const [savedPlacesByCategory, setSavedPlacesByCategory] = useState(createEmptySavedPlacesByCategory);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [readyNotifications, setReadyNotifications] = useState<AddReadyNotification[]>(() => readReadyNotifications());
+  const [dismissedNotificationIds, setDismissedNotificationIds] = useState<string[]>(() => {
+    try {
+      const raw = window.localStorage.getItem(DISMISSED_READY_NOTIFICATION_IDS_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+    } catch {
+      return [];
+    }
+  });
   const [isReadySheetOpen, setIsReadySheetOpen] = useState(false);
   const [transitionDirection, setTransitionDirection] = useState(1);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -213,6 +236,10 @@ export function HomeScreen() {
     if (!isAuthenticated) return createEmptySavedPlacesByCategory();
     return effectiveSavedPlacesByCategory;
   }, [effectiveSavedPlacesByCategory, isAuthenticated]);
+  const visibleReadyNotifications = useMemo(
+    () => readyNotifications.filter((item) => !dismissedNotificationIds.includes(item.id)),
+    [dismissedNotificationIds, readyNotifications],
+  );
   const heroMode: HeroMode = DEFAULT_DISCOVER_HERO_MODE;
 
   const refreshSavedPlaces = useCallback(() => {
@@ -221,6 +248,10 @@ export function HomeScreen() {
 
   const refreshReadyNotifications = useCallback(() => {
     setReadyNotifications(readReadyNotifications());
+  }, []);
+  const persistDismissedNotificationIds = useCallback((nextIds: string[]) => {
+    setDismissedNotificationIds(nextIds);
+    window.localStorage.setItem(DISMISSED_READY_NOTIFICATION_IDS_KEY, JSON.stringify(nextIds));
   }, []);
 
   useEffect(() => {
@@ -295,6 +326,11 @@ export function HomeScreen() {
     setActiveTab("Add");
     setIsReadySheetOpen(false);
   }, [activeTab]);
+  const dismissNotification = useCallback((id: string) => {
+    persistDismissedNotificationIds(
+      dismissedNotificationIds.includes(id) ? dismissedNotificationIds : [...dismissedNotificationIds, id],
+    );
+  }, [dismissedNotificationIds, persistDismissedNotificationIds]);
 
   const requestNotificationPermission = useCallback(() => {
     if (!("Notification" in window)) return;
@@ -470,6 +506,14 @@ export function HomeScreen() {
   }, [refreshReadyNotifications]);
 
   useEffect(() => {
+    const validIds = new Set(readyNotifications.map((item) => item.id));
+    const nextDismissedIds = dismissedNotificationIds.filter((id) => validIds.has(id));
+    if (nextDismissedIds.length !== dismissedNotificationIds.length) {
+      persistDismissedNotificationIds(nextDismissedIds);
+    }
+  }, [dismissedNotificationIds, persistDismissedNotificationIds, readyNotifications]);
+
+  useEffect(() => {
     window.addEventListener(ADD_PROCESSING_STARTED_EVENT, requestNotificationPermission);
     return () => window.removeEventListener(ADD_PROCESSING_STARTED_EVENT, requestNotificationPermission);
   }, [requestNotificationPermission]);
@@ -518,7 +562,7 @@ export function HomeScreen() {
   const page = useMemo(() => {
     if (activeTab === "Discover") {
       return (
-        <DiscoverPage
+          <DiscoverPage
           activeCategory={activeCategory}
           onSelectCategory={setActiveCategory}
           onBackCategory={() => {
@@ -530,7 +574,7 @@ export function HomeScreen() {
             setActiveCategory(null);
             setActiveTab("Add");
           }}
-          notificationCount={readyNotifications.length}
+            notificationCount={visibleReadyNotifications.length}
           onNotificationsClick={() => setIsReadySheetOpen(true)}
           savedPlacesByCategory={visibleSavedPlacesByCategory}
           visibleSavedPlaces={visibleSavedPlaces}
@@ -687,9 +731,10 @@ export function HomeScreen() {
           </motion.section>
           {isReadySheetOpen ? (
             <ReadyNotificationsSheet
-              items={readyNotifications}
+              items={visibleReadyNotifications}
               onClose={() => setIsReadySheetOpen(false)}
               onReview={openAddForReview}
+              onDismissNotification={dismissNotification}
             />
           ) : null}
         </div>
