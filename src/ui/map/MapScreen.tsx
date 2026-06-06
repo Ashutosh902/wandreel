@@ -215,7 +215,6 @@ export function MapScreen({
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const googleMapRef = useRef<google.maps.Map | null>(null);
   const radiusCircleRef = useRef<google.maps.Circle | null>(null);
-  const initialGoogleZoomRef = useRef(getGoogleZoomForRadius(10));
   const [activePinPreview, setActivePinPreview] = useState<MapPlacePin | null>(null);
   const sheetTouchStartYRef = useRef<number | null>(null);
   const [isCountBump, setIsCountBump] = useState(false);
@@ -286,6 +285,7 @@ export function MapScreen({
     }
     return FALLBACK_MAP_CENTER;
   }, [currentCoords?.lat, currentCoords?.lng, deviceCoords?.lat, deviceCoords?.lng]);
+  const radiusMapZoom = useMemo(() => getGoogleZoomForRadius(radiusKm), [radiusKm]);
 
   const visibleMapPlaces = useMemo(
     () =>
@@ -298,8 +298,8 @@ export function MapScreen({
     [mapCenter, mapPlaces, radiusKm],
   );
 
-  const visiblePins = useMemo(() => {
-    const places = visibleMapPlaces;
+  const renderedPins = useMemo(() => {
+    const places = mapPlaces;
 
     if (!places.length) return [];
 
@@ -318,13 +318,13 @@ export function MapScreen({
         y: `${Math.max(14, Math.min(88, y))}%`,
       };
     });
-  }, [visibleMapPlaces, mapCenter, radiusKm]);
+  }, [mapPlaces, mapCenter, radiusKm]);
 
   const sliderPercent = ((radiusKm - 2) / 98) * 100;
   const isCategoryLockActive = focusedCategory !== null;
   const radiusProgress = (radiusKm - 2) / 98;
   const radiusVisualPx = radiusProgress * mapMinDimensionPx * MAX_RADIUS_VISUAL_RATIO;
-  const visiblePlaceCount = visiblePins.length;
+  const visiblePlaceCount = visibleMapPlaces.length;
   const hasVisiblePins = visiblePlaceCount > 0;
   const inRangeNoun = visiblePlaceCount === 1 ? "place" : "places";
   const closePinPreview = () => setActivePinPreview(null);
@@ -335,10 +335,10 @@ export function MapScreen({
   }, [activePinPreview]);
 
   useEffect(() => {
-    if (activePinPreview && !visiblePins.some((pin) => pin.id === activePinPreview.id)) {
+    if (activePinPreview && !renderedPins.some((pin) => pin.id === activePinPreview.id)) {
       setActivePinPreview(null);
     }
-  }, [activePinPreview, visiblePins]);
+  }, [activePinPreview, renderedPins]);
 
   useEffect(() => {
     setIsCountBump(true);
@@ -507,7 +507,7 @@ export function MapScreen({
           <GoogleMap
             mapContainerClassName="wr-map-google-surface"
             center={mapCenter}
-            zoom={initialGoogleZoomRef.current}
+            zoom={radiusMapZoom}
             onLoad={(map) => {
               googleMapRef.current = map;
             }}
@@ -537,7 +537,7 @@ export function MapScreen({
               }}
               zIndex={1001}
             />
-            {visiblePins.map((pin) => (
+            {renderedPins.map((pin) => (
               <Fragment key={pin.id}>
                 <MarkerF
                   position={{ lat: pin.lat as number, lng: pin.lng as number }}
@@ -589,7 +589,7 @@ export function MapScreen({
         {!isMapReady ? <div className="wr-map-road wr-map-road-b" /> : null}
         {!isMapReady ? <div className="wr-map-road wr-map-road-c" /> : null}
         {!isMapReady ? <div className="wr-map-road wr-map-road-d" /> : null}
-        {!isMapReady ? visiblePins.map((pin) => (
+        {!isMapReady ? renderedPins.map((pin) => (
           <MapPinMarker
             key={pin.id}
             pin={pin}
