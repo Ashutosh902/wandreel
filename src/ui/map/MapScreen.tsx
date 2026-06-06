@@ -57,15 +57,13 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 function getGoogleZoomForRadius(radiusKm: number): number {
-  if (radiusKm <= 3) return 14.8;
-  if (radiusKm <= 6) return 13.9;
-  if (radiusKm <= 10) return 13.2;
-  if (radiusKm <= 16) return 12.7;
-  if (radiusKm <= 25) return 11.9;
-  if (radiusKm <= 40) return 11.2;
-  if (radiusKm <= 60) return 10.6;
-  if (radiusKm <= 80) return 10.1;
-  return 9.6;
+  if (radiusKm <= 2) return 13.2;
+  if (radiusKm <= 5) return 12.5;
+  if (radiusKm <= 10) return 11.7;
+  if (radiusKm <= 20) return 10.8;
+  if (radiusKm <= 40) return 9.8;
+  if (radiusKm <= 70) return 8.8;
+  return 8;
 }
 
 function MapPinMarker({
@@ -214,6 +212,7 @@ export function MapScreen({
   const [mapMinDimensionPx, setMapMinDimensionPx] = useState(320);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const googleMapRef = useRef<google.maps.Map | null>(null);
+  const [googleMapInstance, setGoogleMapInstance] = useState<google.maps.Map | null>(null);
   const radiusCircleRef = useRef<google.maps.Circle | null>(null);
   const [activePinPreview, setActivePinPreview] = useState<MapPlacePin | null>(null);
   const sheetTouchStartYRef = useRef<number | null>(null);
@@ -347,14 +346,15 @@ export function MapScreen({
   }, [visiblePlaceCount]);
 
   useEffect(() => {
-    if (!googleMapRef.current || !window.google?.maps) return;
+    if (!googleMapInstance || !window.google?.maps) return;
 
-    const radiusMeters = Number(radiusKm) * 1000;
+    const numericRadiusKm = Number(radiusKm);
+    const radiusMeters = numericRadiusKm * 1000;
     if (!Number.isFinite(radiusMeters) || radiusMeters <= 0) return;
 
     if (!radiusCircleRef.current) {
       radiusCircleRef.current = new window.google.maps.Circle({
-        map: googleMapRef.current,
+        map: googleMapInstance,
         center: mapCenter,
         radius: radiusMeters,
         fillColor: "#2F80ED",
@@ -368,15 +368,17 @@ export function MapScreen({
       return;
     }
 
+    radiusCircleRef.current.setMap(googleMapInstance);
     radiusCircleRef.current.setCenter(mapCenter);
     radiusCircleRef.current.setRadius(radiusMeters);
-  }, [mapCenter, radiusKm]);
+  }, [googleMapInstance, mapCenter, radiusKm]);
 
   useEffect(() => {
     return () => {
       radiusCircleRef.current?.setMap(null);
       radiusCircleRef.current = null;
       googleMapRef.current = null;
+      setGoogleMapInstance(null);
     };
   }, []);
 
@@ -510,11 +512,13 @@ export function MapScreen({
             zoom={radiusMapZoom}
             onLoad={(map) => {
               googleMapRef.current = map;
+              setGoogleMapInstance(map);
             }}
             onUnmount={() => {
               radiusCircleRef.current?.setMap(null);
               radiusCircleRef.current = null;
               googleMapRef.current = null;
+              setGoogleMapInstance(null);
             }}
             onClick={() => setActivePinPreview(null)}
             options={{
