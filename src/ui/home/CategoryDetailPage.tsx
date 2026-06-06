@@ -43,6 +43,7 @@ type CategoryFilterChip =
   | "Spiritual";
 
 type CategoryPlaceRow = SavedPlaceRecord;
+type CategorySortOption = "distance" | "alphabetical" | "recent";
 
 type CategoryScreenConfig = {
   searchPlaceholder: string;
@@ -73,6 +74,51 @@ const categoryConfigs: Record<CategoryLabel, CategoryScreenConfig> = {
   },
 };
 
+function getPlaceDistanceValue(place: CategoryPlaceRow): number {
+  if (typeof place.lat !== "number" || typeof place.lng !== "number") {
+    return Number.POSITIVE_INFINITY;
+  }
+  return Number.isFinite(place.distanceKm) ? place.distanceKm : Number.POSITIVE_INFINITY;
+}
+
+function getPlaceRecentValue(place: CategoryPlaceRow): number {
+  const legacySavedAt =
+    typeof (place as { savedAt?: number | string }).savedAt !== "undefined"
+      ? new Date((place as { savedAt?: number | string }).savedAt as number | string).getTime()
+      : Number.NaN;
+  const legacyCreatedAt =
+    typeof (place as { createdAt?: number | string }).createdAt !== "undefined"
+      ? new Date((place as { createdAt?: number | string }).createdAt as number | string).getTime()
+      : Number.NaN;
+  const legacyDateAdded =
+    typeof (place as { dateAdded?: number | string }).dateAdded !== "undefined"
+      ? new Date((place as { dateAdded?: number | string }).dateAdded as number | string).getTime()
+      : Number.NaN;
+
+  if (Number.isFinite(legacySavedAt)) return legacySavedAt;
+  if (Number.isFinite(legacyCreatedAt)) return legacyCreatedAt;
+  if (Number.isFinite(legacyDateAdded)) return legacyDateAdded;
+  return place.createdAtMs;
+}
+
+function sortPlaces(places: CategoryPlaceRow[], sortBy: CategorySortOption): CategoryPlaceRow[] {
+  const items = [...places];
+
+  if (sortBy === "distance") {
+    return items.sort((a, b) => getPlaceDistanceValue(a) - getPlaceDistanceValue(b));
+  }
+
+  if (sortBy === "alphabetical") {
+    return items.sort((a, b) =>
+      String(a.title || "").localeCompare(String(b.title || ""), undefined, {
+        sensitivity: "base",
+      }),
+    );
+  }
+
+  return items.sort((a, b) => getPlaceRecentValue(b) - getPlaceRecentValue(a));
+}
+
 export function CategoryDetailPage({
   category,
   onViewMap,
@@ -97,6 +143,7 @@ export function CategoryDetailPage({
   const sheetTouchStartYRef = useRef<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedChip, setSelectedChip] = useState<CategoryFilterChip>("All");
+  const [sortBy, setSortBy] = useState<CategorySortOption>("distance");
 
   useEffect(() => {
     if (!isSheetClosing) return;
@@ -244,6 +291,7 @@ export function CategoryDetailPage({
       }),
     [distanceAwarePlaces, normalizedQuery, selectedChip],
   );
+  const sortedPlaces = useMemo(() => sortPlaces(filteredPlaces, sortBy), [filteredPlaces, sortBy]);
 
   const overlays = (
     <>
@@ -487,7 +535,22 @@ export function CategoryDetailPage({
         <div className="wr-taste-title-block">
           <h2 className="wr-taste-page-title">{category}</h2>
         </div>
-        <button type="button" className="wr-taste-view-map" onClick={() => onViewMap(category)}>View map</button>
+        <div className="wr-taste-top-actions">
+          <label className="wr-taste-sort-control">
+            <span className="wr-taste-sort-label">Sort:</span>
+            <select
+              className="wr-taste-sort-select"
+              value={sortBy}
+              onChange={(event) => setSortBy(event.target.value as CategorySortOption)}
+              aria-label={`Sort ${category.toLowerCase()} places`}
+            >
+              <option value="distance">Distance</option>
+              <option value="alphabetical">A-Z</option>
+              <option value="recent">Recent</option>
+            </select>
+          </label>
+          <button type="button" className="wr-taste-view-map" onClick={() => onViewMap(category)}>View map</button>
+        </div>
       </div>
         <div className="wr-taste-chip-row" aria-label={`${category} filters`}>
           {config.chips.map((chip) => (
@@ -503,7 +566,7 @@ export function CategoryDetailPage({
         </div>
 
       <section className="wr-taste-list" aria-label={`${category} saved places nearest first`}>
-        {filteredPlaces.length === 0 ? (
+        {sortedPlaces.length === 0 ? (
           <article className="wr-category-empty-state" aria-live="polite">
             <h3>{category === "Taste" ? "No restaurants yet" : category === "Activity" ? "No activities yet" : category === "Stay" ? "No stays yet" : "No places yet"}</h3>
             <p>
@@ -519,7 +582,7 @@ export function CategoryDetailPage({
               Add place
             </button>
           </article>
-        ) : filteredPlaces.map((place) => (
+        ) : sortedPlaces.map((place) => (
           <article
             key={place.id}
             className="wr-taste-row-card"
