@@ -47,7 +47,7 @@ import {
 import "./home.css";
 
 runHomeDataChecks();
-const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Profile"];
+const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Login"];
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
 const ADD_INTELLIGENCE_TIMEOUT_MS = 45000;
@@ -668,20 +668,20 @@ export function HomeScreen() {
               Refreshing...
             </div>
           ) : null}
-          {activeTab !== "Profile" && activeTab !== "Map" ? <div className="wr-bg-blob one" /> : null}
-          {activeTab !== "Profile" && activeTab !== "Map" ? <div className="wr-bg-blob two" /> : null}
-          {activeTab !== "Profile" && activeTab !== "Map" ? <div className="wr-bg-blob three" /> : null}
+          {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob one" /> : null}
+          {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob two" /> : null}
+          {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob three" /> : null}
 
           <motion.section
             key={pageKey}
             className={`wr-page-transition-layer ${isMapTab ? "is-map-page" : ""}`}
             initial={
-              prefersReducedMotion || activeTab === "Profile"
+              prefersReducedMotion || activeTab === "Login"
                 ? { opacity: 0.98 }
                 : { x: transitionDirection > 0 ? 16 : -16, opacity: 0.94 }
             }
             animate={{ x: 0, opacity: 1 }}
-            transition={{ duration: prefersReducedMotion || activeTab === "Profile" ? 0.01 : 0.2, ease: [0.22, 0.61, 0.36, 1] }}
+            transition={{ duration: prefersReducedMotion || activeTab === "Login" ? 0.01 : 0.2, ease: [0.22, 0.61, 0.36, 1] }}
           >
             {page}
           </motion.section>

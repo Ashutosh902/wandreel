@@ -1,12 +1,12 @@
-import {
+﻿import {
   BedDouble,
   Camera,
   Compass,
   FerrisWheel,
   Globe2,
+  LogIn,
   MapPin,
   Plus,
-  UserRound,
   Utensils,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -22,11 +22,11 @@ export type CategoryItem = {
   image: string;
 };
 
-export type NavLabel = "Discover" | "Map" | "Add" | "Connect" | "Profile";
+export type NavLabel = "Discover" | "Map" | "Add" | "Connect" | "Login";
 export type CategoryLabel = "Taste" | "Activity" | "Stay" | "Explore";
 
 export type NavItem = {
-  label: Exclude<NavLabel, "Add">;
+  label: NavLabel;
   icon: LucideIcon;
 };
 
@@ -40,11 +40,10 @@ export const categories: CategoryItem[] = [
 export const navItems: NavItem[] = [
   { label: "Discover", icon: Compass },
   { label: "Map", icon: MapPin },
+  { label: "Add", icon: Plus },
   { label: "Connect", icon: Globe2 },
-  { label: "Profile", icon: UserRound },
+  { label: "Login", icon: LogIn },
 ];
-
-export const addFabIcon = Plus;
 
 export function runHomeDataChecks(): void {
   if (categories.length !== 4) {
@@ -55,8 +54,8 @@ export function runHomeDataChecks(): void {
     throw new Error("Every category must include label and fill.");
   }
 
-  if (navItems.length !== 4) {
-    throw new Error("Bottom navigation expects exactly 4 items plus the center add FAB.");
+  if (navItems.length !== 5) {
+    throw new Error("Bottom navigation expects exactly 5 items.");
   }
 
   if (new Set(navItems.map((item) => item.label)).size !== navItems.length) {
