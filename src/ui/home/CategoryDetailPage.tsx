@@ -74,6 +74,13 @@ const categoryConfigs: Record<CategoryLabel, CategoryScreenConfig> = {
   },
 };
 
+const CATEGORY_COLORS: Record<CategoryLabel, string> = {
+  Taste: "#E85D75",
+  Activity: "#F59E0B",
+  Stay: "#7C3AED",
+  Explore: "#0891B2",
+};
+
 function getPlaceDistanceValue(place: CategoryPlaceRow): number {
   if (typeof place.lat !== "number" || typeof place.lng !== "number") {
     return Number.POSITIVE_INFINITY;
@@ -143,7 +150,7 @@ export function CategoryDetailPage({
   const sheetTouchStartYRef = useRef<number | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedChip, setSelectedChip] = useState<CategoryFilterChip>("All");
-  const [sortBy, setSortBy] = useState<CategorySortOption>("distance");
+  const [sortBy] = useState<CategorySortOption>("distance");
 
   useEffect(() => {
     if (!isSheetClosing) return;
@@ -536,19 +543,6 @@ export function CategoryDetailPage({
           <h2 className="wr-taste-page-title">{category}</h2>
         </div>
         <div className="wr-taste-top-actions">
-          <label className="wr-taste-sort-control">
-            <span className="wr-taste-sort-label">Sort:</span>
-            <select
-              className="wr-taste-sort-select"
-              value={sortBy}
-              onChange={(event) => setSortBy(event.target.value as CategorySortOption)}
-              aria-label={`Sort ${category.toLowerCase()} places`}
-            >
-              <option value="distance">Distance</option>
-              <option value="alphabetical">A-Z</option>
-              <option value="recent">Recent</option>
-            </select>
-          </label>
           <button type="button" className="wr-taste-view-map" onClick={() => onViewMap(category)}>View map</button>
         </div>
       </div>
@@ -609,8 +603,12 @@ export function CategoryDetailPage({
                 <p className="wr-taste-row-name">{place.title}</p>
                 <p className="wr-taste-row-distance">{place.distanceKm.toFixed(1)} km</p>
               </div>
-              <p className="wr-taste-row-line">{place.metaPrimary} · {place.metaSecondary}</p>
-              <p className="wr-taste-row-line">{place.locality}</p>
+              <p className="wr-taste-row-category" style={{ color: CATEGORY_COLORS[place.category] }}>{place.category}</p>
+              <p className="wr-taste-row-line">
+                {place.metaSecondary && place.metaSecondary !== "Saved"
+                  ? `${place.metaSecondary} · ${place.locality}`
+                  : place.locality}
+              </p>
             </div>
           </article>
         ))}
@@ -621,3 +619,5 @@ export function CategoryDetailPage({
     </>
   );
 }
+
+
