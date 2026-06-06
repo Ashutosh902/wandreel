@@ -486,12 +486,13 @@ export function MapScreen({
               center={mapCenter}
               radius={radiusKm * 1000}
               options={{
-                fillColor: "#2b77f5",
-                fillOpacity: 0.05,
-                strokeColor: "#2b77f5",
-                strokeOpacity: 0.14,
-                strokeWeight: 1.6,
+                fillColor: "#2F80ED",
+                fillOpacity: 0.12,
+                strokeColor: "#2F80ED",
+                strokeOpacity: 0.55,
+                strokeWeight: 2,
                 clickable: false,
+                zIndex: 1,
               }}
             />
             <MarkerF

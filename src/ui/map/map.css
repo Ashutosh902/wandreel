@@ -285,13 +285,18 @@
   top: 50%;
   transform: translate(-50%, -50%);
   border-radius: 999px;
-  background: rgba(41, 121, 255, 0.09);
-  border: 1.5px solid rgba(41, 121, 255, 0.3);
+  background: rgba(47, 128, 237, 0.12);
+  border: 2px solid rgba(47, 128, 237, 0.52);
   box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.28) inset,
-    0 6px 24px rgba(41, 121, 255, 0.09);
+    0 0 0 1px rgba(255, 255, 255, 0.34) inset,
+    0 8px 28px rgba(47, 128, 237, 0.12);
   z-index: 1;
-  transition: width 180ms ease-out, height 180ms ease-out, opacity 180ms ease-out;
+  transition:
+    width 180ms ease-out,
+    height 180ms ease-out,
+    opacity 180ms ease-out,
+    border-color 180ms ease-out,
+    background-color 180ms ease-out;
   pointer-events: none;
 }
 
