@@ -1,7 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowLeft, Bookmark, LocateFixed, MapPin, Search, X } from "lucide-react";
 import {
-  CircleF,
   GoogleMap,
   MarkerF,
   OVERLAY_MOUSE_TARGET,
@@ -214,6 +213,9 @@ export function MapScreen({
   const [radiusKm, setRadiusKm] = useState(10);
   const [mapMinDimensionPx, setMapMinDimensionPx] = useState(320);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const googleMapRef = useRef<google.maps.Map | null>(null);
+  const radiusCircleRef = useRef<google.maps.Circle | null>(null);
+  const initialGoogleZoomRef = useRef(getGoogleZoomForRadius(10));
   const [activePinPreview, setActivePinPreview] = useState<MapPlacePin | null>(null);
   const sheetTouchStartYRef = useRef<number | null>(null);
   const [isCountBump, setIsCountBump] = useState(false);
@@ -284,7 +286,6 @@ export function MapScreen({
     }
     return FALLBACK_MAP_CENTER;
   }, [currentCoords?.lat, currentCoords?.lng, deviceCoords?.lat, deviceCoords?.lng]);
-  const radiusMapZoom = useMemo(() => getGoogleZoomForRadius(radiusKm), [radiusKm]);
 
   const visibleMapPlaces = useMemo(
     () =>
@@ -344,6 +345,40 @@ export function MapScreen({
     const timer = window.setTimeout(() => setIsCountBump(false), 180);
     return () => window.clearTimeout(timer);
   }, [visiblePlaceCount]);
+
+  useEffect(() => {
+    if (!googleMapRef.current || !window.google?.maps) return;
+
+    const radiusMeters = Number(radiusKm) * 1000;
+    if (!Number.isFinite(radiusMeters) || radiusMeters <= 0) return;
+
+    if (!radiusCircleRef.current) {
+      radiusCircleRef.current = new window.google.maps.Circle({
+        map: googleMapRef.current,
+        center: mapCenter,
+        radius: radiusMeters,
+        fillColor: "#2F80ED",
+        fillOpacity: 0.12,
+        strokeColor: "#2F80ED",
+        strokeOpacity: 0.55,
+        strokeWeight: 2,
+        clickable: false,
+        zIndex: 1,
+      });
+      return;
+    }
+
+    radiusCircleRef.current.setCenter(mapCenter);
+    radiusCircleRef.current.setRadius(radiusMeters);
+  }, [mapCenter, radiusKm]);
+
+  useEffect(() => {
+    return () => {
+      radiusCircleRef.current?.setMap(null);
+      radiusCircleRef.current = null;
+      googleMapRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (!isLocationMenuOpen) return;
@@ -472,7 +507,15 @@ export function MapScreen({
           <GoogleMap
             mapContainerClassName="wr-map-google-surface"
             center={mapCenter}
-            zoom={radiusMapZoom}
+            zoom={initialGoogleZoomRef.current}
+            onLoad={(map) => {
+              googleMapRef.current = map;
+            }}
+            onUnmount={() => {
+              radiusCircleRef.current?.setMap(null);
+              radiusCircleRef.current = null;
+              googleMapRef.current = null;
+            }}
             onClick={() => setActivePinPreview(null)}
             options={{
               streetViewControl: false,
@@ -482,19 +525,6 @@ export function MapScreen({
               styles: LIGHT_MAP_STYLES,
             }}
           >
-            <CircleF
-              center={mapCenter}
-              radius={radiusKm * 1000}
-              options={{
-                fillColor: "#2F80ED",
-                fillOpacity: 0.12,
-                strokeColor: "#2F80ED",
-                strokeOpacity: 0.55,
-                strokeWeight: 2,
-                clickable: false,
-                zIndex: 1,
-              }}
-            />
             <MarkerF
               position={mapCenter}
               icon={{
