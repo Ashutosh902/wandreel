@@ -14,8 +14,8 @@ type CacheEntry = {
 const extractionCache = new Map<string, CacheEntry>();
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_METADATA_BUDGET_MS = 12000;
-const DEFAULT_TRANSCRIPT_BUDGET_MS = 8000;
-const DEFAULT_OCR_BUDGET_MS = 8000;
+const DEFAULT_TRANSCRIPT_BUDGET_MS = 60000;
+const DEFAULT_OCR_BUDGET_MS = 20000;
 
 function getNumberEnv(name: string, fallback: number): number {
   const raw = Number(process.env[name]);

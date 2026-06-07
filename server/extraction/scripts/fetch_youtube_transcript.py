@@ -13,19 +13,21 @@ def add_user_site_packages() -> None:
     py_version = f"Python{sys.version_info.major}{sys.version_info.minor}"
     user_site = os.path.join(appdata, "Python", py_version, "site-packages")
     if os.path.isdir(user_site) and user_site not in sys.path:
-        sys.path.append(user_site)
+        sys.path.insert(0, user_site)
 
 
 def add_local_site_packages() -> None:
     script_dir = os.path.dirname(os.path.abspath(__file__))
     candidates = [
         os.environ.get("LAYER1_PYDEPS_PATH", ""),
+        os.path.normpath(os.path.join(script_dir, "..", "pydeps_runtime")),
+        os.path.normpath(os.path.join(script_dir, "..", "pydeps")),
         os.path.normpath(os.path.join(script_dir, "..", "..", "..", "pinshort_dataset_builder", "pydeps")),
     ]
 
     for candidate in candidates:
         if candidate and os.path.isdir(candidate) and candidate not in sys.path:
-            sys.path.insert(0, candidate)
+            sys.path.append(candidate)
 
 
 add_user_site_packages()

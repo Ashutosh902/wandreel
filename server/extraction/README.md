@@ -13,7 +13,7 @@ This folder is the single source of truth for all link-extraction logic.
 - Fallback: fetch HTML and parse OG/title/description
 5. If mode is `quick`, pipeline returns immediately with metadata.
 6. If mode is `deep`, enrichment runs conditionally:
-- Transcript (`transcript.ts`): YouTube captions -> Whisper fallback
+- Transcript (`transcript.ts`): YouTube captions -> Whisper fallback; Instagram/social video -> Whisper
 - OCR (`ocr.ts`): frame text extraction for video/social links
 7. Unified JSON response is returned.
 
