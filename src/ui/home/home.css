@@ -2159,6 +2159,33 @@
   color: #445164;
 }
 
+.wr-add-preview-evidence {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+
+.wr-add-preview-meta {
+  margin-top: 0.22rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.wr-add-preview-meta span {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid #e7ddd1;
+  background: #fff7f0;
+  color: #8e4d2a;
+  padding: 0.18rem 0.38rem;
+  font-size: 10.4px;
+  font-weight: 850;
+  line-height: 1.15;
+}
+
 .wr-add-preview-actions {
   margin-top: 0.44rem;
   display: grid;

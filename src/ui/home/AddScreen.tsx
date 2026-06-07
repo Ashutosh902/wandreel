@@ -4,6 +4,7 @@ import { useUx } from "../layout/UxProvider";
 import {
   ADD_DRAFT_UPDATED_EVENT,
   ADD_PROCESSING_STARTED_EVENT,
+  addReadyNotification,
   categoryFallbackImage,
   clearReviewRunId,
   clearPersistedAddDraft,
@@ -27,6 +28,7 @@ import {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
 const IS_DEV = import.meta.env.DEV;
+const ADD_INTELLIGENCE_TIMEOUT_MS = 120000;
 const LEGACY_ADD_STORAGE_KEYS = [
   "wandreel_add_url",
   "lastAnalyzedLink",
@@ -82,7 +84,7 @@ export function AddScreen() {
   const [hasAnalyzed, setHasAnalyzed] = useState(false);
   const [selectedDetectedCategory, setSelectedDetectedCategory] = useState<"Auto-detect" | DetectedCategory>("Auto-detect");
   const [detectedPlaces, setDetectedPlaces] = useState<DetectedPlace[]>([]);
-  const [activeRunId, setActiveRunId] = useState<number | null>(null);
+  const [activePreviewKey, setActivePreviewKey] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState("");
   const [savedPlaceIds, setSavedPlaceIds] = useState<Set<string>>(new Set());
   const [isEditing, setIsEditing] = useState(false);
@@ -129,13 +131,15 @@ export function AddScreen() {
     selectedDetectedCategory: "Auto-detect" | DetectedCategory;
     isPreviewVisible: boolean;
     linkInput: string;
-    pendingJobs: PendingDetectionJob[];
+      pendingJobs: PendingDetectionJob[];
   }) => {
     setLinkInput(draft.linkInput || "");
     setHasAnalyzed(draft.detectedPlaces.length > 0 || draft.pendingJobs.length > 0);
     setSelectedDetectedCategory(draft.pendingJobs.length > 0 ? "Auto-detect" : draft.selectedDetectedCategory || "Auto-detect");
     setDetectedPlaces(Array.isArray(draft.detectedPlaces) ? draft.detectedPlaces : []);
-    setActiveRunId(draft.pendingJobs[0]?.runId ?? draft.detectedPlaces[0]?.runId ?? null);
+    setActivePreviewKey(
+      draft.pendingJobs[0] ? `pending-${draft.pendingJobs[0].runId}` : draft.detectedPlaces[0]?.id ?? null,
+    );
     setPendingJobs(Array.isArray(draft.pendingJobs) ? draft.pendingJobs : []);
     setIsAnalyzing(false);
   };
@@ -147,7 +151,7 @@ export function AddScreen() {
     setHasAnalyzed(false);
     setSelectedDetectedCategory("Auto-detect");
     setDetectedPlaces([]);
-    setActiveRunId(null);
+    setActivePreviewKey(null);
     setSaveMessage("");
     setSavedPlaceIds(new Set());
     setIsEditing(false);
@@ -216,12 +220,12 @@ export function AddScreen() {
     return [...loadingCards, ...resolvedCards].sort((left, right) => right.sortOrder - left.sortOrder);
   }, [detectedPlaces, pendingJobs, selectedDetectedCategory]);
 
-  const shouldShowDetectedSection = previewCards.length > 0;
+  const shouldShowDetectedSection = previewCards.length > 0 || (hasAnalyzed && !isAnalyzing);
   const autoDetectCount = detectedPlaces.length + pendingJobs.length;
 
   const activePreviewCard = useMemo(
-    () => previewCards.find((card) => card.runId === activeRunId) ?? previewCards[0] ?? null,
-    [activeRunId, previewCards],
+    () => previewCards.find((card) => card.key === activePreviewKey) ?? previewCards[0] ?? null,
+    [activePreviewKey, previewCards],
   );
   const editingPlace = useMemo(
     () => detectedPlaces.find((item) => item.id === editingPlaceId) ?? null,
@@ -230,13 +234,13 @@ export function AddScreen() {
 
   useEffect(() => {
     if (!previewCards.length) {
-      setActiveRunId(null);
+      setActivePreviewKey(null);
       return;
     }
-    if (activeRunId === null || !previewCards.some((card) => card.runId === activeRunId)) {
-      setActiveRunId(previewCards[0].runId);
+    if (activePreviewKey === null || !previewCards.some((card) => card.key === activePreviewKey)) {
+      setActivePreviewKey(previewCards[0].key);
     }
-  }, [activeRunId, previewCards]);
+  }, [activePreviewKey, previewCards]);
 
   useEffect(() => {
     if (!editingPlace) return;
@@ -376,6 +380,21 @@ export function AddScreen() {
     return "Web Link";
   };
 
+  const formatPreviewLocation = (place: DetectedPlace) => {
+    return [place.locality, place.city].filter(Boolean).join(", ") || place.locality || "Unknown locality";
+  };
+
+  const formatConfidenceLabel = (confidence?: DetectedPlace["confidence"]) => {
+    if (!confidence) return null;
+    return `${confidence.charAt(0).toUpperCase()}${confidence.slice(1)} confidence`;
+  };
+
+  const formatEvidenceText = (place: DetectedPlace) => {
+    const evidence = String(place.evidenceText || "").trim();
+    if (!evidence) return "Needs review before saving.";
+    return evidence.length > 120 ? `${evidence.slice(0, 117)}...` : evidence;
+  };
+
   const inferDraftCategory = (text: string): DetectedCategory => {
     const normalized = text.toLowerCase();
     if (/(restaurant|cafe|café|biryani|bakery|breakfast|lunch|dinner|chai|dessert|kitchen|food|eatery)/i.test(normalized)) {
@@ -432,6 +451,8 @@ export function AddScreen() {
       imageUrl,
       fullAddress: "Resolving full address...",
       videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || linkInput.trim(),
+      confidence: null,
+      evidenceText: null,
       placeId: null,
       lat: null,
       lng: null,
@@ -540,7 +561,7 @@ export function AddScreen() {
       (item) => item.sourceUrl === normalizedSourceUrl && item.runId !== options?.runId,
     );
     if (existingPending) {
-      setActiveRunId(existingPending.runId);
+      setActivePreviewKey(`pending-${existingPending.runId}`);
       setSelectedDetectedCategory("Auto-detect");
       showToast({ message: "This link is already being analyzed.", variant: "info" });
       return;
@@ -560,6 +581,8 @@ export function AddScreen() {
         imageUrl: categoryFallbackImage.Explore,
         fullAddress: "Unknown locality",
         videoUrl: normalizedSourceUrl,
+        confidence: null,
+        evidenceText: null,
         placeId: null,
         lat: null,
         lng: null,
@@ -573,7 +596,7 @@ export function AddScreen() {
     setIsAnalyzing(true);
     setSaveMessage("");
     setSelectedDetectedCategory("Auto-detect");
-    setActiveRunId(runId);
+    setActivePreviewKey(`pending-${runId}`);
     setLinkInput(normalizedSourceUrl);
 
     const startedAt = Date.now();
@@ -672,6 +695,94 @@ export function AddScreen() {
       showToast({ message: "This link could not be analyzed.", variant: "error" });
     }
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    let isPolling = false;
+
+    const pollPendingJobs = async () => {
+      if (isPolling || !pendingJobsRef.current.length) return;
+      isPolling = true;
+
+      try {
+        let nextPlaces = detectedPlacesRef.current;
+        let nextPendingJobs = pendingJobsRef.current;
+        let didChange = false;
+
+        for (const pending of pendingJobsRef.current) {
+          if (!pending.jobId) continue;
+
+          try {
+            const response = await fetch(`${API_BASE_URL}/api/intelligence/jobs/${pending.jobId}`);
+            const payload = await response.json();
+            const job = payload?.job;
+            if (!response.ok || !job) continue;
+
+            if (job.status === "completed") {
+              const entities = (job.result?.output?.structuredEntities || []) as IntelligenceEntity[];
+              const resolvedPlaces = mapEntitiesToPlaces(
+                entities,
+                {
+                  source: pending.source,
+                  imageUrl: pending.imageUrl,
+                  videoUrl: pending.videoUrl,
+                  sourceUrl: pending.sourceUrl,
+                },
+                pending.runId,
+              );
+              nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, resolvedPlaces.length ? resolvedPlaces : [pending.fallbackPlace]);
+              nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
+              didChange = true;
+
+              const readyPlace = resolvedPlaces[0] || pending.fallbackPlace;
+              addReadyNotification({
+                id: `ready-${pending.jobId}`,
+                runId: pending.runId,
+                jobId: pending.jobId,
+                placeId: readyPlace.placeId || readyPlace.id,
+                placeName: readyPlace.name,
+                category: readyPlace.category,
+                locality: readyPlace.locality,
+                source: readyPlace.source,
+                imageUrl: readyPlace.imageUrl,
+                createdAtMs: Date.now(),
+              });
+            } else if (job.status === "failed" || Date.now() - pending.startedAtMs >= ADD_INTELLIGENCE_TIMEOUT_MS) {
+              nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, [pending.fallbackPlace]);
+              nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
+              didChange = true;
+            }
+          } catch {
+            if (Date.now() - pending.startedAtMs >= ADD_INTELLIGENCE_TIMEOUT_MS) {
+              nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, [pending.fallbackPlace]);
+              nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
+              didChange = true;
+            }
+          }
+        }
+
+        if (!cancelled && didChange) {
+          syncDraftState(nextPlaces, nextPendingJobs, nextPendingJobs.length ? linkInput : "");
+          setSelectedDetectedCategory("Auto-detect");
+        }
+      } finally {
+        isPolling = false;
+      }
+    };
+
+    void pollPendingJobs();
+    const intervalId = window.setInterval(() => void pollPendingJobs(), 1800);
+    const onResume = () => void pollPendingJobs();
+    document.addEventListener("visibilitychange", onResume);
+    window.addEventListener("focus", onResume);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+      document.removeEventListener("visibilitychange", onResume);
+      window.removeEventListener("focus", onResume);
+    };
+  }, [linkInput]);
 
   useEffect(() => {
     let cancelled = false;
@@ -811,6 +922,8 @@ export function AddScreen() {
             source: place.source,
             imageUrl: place.imageUrl,
             videoUrl: place.videoUrl,
+            confidence: place.confidence ?? null,
+            evidenceText: place.evidenceText ?? null,
             lat: place.lat ?? null,
             lng: place.lng ?? null,
             city: place.city ?? null,
@@ -857,7 +970,7 @@ export function AddScreen() {
     if (card.kind === "pending") {
       const nextPlaces = replaceRunPlaces(detectedPlacesRef.current, card.runId);
       const nextPendingJobs = pendingJobsRef.current.filter((item) => item.runId !== card.runId);
-      syncDraftState(nextPlaces, nextPendingJobs, activeRunId === card.runId ? "" : linkInput);
+      syncDraftState(nextPlaces, nextPendingJobs, activePreviewKey === card.key ? "" : linkInput);
       removeReadyNotificationByRunId(card.runId);
       setIsEditing(false);
       setEditingPlaceId(null);
@@ -951,8 +1064,8 @@ export function AddScreen() {
                   card.kind === "pending" ? (
                     <article
                       key={card.key}
-                      className={`wr-add-preview-card wr-add-preview-card-loading ${activePreviewCard?.runId === card.runId ? "is-active" : ""}`}
-                      onClick={() => setActiveRunId(card.runId)}
+                      className={`wr-add-preview-card wr-add-preview-card-loading ${activePreviewCard?.key === card.key ? "is-active" : ""}`}
+                      onClick={() => setActivePreviewKey(card.key)}
                     >
                       <button type="button" className="wr-add-preview-close" aria-label="Close preview card" onClick={(event) => { event.stopPropagation(); handleDismissPreview(card); }}><X size={14} /></button>
                       <div className="wr-add-preview-loading-visual" aria-hidden="true">
@@ -972,23 +1085,27 @@ export function AddScreen() {
                   ) : (
                     <article
                       key={card.key}
-                      className={`wr-add-preview-card ${removingPlaceId === card.place.id ? "is-removing" : ""} ${activePreviewCard?.runId === card.runId ? "is-active" : ""}`}
-                      onClick={() => setActiveRunId(card.runId)}
+                      className={`wr-add-preview-card ${removingPlaceId === card.place.id ? "is-removing" : ""} ${activePreviewCard?.key === card.key ? "is-active" : ""}`}
+                      onClick={() => setActivePreviewKey(card.key)}
                     >
                       <button type="button" className="wr-add-preview-close" aria-label="Close preview card" onClick={(event) => { event.stopPropagation(); handleDismissPreview(card); }}><X size={14} /></button>
                       <img src={card.place.imageUrl} alt={card.place.name} className="wr-add-preview-image" />
                       <div className="wr-add-preview-body">
                         <p className="wr-add-preview-kicker">DETECTED PREVIEW {index + 1} OF {previewCards.length}</p>
                         <h4>{card.place.name}</h4>
-                        <p>{card.place.category} · {card.place.locality}</p>
-                        <p>From {card.place.source}</p>
+                        <p>{card.place.category} · {formatPreviewLocation(card.place)}</p>
+                        <p className="wr-add-preview-evidence">{formatEvidenceText(card.place)}</p>
+                        <div className="wr-add-preview-meta">
+                          <span>From {card.place.source}</span>
+                          {formatConfidenceLabel(card.place.confidence) ? <span>{formatConfidenceLabel(card.place.confidence)}</span> : null}
+                        </div>
                         <div className="wr-add-preview-actions">
                           <button
                             type="button"
                             className="wr-add-preview-btn"
                             onClick={(event) => {
                               event.stopPropagation();
-                              setActiveRunId(card.runId);
+                              setActivePreviewKey(card.key);
                               setEditingPlaceId(card.place.id);
                               setIsEditing(true);
                             }}
@@ -1022,7 +1139,11 @@ export function AddScreen() {
                 ))}
               </div>
             ) : (
-              <article className="wr-add-empty-state" aria-label="No preview for selected category">No places in this category yet.</article>
+              <article className="wr-add-empty-state" aria-label="No preview for selected category">
+                {selectedDetectedCategory === "Auto-detect"
+                  ? "No detected places are ready yet. This reel may need review."
+                  : "No places in this category yet."}
+              </article>
             )}
 
             {saveMessage ? <p className="wr-add-save-toast">{saveMessage}</p> : null}

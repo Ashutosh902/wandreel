@@ -50,7 +50,7 @@ runHomeDataChecks();
 const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Login"];
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
-const ADD_INTELLIGENCE_TIMEOUT_MS = 45000;
+const ADD_INTELLIGENCE_TIMEOUT_MS = 120000;
 const DISMISSED_READY_NOTIFICATION_IDS_KEY = "wr_dismissed_ready_notification_ids_v1";
 
 type HeroMode = "empty-memory" | "city-memory";

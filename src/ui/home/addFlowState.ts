@@ -11,6 +11,8 @@ export type DetectedPlace = {
   imageUrl: string;
   fullAddress: string;
   videoUrl: string;
+  confidence?: "high" | "medium" | "low" | null;
+  evidenceText?: string | null;
   placeId?: string | null;
   lat?: number | null;
   lng?: number | null;
@@ -31,6 +33,8 @@ export type IntelligenceEntity = {
   photoUrl?: string | null;
   lat?: number | null;
   lng?: number | null;
+  confidence?: "high" | "medium" | "low";
+  evidenceText?: string | null;
 };
 
 export type PendingDetectionJob = {
@@ -116,13 +120,15 @@ export function readPersistedAddDraft(): PersistedAddDraft | null {
                     category: "Explore",
                     locality: "Unknown locality",
                     source: item.source || "Web Link",
-                    imageUrl: item.imageUrl || categoryFallbackImage.Explore,
-                    fullAddress: "Unknown locality",
-                    videoUrl: item.videoUrl || item.sourceUrl || "",
-                    placeId: null,
-                    lat: null,
-                    lng: null,
-                    city: null,
+                  imageUrl: item.imageUrl || categoryFallbackImage.Explore,
+                  fullAddress: "Unknown locality",
+                  videoUrl: item.videoUrl || item.sourceUrl || "",
+                  confidence: null,
+                  evidenceText: null,
+                  placeId: null,
+                  lat: null,
+                  lng: null,
+                  city: null,
                     state: null,
                     country: null,
                   },
@@ -221,6 +227,8 @@ export function mapEntitiesToPlaces(
         imageUrl: entity.photoUrl || defaults.imageUrl || categoryFallbackImage[mapped],
         fullAddress,
         videoUrl: defaults.videoUrl,
+        confidence: entity.confidence ?? null,
+        evidenceText: entity.evidenceText ?? null,
         placeId: entity.placeId ?? null,
         lat: entity.lat ?? null,
         lng: entity.lng ?? null,
