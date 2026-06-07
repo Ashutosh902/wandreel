@@ -248,13 +248,32 @@ export function CategoryDetailPage({
   };
 
   const deleteCategoryPlace = async (place: CategoryPlaceRow) => {
+    const persistedPlaceId = String(place.placeId || place.id || "").trim();
+    if (!persistedPlaceId) {
+      showToast({ message: "Could not delete this card right now.", variant: "error" });
+      return;
+    }
+
     updateSavedFeedPlace(place, category, true);
-    if (place.placeId) {
-      fetch(`${API_BASE_URL}/api/saved-places/${encodeURIComponent(place.placeId)}`, {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/saved-places/${encodeURIComponent(persistedPlaceId)}`, {
         method: "DELETE",
         credentials: "include",
-      }).catch(() => undefined);
+      });
+
+      if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error("Please log in to delete saved places.");
+        }
+        throw new Error("Could not delete this card right now.");
+      }
+    } catch (error) {
+      updateSavedFeedPlace(place, category, false);
+      const message = error instanceof Error ? error.message : "Could not delete this card right now.";
+      showToast({ message, variant: "error" });
+      return;
     }
+
     setActivePlace(null);
     setEditingCategoryPlace(null);
     showToast({ message: "Card deleted", variant: "info" });
