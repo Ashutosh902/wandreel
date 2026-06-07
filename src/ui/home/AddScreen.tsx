@@ -29,6 +29,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787
 const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
 const IS_DEV = import.meta.env.DEV;
 const ADD_INTELLIGENCE_TIMEOUT_MS = 120000;
+const MAX_PREVIEW_RETRIES = 3;
 const LEGACY_ADD_STORAGE_KEYS = [
   "wandreel_add_url",
   "lastAnalyzedLink",
@@ -395,6 +396,30 @@ export function AddScreen() {
     return evidence.length > 120 ? `${evidence.slice(0, 117)}...` : evidence;
   };
 
+  const isNeedsManualReview = (place: DetectedPlace) => {
+    const normalizedName = place.name.trim().toLowerCase();
+    const normalizedLocality = place.locality.trim().toLowerCase();
+    const hasEvidence = Boolean(String(place.evidenceText || "").trim());
+    return (
+      normalizedName === "detected place" ||
+      normalizedLocality === "unknown locality" ||
+      (!place.placeId && !hasEvidence)
+    );
+  };
+
+  const getRetryCountLabel = (retryCount: number) => {
+    if (retryCount <= 0) return null;
+    return `Retry ${Math.min(retryCount, MAX_PREVIEW_RETRIES)} of ${MAX_PREVIEW_RETRIES}`;
+  };
+
+  const getCardRetryCount = (card: PreviewCard) => (
+    card.kind === "pending"
+      ? card.pending.retryCount
+      : card.place.retryCount ?? 0
+  );
+
+  const hasRetrySlotsLeft = (retryCount: number) => retryCount < MAX_PREVIEW_RETRIES;
+
   const inferDraftCategory = (text: string): DetectedCategory => {
     const normalized = text.toLowerCase();
     if (/(restaurant|cafe|café|biryani|bakery|breakfast|lunch|dinner|chai|dessert|kitchen|food|eatery)/i.test(normalized)) {
@@ -432,7 +457,12 @@ export function AddScreen() {
     return /(^@)|(^follow\s+@)|(@\w+)/i.test(candidateName) ? "Detected place" : candidateName.slice(0, 80);
   };
 
-  const toDraftPlace = (extraction: ExtractionApiResponse, runId: number, sourceUrl: string): DetectedPlace => {
+  const toDraftPlace = (
+    extraction: ExtractionApiResponse,
+    runId: number,
+    sourceUrl: string,
+    retryCount = 0,
+  ): DetectedPlace => {
     const platformSource = sourceLabelFromPlatform(extraction.metadata?.platform);
     const rawTitle = extraction.metadata?.title?.trim() || "";
     const rawDesc = extraction.metadata?.description?.trim() || "";
@@ -444,6 +474,7 @@ export function AddScreen() {
       id: `draft-${Date.now()}`,
       runId,
       sourceUrl,
+      retryCount,
       name: draftName,
       category: draftCategory,
       locality: "Resolving locality...",
@@ -537,7 +568,7 @@ export function AddScreen() {
     }, 260);
   };
 
-  const runAnalysis = async (sourceUrl: string, options?: { runId?: number }) => {
+  const runAnalysis = async (sourceUrl: string, options?: { runId?: number; isRetry?: boolean }) => {
     if (isAnalyzing) return;
     if (isOffline) {
       showToast({ message: "This link could not be analyzed.", variant: "error" });
@@ -568,12 +599,25 @@ export function AddScreen() {
     }
 
     const runId = options?.runId ?? Date.now();
-    const existingPlace = detectedPlacesRef.current.find((item) => item.runId === runId) ?? null;
+    const existingPlacesForRun = detectedPlacesRef.current.filter((item) => item.runId === runId);
+    const existingPlace = existingPlacesForRun[0] ?? null;
+    const existingPendingForRun = pendingJobsRef.current.find((item) => item.runId === runId) ?? null;
+    const existingRetryCount = Math.max(
+      existingPendingForRun?.retryCount ?? 0,
+      ...existingPlacesForRun.map((item) => item.retryCount ?? 0),
+      existingPlace?.retryCount ?? 0,
+    );
+    const retryCount = options?.isRetry ? existingRetryCount + 1 : existingRetryCount;
+    if (options?.isRetry && retryCount > MAX_PREVIEW_RETRIES) {
+      showToast({ message: "Please edit the details manually from here.", variant: "info" });
+      return;
+    }
     const fallbackPlace: DetectedPlace =
       existingPlace ?? {
         id: `fallback-${runId}`,
         runId,
         sourceUrl: normalizedSourceUrl,
+        retryCount,
         name: "Detected place",
         category: inferDraftCategory(normalizedSourceUrl),
         locality: "Unknown locality",
@@ -590,6 +634,12 @@ export function AddScreen() {
         state: null,
         country: null,
       };
+    const nextFallbackPlace = {
+      ...fallbackPlace,
+      sourceUrl: normalizedSourceUrl,
+      retryCount,
+      videoUrl: normalizedSourceUrl,
+    };
 
     analyzeRunRef.current = runId;
     window.dispatchEvent(new CustomEvent(ADD_PROCESSING_STARTED_EVENT));
@@ -605,10 +655,12 @@ export function AddScreen() {
       jobId: "",
       startedAtMs: startedAt,
       sourceUrl: normalizedSourceUrl,
-      source: fallbackPlace.source,
-      imageUrl: fallbackPlace.imageUrl,
+      retryCount,
+      isRetrying: Boolean(options?.isRetry),
+      source: nextFallbackPlace.source,
+      imageUrl: nextFallbackPlace.imageUrl,
       videoUrl: normalizedSourceUrl,
-      fallbackPlace,
+      fallbackPlace: nextFallbackPlace,
     };
 
     const nextDraftPlaces = replaceRunPlaces(detectedPlacesRef.current, runId);
@@ -626,7 +678,7 @@ export function AddScreen() {
 
       if (analyzeRunRef.current !== runId) return;
 
-      const draftPlace = toDraftPlace(extraction, runId, normalizedSourceUrl);
+      const draftPlace = toDraftPlace(extraction, runId, normalizedSourceUrl, retryCount);
       const extractionPendingJob: PendingDetectionJob = {
         ...pendingDraft,
         source: sourceLabelFromPlatform(extraction.metadata?.platform),
@@ -657,6 +709,7 @@ export function AddScreen() {
           imageUrl: extraction.metadata?.imageUrl || categoryFallbackImage[draftPlace.category],
           videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || normalizedSourceUrl,
           sourceUrl: normalizedSourceUrl,
+          retryCount,
         },
         runId,
       );
@@ -727,6 +780,7 @@ export function AddScreen() {
                   imageUrl: pending.imageUrl,
                   videoUrl: pending.videoUrl,
                   sourceUrl: pending.sourceUrl,
+                  retryCount: pending.retryCount,
                 },
                 pending.runId,
               );
@@ -954,7 +1008,7 @@ export function AddScreen() {
 
   const handleRefreshInput = () => {
     if (activePreviewCard) {
-      void runAnalysis(activePreviewCard.sourceUrl, { runId: activePreviewCard.runId });
+      void runAnalysis(activePreviewCard.sourceUrl, { runId: activePreviewCard.runId, isRetry: true });
       logAddScreenState("AddScreen refresh reset");
       return;
     }
@@ -964,6 +1018,15 @@ export function AddScreen() {
     }
     void runAnalysis(linkInput.trim());
     logAddScreenState("AddScreen refresh reset");
+  };
+
+  const handleRetryPreview = (card: PreviewCard) => {
+    const retryCount = getCardRetryCount(card);
+    if (!hasRetrySlotsLeft(retryCount)) {
+      showToast({ message: "Please edit the details manually from here.", variant: "info" });
+      return;
+    }
+    void runAnalysis(card.sourceUrl, { runId: card.runId, isRetry: true });
   };
 
   const handleDismissPreview = (card: PreviewCard) => {
@@ -1062,6 +1125,12 @@ export function AddScreen() {
               <div className="wr-add-preview-stack">
                 {previewCards.map((card, index) => (
                   card.kind === "pending" ? (
+                    (() => {
+                      const retryCount = card.pending.retryCount;
+                      const retryCountLabel = getRetryCountLabel(retryCount);
+                      const isRetrying = card.pending.isRetrying;
+                      const isRetryDisabled = true;
+                      return (
                     <article
                       key={card.key}
                       className={`wr-add-preview-card wr-add-preview-card-loading ${activePreviewCard?.key === card.key ? "is-active" : ""}`}
@@ -1075,14 +1144,32 @@ export function AddScreen() {
                       <div className="wr-add-preview-body">
                         <p className="wr-add-preview-kicker">PROCESSING PREVIEW {index + 1} OF {previewCards.length}</p>
                         <h4>Finding place details...</h4>
-                        <p>We're fetching the info for you.</p>
+                        <p>{isRetrying ? "We’re taking another look with our best model." : "We're fetching the info for you."}</p>
                         <p>Keep scrolling - come back anytime to save it.</p>
+                        {retryCountLabel ? <p className="wr-add-preview-retry-note">{retryCountLabel}</p> : null}
                         <div className="wr-add-preview-actions">
-                          <button type="button" className="wr-add-preview-btn" onClick={(event) => { event.stopPropagation(); void runAnalysis(card.sourceUrl, { runId: card.runId }); }}>Refresh</button>
+                          <button
+                            type="button"
+                            className="wr-add-preview-btn"
+                            disabled={isRetryDisabled}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              handleRetryPreview(card);
+                            }}
+                          >
+                            Retry
+                          </button>
                         </div>
                       </div>
                     </article>
+                      );
+                    })()
                   ) : (
+                    (() => {
+                      const retryCount = card.place.retryCount ?? 0;
+                      const retryCountLabel = getRetryCountLabel(retryCount);
+                      const isRetryExhausted = retryCount >= MAX_PREVIEW_RETRIES && isNeedsManualReview(card.place);
+                      return (
                     <article
                       key={card.key}
                       className={`wr-add-preview-card ${removingPlaceId === card.place.id ? "is-removing" : ""} ${activePreviewCard?.key === card.key ? "is-active" : ""}`}
@@ -1098,7 +1185,11 @@ export function AddScreen() {
                         <div className="wr-add-preview-meta">
                           <span>From {card.place.source}</span>
                           {formatConfidenceLabel(card.place.confidence) ? <span>{formatConfidenceLabel(card.place.confidence)}</span> : null}
+                          {retryCountLabel ? <span>{retryCountLabel}</span> : null}
                         </div>
+                        {isRetryExhausted ? (
+                          <p className="wr-add-preview-retry-limit">This one’s on us — we couldn’t extract it properly. Please edit the details manually.</p>
+                        ) : null}
                         <div className="wr-add-preview-actions">
                           <button
                             type="button"
@@ -1115,12 +1206,13 @@ export function AddScreen() {
                           <button
                             type="button"
                             className="wr-add-preview-btn"
+                            disabled={isRetryExhausted}
                             onClick={(event) => {
                               event.stopPropagation();
-                              void runAnalysis(card.sourceUrl, { runId: card.runId });
+                              handleRetryPreview(card);
                             }}
                           >
-                            Refresh
+                            Retry
                           </button>
                           <button
                             type="button"
@@ -1135,6 +1227,8 @@ export function AddScreen() {
                         </div>
                       </div>
                     </article>
+                      );
+                    })()
                   )
                 ))}
               </div>

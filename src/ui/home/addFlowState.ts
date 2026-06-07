@@ -4,6 +4,7 @@ export type DetectedPlace = {
   id: string;
   runId: number;
   sourceUrl: string;
+  retryCount?: number;
   name: string;
   category: DetectedCategory;
   locality: string;
@@ -42,6 +43,8 @@ export type PendingDetectionJob = {
   jobId: string;
   startedAtMs: number;
   sourceUrl: string;
+  retryCount: number;
+  isRetrying?: boolean;
   source: string;
   imageUrl: string;
   videoUrl: string;
@@ -107,15 +110,19 @@ export function readPersistedAddDraft(): PersistedAddDraft | null {
               ...item,
               jobId: item.jobId || "",
               sourceUrl: item.sourceUrl || item.videoUrl || item.fallbackPlace?.sourceUrl || "",
+              retryCount: Number.isFinite(item.retryCount) ? item.retryCount : item.fallbackPlace?.retryCount || 0,
+              isRetrying: Boolean(item.isRetrying),
               fallbackPlace: item.fallbackPlace
                 ? {
                     ...item.fallbackPlace,
                     sourceUrl: item.fallbackPlace.sourceUrl || item.videoUrl || "",
+                    retryCount: Number.isFinite(item.fallbackPlace.retryCount) ? item.fallbackPlace.retryCount : item.retryCount || 0,
                   }
                 : {
                     id: `fallback-${item.runId}`,
                     runId: item.runId,
                     sourceUrl: item.sourceUrl || item.videoUrl || "",
+                    retryCount: Number.isFinite(item.retryCount) ? item.retryCount : 0,
                     name: "Detected place",
                     category: "Explore",
                     locality: "Unknown locality",
@@ -207,7 +214,7 @@ export function mapCategory(category: IntelligenceEntity["category"]): DetectedC
 
 export function mapEntitiesToPlaces(
   entities: IntelligenceEntity[],
-  defaults: { source: string; imageUrl: string; videoUrl: string; sourceUrl: string },
+  defaults: { source: string; imageUrl: string; videoUrl: string; sourceUrl: string; retryCount?: number },
   runId: number,
 ): DetectedPlace[] {
   return entities
@@ -220,6 +227,7 @@ export function mapEntitiesToPlaces(
         id: `${mapped}-${entity.name}-${index}`.toLowerCase().replace(/\s+/g, "-"),
         runId,
         sourceUrl: defaults.sourceUrl,
+        retryCount: defaults.retryCount ?? 0,
         name: entity.name,
         category: mapped,
         locality,

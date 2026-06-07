@@ -385,7 +385,13 @@ export function HomeScreen() {
             const entities = (job.result?.output?.structuredEntities || []) as IntelligenceEntity[];
             const resolvedPlaces = mapEntitiesToPlaces(
               entities,
-              { source: pending.source, imageUrl: pending.imageUrl, videoUrl: pending.videoUrl, sourceUrl: pending.sourceUrl },
+              {
+                source: pending.source,
+                imageUrl: pending.imageUrl,
+                videoUrl: pending.videoUrl,
+                sourceUrl: pending.sourceUrl,
+                retryCount: pending.retryCount,
+              },
               pending.runId,
             );
             const withoutRun = nextPlaces.filter((item) => item.runId !== pending.runId);
