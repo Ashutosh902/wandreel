@@ -7,20 +7,23 @@ import { phoneOtpStore } from "./auth/phoneOtpStore";
 import {
   buildClearSessionCookie,
   buildSessionCookie,
+  createReelAnalyticsAttempt,
   createOrReuseEmailVerifiedUser,
   createSession,
+  deleteSavedPlace,
   ensureAuthSchema,
+  finalizeReelAnalyticsAttempt,
   findSessionUser,
   getSessionCookieName,
   isPostgresConfigured,
   issueEmailOtp,
   listSavedPlaces,
+  recordReelAnalyticsEvent,
   revokeSession,
   upsertGoogleVerifiedUser,
   upsertSavedPlace,
   updateDisplayName,
   verifyEmailOtp,
-  deleteSavedPlace,
 } from "./auth/postgresAuth";
 import { featureFlags } from "./featureFlags";
 
@@ -68,6 +71,18 @@ async function requireAuth(req: express.Request, res: express.Response, next: ex
     const message = error instanceof Error ? error.message : "Unauthorized";
     return res.status(401).json({ ok: false, error: message });
   }
+}
+
+async function optionalAuth(req: express.Request, _res: express.Response, next: express.NextFunction) {
+  try {
+    const user = await resolveSessionUser(req);
+    if (user) {
+      (req as express.Request & { authUser?: NonNullable<typeof user> }).authUser = user;
+    }
+  } catch {
+    // Analytics should not fail because auth lookup was unavailable.
+  }
+  next();
 }
 
 if (isPostgresConfigured()) {
@@ -311,7 +326,26 @@ app.get("/api/metadata/jobs/:jobId", async (req, res) => {
   return res.json({ ok: true, job });
 });
 
-app.post("/api/intelligence/extract", async (req, res) => {
+async function createAnalyticsAttemptFromRequest(
+  req: express.Request,
+  source: any,
+) {
+  if (!isPostgresConfigured()) return null;
+  const analyticsPayload = req.body?.analytics && typeof req.body.analytics === "object" ? req.body.analytics : null;
+  if (!analyticsPayload?.clientRunId) return null;
+  const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+  return createReelAnalyticsAttempt({
+    clientRunId: String(analyticsPayload.clientRunId),
+    userId: authUser?.userId ?? null,
+    anonymousId: analyticsPayload?.anonymousId ? String(analyticsPayload.anonymousId) : null,
+    sourceUrl: String(source?.metadata?.canonicalUrl || source?.metadata?.sourceUrl || source?.source || ""),
+    sourcePlatform: source?.metadata?.platform ? String(source.metadata.platform) : null,
+    attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
+    triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
+  });
+}
+
+app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
   try {
     const modeRaw = String(req.body?.mode || "sync").trim().toLowerCase();
     const mode: IntelligenceMode =
@@ -327,7 +361,20 @@ app.post("/api/intelligence/extract", async (req, res) => {
     }
 
     if (mode === "async") {
-      const job = await intelligenceJobStore.create({ source });
+      const attemptRecord = await createAnalyticsAttemptFromRequest(req, source);
+      const analyticsPayload = req.body?.analytics && typeof req.body.analytics === "object" ? req.body.analytics : null;
+      const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+      const job = await intelligenceJobStore.create({
+        source,
+        analytics: {
+          attemptId: attemptRecord?.attemptId ?? null,
+          clientRunId: analyticsPayload?.clientRunId ? String(analyticsPayload.clientRunId) : null,
+          attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
+          triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
+          anonymousId: analyticsPayload?.anonymousId ? String(analyticsPayload.anonymousId) : null,
+          userId: authUser?.userId ?? null,
+        },
+      });
       return res.status(202).json({
         ok: true,
         mode,
@@ -338,7 +385,20 @@ app.post("/api/intelligence/extract", async (req, res) => {
     }
 
     if (mode === "draft_async") {
-      const job = await intelligenceJobStore.create({ source });
+      const attemptRecord = await createAnalyticsAttemptFromRequest(req, source);
+      const analyticsPayload = req.body?.analytics && typeof req.body.analytics === "object" ? req.body.analytics : null;
+      const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+      const job = await intelligenceJobStore.create({
+        source,
+        analytics: {
+          attemptId: attemptRecord?.attemptId ?? null,
+          clientRunId: analyticsPayload?.clientRunId ? String(analyticsPayload.clientRunId) : null,
+          attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
+          triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
+          anonymousId: analyticsPayload?.anonymousId ? String(analyticsPayload.anonymousId) : null,
+          userId: authUser?.userId ?? null,
+        },
+      });
       const draftOutput = buildDraftIntelligenceOutput(source);
       return res.status(202).json({
         ok: true,
@@ -384,7 +444,24 @@ app.post("/api/intelligence/extract", async (req, res) => {
       });
     }
 
+    const attemptRecord = await createAnalyticsAttemptFromRequest(req, source);
     const result = await runIntelligencePipeline({ source });
+    if (attemptRecord?.attemptId) {
+      await finalizeReelAnalyticsAttempt({
+        attemptId: attemptRecord.attemptId,
+        status: "completed",
+        sourcePlatform: source?.metadata?.platform ? String(source.metadata.platform) : null,
+        model: result.providerMeta?.model ?? null,
+        inputTokens: result.usage?.inputTokens ?? null,
+        outputTokens: result.usage?.outputTokens ?? null,
+        totalTokens: result.usage?.totalTokens ?? null,
+        providerLatencyMs: result.timingsMs?.provider ?? null,
+        totalLatencyMs: result.timingsMs?.total ?? null,
+        entityCount: Array.isArray(result.output?.structuredEntities) ? result.output.structuredEntities.length : 0,
+        intelligenceStatus: result.output?.status ?? null,
+        validationErrorCount: Array.isArray(result.validationErrors) ? result.validationErrors.length : 0,
+      });
+    }
     return res.json({ ok: true, mode, ...result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "intelligence extraction failed";
@@ -404,6 +481,34 @@ app.get("/api/intelligence/jobs/:jobId", async (req, res) => {
   }
 
   return res.json({ ok: true, job });
+});
+
+app.post("/api/analytics/reel-event", optionalAuth, async (req, res) => {
+  try {
+    if (!isPostgresConfigured()) {
+      return res.status(204).end();
+    }
+    const clientRunId = String(req.body?.clientRunId || "").trim();
+    const eventName = String(req.body?.eventName || "").trim();
+    if (!clientRunId || !["saved", "edited", "discarded"].includes(eventName)) {
+      return res.status(400).json({ ok: false, error: "clientRunId and valid eventName are required" });
+    }
+    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+    await recordReelAnalyticsEvent({
+      clientRunId,
+      userId: authUser?.userId ?? null,
+      anonymousId: req.body?.anonymousId ? String(req.body.anonymousId).trim() : null,
+      sourceUrl: req.body?.sourceUrl ? String(req.body.sourceUrl).trim() : null,
+      sourcePlatform: req.body?.sourcePlatform ? String(req.body.sourcePlatform).trim() : null,
+      attemptNumber: Number(req.body?.attemptNumber) || null,
+      eventName: eventName as "saved" | "edited" | "discarded",
+      payload: req.body?.payload ?? {},
+    });
+    return res.status(201).json({ ok: true });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not record analytics event";
+    return res.status(400).json({ ok: false, error: message });
+  }
 });
 
 app.post("/api/auth/phone/request-otp", (req, res) => {

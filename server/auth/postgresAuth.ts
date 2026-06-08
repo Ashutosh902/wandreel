@@ -37,6 +37,10 @@ type SavedPlaceRecord = {
   updated_at: string;
 };
 
+type ReelAnalyticsRunRecord = {
+  id: string;
+};
+
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const SESSION_COOKIE_NAME = "wr_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
@@ -52,6 +56,47 @@ let schemaReady = false;
 export function isPostgresConfigured() {
   return Boolean(DATABASE_URL.trim());
 }
+
+export type ReelAnalyticsAttemptInput = {
+  clientRunId: string;
+  userId?: string | null;
+  anonymousId?: string | null;
+  sourceUrl: string;
+  sourcePlatform?: string | null;
+  attemptNumber: number;
+  triggerType: "initial" | "retry";
+};
+
+export type ReelAnalyticsAttemptResult = {
+  attemptId: string;
+};
+
+export type ReelAnalyticsAttemptCompletion = {
+  attemptId: string;
+  status: "completed" | "failed";
+  sourcePlatform?: string | null;
+  model?: string | null;
+  inputTokens?: number | null;
+  outputTokens?: number | null;
+  totalTokens?: number | null;
+  providerLatencyMs?: number | null;
+  totalLatencyMs?: number | null;
+  entityCount?: number | null;
+  intelligenceStatus?: string | null;
+  validationErrorCount?: number | null;
+  failureReason?: string | null;
+};
+
+export type ReelAnalyticsEventInput = {
+  clientRunId: string;
+  userId?: string | null;
+  anonymousId?: string | null;
+  sourceUrl?: string | null;
+  sourcePlatform?: string | null;
+  attemptNumber?: number | null;
+  eventName: "saved" | "edited" | "discarded";
+  payload?: unknown;
+};
 
 export async function ensureAuthSchema() {
   if (schemaReady) return;
@@ -119,6 +164,65 @@ export async function ensureAuthSchema() {
 
   await pool.query(`
     create index if not exists idx_user_saved_places_user_created on user_saved_places(user_id, created_at desc);
+  `);
+
+  await pool.query(`
+    create table if not exists reel_analytics_runs (
+      id uuid primary key default gen_random_uuid(),
+      client_run_id text not null unique,
+      user_id uuid references users(id) on delete set null,
+      anonymous_id text,
+      source_url text not null,
+      source_platform text,
+      latest_outcome text not null default 'started',
+      latest_attempt_number integer not null default 0,
+      first_saved_attempt_number integer,
+      first_edited_attempt_number integer,
+      first_discarded_attempt_number integer,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+  `);
+
+  await pool.query(`
+    create table if not exists reel_analytics_attempts (
+      id uuid primary key default gen_random_uuid(),
+      run_id uuid not null references reel_analytics_runs(id) on delete cascade,
+      attempt_number integer not null,
+      trigger_type text not null,
+      status text not null default 'queued',
+      source_url text not null,
+      source_platform text,
+      model text,
+      input_tokens integer,
+      output_tokens integer,
+      total_tokens integer,
+      provider_latency_ms integer,
+      total_latency_ms integer,
+      entity_count integer,
+      intelligence_status text,
+      validation_error_count integer,
+      failure_reason text,
+      created_at timestamptz not null default now(),
+      started_at timestamptz not null default now(),
+      completed_at timestamptz,
+      unique (run_id, attempt_number)
+    );
+  `);
+
+  await pool.query(`
+    create index if not exists idx_reel_analytics_attempts_run_attempt on reel_analytics_attempts(run_id, attempt_number desc);
+  `);
+
+  await pool.query(`
+    create table if not exists reel_analytics_events (
+      id uuid primary key default gen_random_uuid(),
+      run_id uuid not null references reel_analytics_runs(id) on delete cascade,
+      attempt_number integer,
+      event_name text not null,
+      payload_json jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now()
+    );
   `);
 
   schemaReady = true;
@@ -453,4 +557,153 @@ export async function deleteSavedPlace(userId: string, placeIdRaw: string) {
     [userId, placeId],
   );
   return { deleted: Number(result.rowCount || 0) > 0 };
+}
+
+async function upsertReelAnalyticsRun(input: {
+  clientRunId: string;
+  userId?: string | null;
+  anonymousId?: string | null;
+  sourceUrl: string;
+  sourcePlatform?: string | null;
+  latestAttemptNumber?: number;
+}) {
+  const result = await pool.query<ReelAnalyticsRunRecord>(
+    `
+      insert into reel_analytics_runs (
+        id, client_run_id, user_id, anonymous_id, source_url, source_platform, latest_attempt_number, created_at, updated_at
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, now(), now())
+      on conflict (client_run_id)
+      do update set
+        user_id = coalesce(excluded.user_id, reel_analytics_runs.user_id),
+        anonymous_id = coalesce(excluded.anonymous_id, reel_analytics_runs.anonymous_id),
+        source_url = excluded.source_url,
+        source_platform = coalesce(excluded.source_platform, reel_analytics_runs.source_platform),
+        latest_attempt_number = greatest(reel_analytics_runs.latest_attempt_number, excluded.latest_attempt_number),
+        updated_at = now()
+      returning id
+    `,
+    [
+      randomUUID(),
+      input.clientRunId,
+      input.userId ?? null,
+      input.anonymousId ?? null,
+      input.sourceUrl,
+      input.sourcePlatform ?? null,
+      input.latestAttemptNumber ?? 0,
+    ],
+  );
+  return result.rows[0]?.id || null;
+}
+
+export async function createReelAnalyticsAttempt(input: ReelAnalyticsAttemptInput): Promise<ReelAnalyticsAttemptResult | null> {
+  const runId = await upsertReelAnalyticsRun({
+    clientRunId: input.clientRunId,
+    userId: input.userId ?? null,
+    anonymousId: input.anonymousId ?? null,
+    sourceUrl: input.sourceUrl,
+    sourcePlatform: input.sourcePlatform ?? null,
+    latestAttemptNumber: input.attemptNumber,
+  });
+  if (!runId) return null;
+
+  const attemptId = randomUUID();
+  await pool.query(
+    `
+      insert into reel_analytics_attempts (
+        id, run_id, attempt_number, trigger_type, status, source_url, source_platform, created_at, started_at
+      )
+      values ($1, $2, $3, $4, 'queued', $5, $6, now(), now())
+      on conflict (run_id, attempt_number)
+      do update set
+        trigger_type = excluded.trigger_type,
+        status = 'queued',
+        source_url = excluded.source_url,
+        source_platform = coalesce(excluded.source_platform, reel_analytics_attempts.source_platform),
+        failure_reason = null,
+        completed_at = null,
+        started_at = now()
+    `,
+    [attemptId, runId, input.attemptNumber, input.triggerType, input.sourceUrl, input.sourcePlatform ?? null],
+  );
+
+  await pool.query(
+    "update reel_analytics_runs set latest_attempt_number = greatest(latest_attempt_number, $2), updated_at = now() where id = $1",
+    [runId, input.attemptNumber],
+  );
+
+  return { attemptId };
+}
+
+export async function finalizeReelAnalyticsAttempt(input: ReelAnalyticsAttemptCompletion) {
+  await pool.query(
+    `
+      update reel_analytics_attempts
+      set
+        status = $2,
+        source_platform = coalesce($3, source_platform),
+        model = coalesce($4, model),
+        input_tokens = $5,
+        output_tokens = $6,
+        total_tokens = $7,
+        provider_latency_ms = $8,
+        total_latency_ms = $9,
+        entity_count = $10,
+        intelligence_status = $11,
+        validation_error_count = $12,
+        failure_reason = $13,
+        completed_at = now()
+      where id = $1
+    `,
+    [
+      input.attemptId,
+      input.status,
+      input.sourcePlatform ?? null,
+      input.model ?? null,
+      input.inputTokens ?? null,
+      input.outputTokens ?? null,
+      input.totalTokens ?? null,
+      input.providerLatencyMs ?? null,
+      input.totalLatencyMs ?? null,
+      input.entityCount ?? null,
+      input.intelligenceStatus ?? null,
+      input.validationErrorCount ?? null,
+      input.failureReason ?? null,
+    ],
+  );
+}
+
+export async function recordReelAnalyticsEvent(input: ReelAnalyticsEventInput) {
+  const runId = await upsertReelAnalyticsRun({
+    clientRunId: input.clientRunId,
+    userId: input.userId ?? null,
+    anonymousId: input.anonymousId ?? null,
+    sourceUrl: input.sourceUrl || "",
+    sourcePlatform: input.sourcePlatform ?? null,
+    latestAttemptNumber: input.attemptNumber ?? 0,
+  });
+  if (!runId) return;
+
+  await pool.query(
+    `
+      insert into reel_analytics_events (id, run_id, attempt_number, event_name, payload_json, created_at)
+      values ($1, $2, $3, $4, $5::jsonb, now())
+    `,
+    [randomUUID(), runId, input.attemptNumber ?? null, input.eventName, JSON.stringify(input.payload ?? {})],
+  );
+
+  await pool.query(
+    `
+      update reel_analytics_runs
+      set
+        latest_outcome = $2,
+        first_saved_attempt_number = case when $2 = 'saved' then coalesce(first_saved_attempt_number, $3) else first_saved_attempt_number end,
+        first_edited_attempt_number = case when $2 = 'edited' then coalesce(first_edited_attempt_number, $3) else first_edited_attempt_number end,
+        first_discarded_attempt_number = case when $2 = 'discarded' then coalesce(first_discarded_attempt_number, $3) else first_discarded_attempt_number end,
+        latest_attempt_number = greatest(latest_attempt_number, coalesce($3, 0)),
+        updated_at = now()
+      where id = $1
+    `,
+    [runId, input.eventName, input.attemptNumber ?? null],
+  );
 }

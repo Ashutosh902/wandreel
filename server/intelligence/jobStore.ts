@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { IntelligenceJob, IntelligenceRequest } from "./types";
 import { runIntelligencePipeline } from "./pipeline";
+import { finalizeReelAnalyticsAttempt } from "../auth/postgresAuth";
 
 export interface IntelligenceJobStore {
   create(req: IntelligenceRequest): Promise<IntelligenceJob>;
@@ -42,6 +43,26 @@ export class InMemoryIntelligenceJobStore implements IntelligenceJobStore {
 
     try {
       const result = await runIntelligencePipeline(req);
+      if (req.analytics?.attemptId) {
+        try {
+          await finalizeReelAnalyticsAttempt({
+            attemptId: req.analytics.attemptId,
+            status: "completed",
+            sourcePlatform: req.source?.metadata?.platform ? String(req.source.metadata.platform) : null,
+            model: result.providerMeta?.model ?? null,
+            inputTokens: result.usage?.inputTokens ?? null,
+            outputTokens: result.usage?.outputTokens ?? null,
+            totalTokens: result.usage?.totalTokens ?? null,
+            providerLatencyMs: result.timingsMs?.provider ?? null,
+            totalLatencyMs: result.timingsMs?.total ?? null,
+            entityCount: Array.isArray(result.output?.structuredEntities) ? result.output.structuredEntities.length : 0,
+            intelligenceStatus: result.output?.status ?? null,
+            validationErrorCount: Array.isArray(result.validationErrors) ? result.validationErrors.length : 0,
+          });
+        } catch {
+          // Analytics should not fail the job completion path.
+        }
+      }
       const completed = this.jobs.get(id);
       if (!completed) return;
       completed.status = "completed";
@@ -49,6 +70,18 @@ export class InMemoryIntelligenceJobStore implements IntelligenceJobStore {
       completed.updatedAtIso = new Date().toISOString();
       this.jobs.set(id, completed);
     } catch (error) {
+      if (req.analytics?.attemptId) {
+        try {
+          await finalizeReelAnalyticsAttempt({
+            attemptId: req.analytics.attemptId,
+            status: "failed",
+            sourcePlatform: req.source?.metadata?.platform ? String(req.source.metadata.platform) : null,
+            failureReason: error instanceof Error ? error.message : "unknown_error",
+          });
+        } catch {
+          // Analytics should not fail the job failure path.
+        }
+      }
       const failed = this.jobs.get(id);
       if (!failed) return;
       failed.status = "failed";

@@ -121,6 +121,14 @@ export type IntelligenceOutput = {
 
 export type IntelligenceRequest = {
   source: ExtractionResult;
+  analytics?: {
+    attemptId?: string | null;
+    clientRunId?: string | null;
+    attemptNumber?: number | null;
+    triggerType?: "initial" | "retry";
+    anonymousId?: string | null;
+    userId?: string | null;
+  };
 };
 
 export type IntelligenceMode = "sync" | "async" | "draft_async";
@@ -149,5 +157,10 @@ export type IntelligencePipelineResult = {
   };
   providerMeta?: {
     model: string;
+  };
+  usage?: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
   };
 };

@@ -30,6 +30,7 @@ const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
 const IS_DEV = import.meta.env.DEV;
 const ADD_INTELLIGENCE_TIMEOUT_MS = 120000;
 const MAX_PREVIEW_RETRIES = 3;
+const ADD_ANALYTICS_ANONYMOUS_ID_KEY = "wr_add_analytics_anonymous_id_v1";
 const LEGACY_ADD_STORAGE_KEYS = [
   "wandreel_add_url",
   "lastAnalyzedLink",
@@ -107,6 +108,41 @@ export function AddScreen() {
   const detectedPlacesRef = useRef<DetectedPlace[]>([]);
   const pendingJobsRef = useRef<PendingDetectionJob[]>([]);
   const isResolvingFinal = pendingJobs.length > 0;
+  const getAnalyticsAnonymousId = () => {
+    let existing = window.localStorage.getItem(ADD_ANALYTICS_ANONYMOUS_ID_KEY);
+    if (existing) return existing;
+    existing = `anon-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+    window.localStorage.setItem(ADD_ANALYTICS_ANONYMOUS_ID_KEY, existing);
+    return existing;
+  };
+
+  const postReelAnalyticsEvent = async (input: {
+    clientRunId: string;
+    attemptNumber?: number | null;
+    eventName: "saved" | "edited" | "discarded";
+    sourceUrl?: string | null;
+    sourcePlatform?: string | null;
+    payload?: Record<string, unknown>;
+  }) => {
+    try {
+      await fetch(`${API_BASE_URL}/api/analytics/reel-event`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          clientRunId: input.clientRunId,
+          anonymousId: getAnalyticsAnonymousId(),
+          attemptNumber: input.attemptNumber ?? null,
+          eventName: input.eventName,
+          sourceUrl: input.sourceUrl ?? null,
+          sourcePlatform: input.sourcePlatform ?? null,
+          payload: input.payload ?? {},
+        }),
+      });
+    } catch {
+      // Analytics should never block the user flow.
+    }
+  };
   const logAddScreenState = (label: string) => {
     if (!IS_DEV) return;
     console.log(label, {
@@ -695,7 +731,16 @@ export function AddScreen() {
       const intelligenceResponse = await fetch(`${API_BASE_URL}/api/intelligence/extract`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ source: extraction, mode: "draft_async" }),
+        body: JSON.stringify({
+          source: extraction,
+          mode: "draft_async",
+          analytics: {
+            clientRunId: String(runId),
+            anonymousId: getAnalyticsAnonymousId(),
+            attemptNumber: retryCount + 1,
+            triggerType: options?.isRetry ? "retry" : "initial",
+          },
+        }),
       });
       const intelligence = (await intelligenceResponse.json()) as IntelligenceApiResponse;
       if (analyzeRunRef.current !== runId) return;
@@ -915,6 +960,17 @@ export function AddScreen() {
       lng: editCoords.lng ?? item.lng ?? null,
     } : item));
     syncDraftState(nextPlaces, pendingJobsRef.current, linkInput);
+    void postReelAnalyticsEvent({
+      clientRunId: String(editingPlace.runId),
+      attemptNumber: (editingPlace.retryCount ?? 0) + 1,
+      eventName: "edited",
+      sourceUrl: editingPlace.sourceUrl,
+      sourcePlatform: editingPlace.source,
+      payload: {
+        category: editCategory,
+        hasPlaceId: Boolean(editPlaceId ?? editingPlace.placeId),
+      },
+    });
     setIsEditing(false);
     setEditingPlaceId(null);
     showToast({ message: "Details updated", variant: "success" });
@@ -994,6 +1050,18 @@ export function AddScreen() {
         throw new Error("save_failed");
       }
       publishSavedToCategoryFeed(place);
+      void postReelAnalyticsEvent({
+        clientRunId: String(place.runId),
+        attemptNumber: (place.retryCount ?? 0) + 1,
+        eventName: "saved",
+        sourceUrl: place.sourceUrl,
+        sourcePlatform: place.source,
+        payload: {
+          category: place.category,
+          afterEdit: editingPlaceId === place.id || isEditing,
+          hasPlaceId: Boolean(place.placeId),
+        },
+      });
       removeReadyNotificationByRunId(place.runId);
         setSavedPlaceIds((current) => new Set(current).add(place.id));
         setSaveMessage(`Saved to ${place.category}`);
@@ -1031,6 +1099,14 @@ export function AddScreen() {
 
   const handleDismissPreview = (card: PreviewCard) => {
     if (card.kind === "pending") {
+      void postReelAnalyticsEvent({
+        clientRunId: String(card.runId),
+        attemptNumber: card.pending.retryCount + 1,
+        eventName: "discarded",
+        sourceUrl: card.sourceUrl,
+        sourcePlatform: card.pending.source,
+        payload: { state: "pending" },
+      });
       const nextPlaces = replaceRunPlaces(detectedPlacesRef.current, card.runId);
       const nextPendingJobs = pendingJobsRef.current.filter((item) => item.runId !== card.runId);
       syncDraftState(nextPlaces, nextPendingJobs, activePreviewKey === card.key ? "" : linkInput);
@@ -1042,6 +1118,14 @@ export function AddScreen() {
     }
 
     const selectedPreview = card.place;
+    void postReelAnalyticsEvent({
+      clientRunId: String(selectedPreview.runId),
+      attemptNumber: (selectedPreview.retryCount ?? 0) + 1,
+      eventName: "discarded",
+      sourceUrl: selectedPreview.sourceUrl,
+      sourcePlatform: selectedPreview.source,
+      payload: { state: "resolved", category: selectedPreview.category },
+    });
     const nextPlaces = detectedPlacesRef.current.filter((item) => item.id !== selectedPreview.id);
     syncDraftState(nextPlaces, pendingJobsRef.current, nextPlaces.length || pendingJobsRef.current.length ? linkInput : "");
     setSavedPlaceIds((prev) => {

@@ -162,6 +162,7 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
         schemaSecondPass: 0,
       },
       providerMeta: providerResult.providerMeta,
+      usage: providerResult.usage,
     };
   }
 
@@ -190,6 +191,7 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
         schemaSecondPass: schemaSecondPassMs,
       },
       providerMeta: providerResult.providerMeta,
+      usage: providerResult.usage,
     };
   }
 
@@ -215,5 +217,6 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
       schemaSecondPass: schemaSecondPassMs,
     },
     providerMeta: providerResult.providerMeta,
+    usage: providerResult.usage,
   };
 }

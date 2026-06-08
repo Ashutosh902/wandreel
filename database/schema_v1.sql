@@ -318,3 +318,55 @@ create table pipeline_metrics_daily (
   p95_ms integer,
   primary key (metric_date, stage, platform)
 );
+
+-- ----------------------------
+-- Reel analytics
+-- ----------------------------
+create table reel_analytics_runs (
+  id uuid primary key default gen_random_uuid(),
+  client_run_id text not null unique,
+  user_id uuid references users(user_id) on delete set null,
+  anonymous_id text,
+  source_url text not null,
+  source_platform text,
+  latest_outcome text not null default 'started',
+  latest_attempt_number integer not null default 0,
+  first_saved_attempt_number integer,
+  first_edited_attempt_number integer,
+  first_discarded_attempt_number integer,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table reel_analytics_attempts (
+  id uuid primary key default gen_random_uuid(),
+  run_id uuid not null references reel_analytics_runs(id) on delete cascade,
+  attempt_number integer not null,
+  trigger_type text not null,
+  status text not null default 'queued',
+  source_url text not null,
+  source_platform text,
+  model text,
+  input_tokens integer,
+  output_tokens integer,
+  total_tokens integer,
+  provider_latency_ms integer,
+  total_latency_ms integer,
+  entity_count integer,
+  intelligence_status text,
+  validation_error_count integer,
+  failure_reason text,
+  created_at timestamptz not null default now(),
+  started_at timestamptz not null default now(),
+  completed_at timestamptz,
+  unique (run_id, attempt_number)
+);
+
+create table reel_analytics_events (
+  id uuid primary key default gen_random_uuid(),
+  run_id uuid not null references reel_analytics_runs(id) on delete cascade,
+  attempt_number integer,
+  event_name text not null,
+  payload_json jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);

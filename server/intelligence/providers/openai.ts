@@ -10,6 +10,11 @@ export type OpenAiExtractionResult = {
   providerMeta: {
     model: string;
   };
+  usage: {
+    inputTokens: number | null;
+    outputTokens: number | null;
+    totalTokens: number | null;
+  };
 };
 
 function getClient(): OpenAI {
@@ -54,6 +59,11 @@ export async function callOpenAiStructuredExtraction(source: ExtractionResult): 
     },
   });
   const providerMs = Date.now() - startedAt;
+  const usage = {
+    inputTokens: typeof (response as any)?.usage?.input_tokens === "number" ? (response as any).usage.input_tokens : null,
+    outputTokens: typeof (response as any)?.usage?.output_tokens === "number" ? (response as any).usage.output_tokens : null,
+    totalTokens: typeof (response as any)?.usage?.total_tokens === "number" ? (response as any).usage.total_tokens : null,
+  };
 
   const rawText = extractResponseText(response as any);
   if (!rawText) {
@@ -61,6 +71,7 @@ export async function callOpenAiStructuredExtraction(source: ExtractionResult): 
       raw: null,
       timingsMs: { provider: providerMs },
       providerMeta: { model },
+      usage,
     };
   }
 
@@ -75,5 +86,6 @@ export async function callOpenAiStructuredExtraction(source: ExtractionResult): 
     raw: parsed,
     timingsMs: { provider: providerMs },
     providerMeta: { model },
+    usage,
   };
 }
