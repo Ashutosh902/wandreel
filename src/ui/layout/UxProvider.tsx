@@ -9,6 +9,12 @@ type ToastPayload = {
 };
 
 type ToastState = ToastPayload & { id: number };
+type CurrentLocationRequestResult = {
+  ok: boolean;
+  reason?: "permission_denied" | "unavailable" | "failed";
+  coords?: { lat: number; lng: number };
+  label?: string | null;
+};
 
 type UxContextValue = {
   isOffline: boolean;
@@ -18,10 +24,10 @@ type UxContextValue = {
   deviceLocationLabel: string | null;
   deviceCoords: { lat: number; lng: number } | null;
   isLocating: boolean;
-  requestCurrentLocation: () => Promise<void>;
+  requestCurrentLocation: () => Promise<CurrentLocationRequestResult>;
   searchLocations: (query: string) => Promise<Array<{ placeId: string; label: string; secondaryText: string | null; description: string | null }>>;
   setLocationFromPlaceId: (placeId: string) => Promise<boolean>;
-  useDeviceLocationAsCurrent: () => Promise<void>;
+  useDeviceLocationAsCurrent: (options?: { forceRefresh?: boolean }) => Promise<CurrentLocationRequestResult>;
 };
 
 const UxContext = createContext<UxContextValue | null>(null);
@@ -52,8 +58,10 @@ export function UxProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const requestCurrentLocation = useCallback(async () => {
-    if (!navigator.geolocation) return;
+  const requestCurrentLocation = useCallback(async (): Promise<CurrentLocationRequestResult> => {
+    if (!navigator.geolocation) {
+      return { ok: false, reason: "unavailable" };
+    }
     setIsLocating(true);
     try {
       const coords = await new Promise<GeolocationCoordinates>((resolve, reject) => {
@@ -65,12 +73,14 @@ export function UxProvider({ children }: { children: React.ReactNode }) {
       });
       const nextCoords = { lat: coords.latitude, lng: coords.longitude };
       setDeviceCoords(nextCoords);
+      let resolvedLabel: string | null = null;
       const response = await fetch(
         `${API_BASE_URL}/api/location/reverse-geocode?lat=${encodeURIComponent(String(nextCoords.lat))}&lng=${encodeURIComponent(String(nextCoords.lng))}`,
       );
       if (response.ok) {
         const payload = (await response.json()) as { ok?: boolean; label?: string };
         if (payload?.ok && payload.label) {
+          resolvedLabel = payload.label;
           setDeviceLocationLabel(payload.label);
           window.localStorage.setItem(DEVICE_LOCATION_CACHE_KEY, JSON.stringify({ ...nextCoords, label: payload.label }));
           if (locationMode === "device") {
@@ -78,7 +88,7 @@ export function UxProvider({ children }: { children: React.ReactNode }) {
             setCurrentLocationLabel(payload.label);
             window.localStorage.setItem(LOCATION_CACHE_KEY, JSON.stringify({ ...nextCoords, label: payload.label }));
           }
-          return;
+          return { ok: true, coords: nextCoords, label: payload.label };
         }
       }
       window.localStorage.setItem(DEVICE_LOCATION_CACHE_KEY, JSON.stringify({ ...nextCoords, label: currentLocationLabel }));
@@ -86,8 +96,12 @@ export function UxProvider({ children }: { children: React.ReactNode }) {
         setCurrentCoords(nextCoords);
         window.localStorage.setItem(LOCATION_CACHE_KEY, JSON.stringify({ ...nextCoords, label: currentLocationLabel }));
       }
-    } catch {
-      // Keep fallback location silently.
+      return { ok: true, coords: nextCoords, label: resolvedLabel || currentLocationLabel };
+    } catch (error) {
+      if (error && typeof error === "object" && "code" in error && Number((error as GeolocationPositionError).code) === 1) {
+        return { ok: false, reason: "permission_denied" };
+      }
+      return { ok: false, reason: "failed" };
     } finally {
       setIsLocating(false);
     }
@@ -141,17 +155,28 @@ export function UxProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
-  const useDeviceLocationAsCurrent = useCallback(async () => {
+  const useDeviceLocationAsCurrent = useCallback(async (options?: { forceRefresh?: boolean }): Promise<CurrentLocationRequestResult> => {
     setLocationMode("device");
     window.localStorage.setItem(LOCATION_MODE_CACHE_KEY, "device");
-    if (deviceCoords && deviceLocationLabel) {
+    if (!options?.forceRefresh && deviceCoords && deviceLocationLabel) {
       setCurrentCoords(deviceCoords);
       setCurrentLocationLabel(deviceLocationLabel);
       window.localStorage.setItem(LOCATION_CACHE_KEY, JSON.stringify({ ...deviceCoords, label: deviceLocationLabel }));
-      return;
+      return { ok: true, coords: deviceCoords, label: deviceLocationLabel };
     }
-    await requestCurrentLocation();
-  }, [deviceCoords, deviceLocationLabel, requestCurrentLocation]);
+    const result = await requestCurrentLocation();
+    if (result.ok && result.coords) {
+      setCurrentCoords(result.coords);
+      if (result.label) {
+        setCurrentLocationLabel(result.label);
+      }
+      window.localStorage.setItem(
+        LOCATION_CACHE_KEY,
+        JSON.stringify({ ...result.coords, label: result.label || currentLocationLabel }),
+      );
+    }
+    return result;
+  }, [currentLocationLabel, deviceCoords, deviceLocationLabel, requestCurrentLocation]);
 
   useEffect(() => {
     if (!toast) return;

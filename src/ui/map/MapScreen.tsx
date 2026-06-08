@@ -18,6 +18,7 @@ runMapDataChecks();
 const MAP_CENTER = { x: 51, y: 56 };
 const MAX_RADIUS_VISUAL_RATIO = 0.44;
 const FALLBACK_MAP_CENTER = { lat: 25.5941, lng: 85.1376 };
+const RECENTER_MAP_ZOOM = 14.5;
 const GOOGLE_MAP_LIBRARIES: ("places")[] = ["places"];
 const LIGHT_MAP_STYLES: google.maps.MapTypeStyle[] = [
   { featureType: "poi.business", elementType: "labels", stylers: [{ visibility: "off" }] },
@@ -195,7 +196,6 @@ export function MapScreen({
     currentCoords,
     deviceCoords,
     isLocating,
-    requestCurrentLocation,
     searchLocations,
     setLocationFromPlaceId,
     useDeviceLocationAsCurrent,
@@ -213,6 +213,7 @@ export function MapScreen({
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const googleMapRef = useRef<google.maps.Map | null>(null);
   const [googleMapInstance, setGoogleMapInstance] = useState<google.maps.Map | null>(null);
+  const [mapZoomOverride, setMapZoomOverride] = useState<number | null>(null);
   const radiusCircleRef = useRef<google.maps.Circle | null>(null);
   const [activePinPreview, setActivePinPreview] = useState<MapPlacePin | null>(null);
   const sheetTouchStartYRef = useRef<number | null>(null);
@@ -285,6 +286,7 @@ export function MapScreen({
     return FALLBACK_MAP_CENTER;
   }, [currentCoords?.lat, currentCoords?.lng, deviceCoords?.lat, deviceCoords?.lng]);
   const radiusMapZoom = useMemo(() => getGoogleZoomForRadius(radiusKm), [radiusKm]);
+  const zoomUsed = mapZoomOverride ?? radiusMapZoom;
 
   const visibleMapPlaces = useMemo(
     () =>
@@ -330,7 +332,43 @@ export function MapScreen({
   const handleRadiusChange = (value: string) => {
     const nextRadius = Number(value);
     if (!Number.isFinite(nextRadius)) return;
+    setMapZoomOverride(null);
     setRadiusKm(Math.max(2, Math.min(100, nextRadius)));
+  };
+  const handleRecenterCurrentLocationButton = async () => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      showToast({ message: "Could not get current location. Try again.", variant: "error" });
+      return;
+    }
+
+    try {
+      if ("permissions" in navigator && navigator.permissions?.query) {
+        const permissionStatus = await navigator.permissions.query({ name: "geolocation" });
+        if (permissionStatus.state === "denied") {
+          showToast({ message: "Location permission is needed to recenter the map.", variant: "info" });
+          return;
+        }
+      }
+    } catch {
+      // Some browsers do not support geolocation permission queries reliably.
+    }
+
+    const result = await useDeviceLocationAsCurrent({ forceRefresh: true });
+    if (!result.ok || !result.coords) {
+      if (result.reason === "permission_denied") {
+        showToast({ message: "Location permission is needed to recenter the map.", variant: "info" });
+        return;
+      }
+      showToast({ message: "Could not get current location. Try again.", variant: "error" });
+      return;
+    }
+
+    const nextCenter = { lat: result.coords.lat, lng: result.coords.lng };
+    setMapZoomOverride(RECENTER_MAP_ZOOM);
+    if (googleMapInstance) {
+      googleMapInstance.panTo(nextCenter);
+      googleMapInstance.setZoom(RECENTER_MAP_ZOOM);
+    }
   };
   const activePinDistanceLabel = useMemo(() => {
     if (!activePinPreview) return null;
@@ -514,7 +552,7 @@ export function MapScreen({
           <GoogleMap
             mapContainerClassName="wr-map-google-surface"
             center={mapCenter}
-            zoom={radiusMapZoom}
+            zoom={zoomUsed}
             onLoad={(map) => {
               googleMapRef.current = map;
               setGoogleMapInstance(map);
@@ -607,7 +645,12 @@ export function MapScreen({
           />
         )) : null}
 
-        <button type="button" className="wr-map-current-location" onClick={() => void requestCurrentLocation()} aria-label="Locate me">
+        <button
+          type="button"
+          className="wr-map-current-location"
+          onClick={() => void handleRecenterCurrentLocationButton()}
+          aria-label="Recenter to current location"
+        >
           <LocateFixed size={11} />
         </button>
 
