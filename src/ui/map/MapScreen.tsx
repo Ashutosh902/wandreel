@@ -48,6 +48,22 @@ type MapPlacePin = SavedPlaceRecord & {
   color: string;
 };
 
+function deriveInitialMapCategories(
+  entryMode: "global" | "category",
+  sourceCategory: MapCategoryLabel | null,
+  globalActiveCategories: MapCategoryLabel[],
+): MapCategoryLabel[] {
+  if (entryMode === "category" && sourceCategory) {
+    return [sourceCategory];
+  }
+  return globalActiveCategories;
+}
+
+function areCategorySetsEqual(left: MapCategoryLabel[], right: MapCategoryLabel[]): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((item, index) => item === right[index]);
+}
+
 function hexToRgba(hex: string, alpha: number): string {
   const normalized = hex.replace("#", "").trim();
   if (normalized.length !== 6) return `rgba(16, 33, 63, ${alpha})`;
@@ -65,36 +81,6 @@ function getGoogleZoomForRadius(radiusKm: number): number {
   if (radiusKm <= 40) return 9.8;
   if (radiusKm <= 70) return 8.8;
   return 8;
-}
-
-function MapPinMarker({
-  pin,
-  selected,
-  onSelect,
-}: {
-  pin: MapPlacePin;
-  selected: boolean;
-  onSelect: (pin: MapPlacePin) => void;
-}) {
-  const categoryStyle = mapCategoryStyles.find((item) => item.label === pin.category);
-  if (!categoryStyle) return null;
-  const Icon = categoryStyle.icon;
-
-  return (
-    <button
-      type="button"
-      className={`wr-map-pin ${selected ? "is-selected" : ""}`}
-      style={{ left: pin.x, top: pin.y }}
-      onClick={() => onSelect(pin)}
-      aria-label={`Open ${pin.title} details`}
-    >
-      <div className="wr-map-pin-core" style={{ backgroundColor: pin.color }}>
-        <Icon size={13} strokeWidth={2.2} />
-      </div>
-      <div className="wr-map-pin-tail" style={{ borderTopColor: pin.color }} />
-      <div className="wr-map-pin-tooltip">{pin.title}</div>
-    </button>
-  );
 }
 
 function GoogleMapPinLabel({
@@ -208,18 +194,22 @@ export function MapScreen({
     deviceLocationLabel,
     showToast,
   } = useUx();
-  const [activeMapCategories, setActiveMapCategories] = useState<MapCategoryLabel[]>([
-    "Taste",
-    "Activity",
-    "Stay",
-    "Explore",
-  ]);
+  const intendedMapCategories = useMemo(
+    () => deriveInitialMapCategories(entryMode, sourceCategory, globalActiveCategories),
+    [entryMode, globalActiveCategories, sourceCategory],
+  );
+  const [activeMapCategories, setActiveMapCategories] = useState<MapCategoryLabel[]>(() =>
+    deriveInitialMapCategories(entryMode, sourceCategory, globalActiveCategories),
+  );
   const [radiusKm, setRadiusKm] = useState(10);
   const [mapMinDimensionPx, setMapMinDimensionPx] = useState(320);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const googleMapRef = useRef<google.maps.Map | null>(null);
   const [googleMapInstance, setGoogleMapInstance] = useState<google.maps.Map | null>(null);
   const [mapZoomOverride, setMapZoomOverride] = useState<number | null>(null);
+  const [hasInitialMapIdle, setHasInitialMapIdle] = useState(false);
+  const [hasAttachedInitialRadiusCircle, setHasAttachedInitialRadiusCircle] = useState(false);
+  const [allowFallbackInitialCenter, setAllowFallbackInitialCenter] = useState(false);
   const radiusCircleRef = useRef<google.maps.Circle | null>(null);
   const [activePinPreview, setActivePinPreview] = useState<MapPlacePin | null>(null);
   const sheetTouchStartYRef = useRef<number | null>(null);
@@ -241,14 +231,30 @@ export function MapScreen({
     libraries: GOOGLE_MAP_LIBRARIES,
   });
   const isMapReady = hasMapsKey && isMapLoaded && !mapLoadError;
+  const hasResolvedInitialCenter = Boolean(currentCoords || deviceCoords) || allowFallbackInitialCenter;
+  const areInitialCategoriesSettled = areCategorySetsEqual(activeMapCategories, intendedMapCategories);
+  const isInitialViewportReady =
+    isMapReady &&
+    googleMapInstance !== null &&
+    hasInitialMapIdle &&
+    hasResolvedInitialCenter &&
+    areInitialCategoriesSettled &&
+    hasAttachedInitialRadiusCircle;
 
   useEffect(() => {
-    if (entryMode === "category" && sourceCategory) {
-      setActiveMapCategories([sourceCategory]);
+    setActiveMapCategories((current) => (
+      areCategorySetsEqual(current, intendedMapCategories) ? current : intendedMapCategories
+    ));
+  }, [intendedMapCategories]);
+
+  useEffect(() => {
+    if (currentCoords || deviceCoords) {
+      setAllowFallbackInitialCenter(false);
       return;
     }
-    setActiveMapCategories(globalActiveCategories);
-  }, [entryMode, globalActiveCategories, sourceCategory]);
+    const timer = window.setTimeout(() => setAllowFallbackInitialCenter(true), 140);
+    return () => window.clearTimeout(timer);
+  }, [currentCoords, deviceCoords]);
 
   useEffect(() => {
     const node = canvasRef.current;
@@ -336,6 +342,7 @@ export function MapScreen({
   const radiusVisualPx = radiusProgress * mapMinDimensionPx * MAX_RADIUS_VISUAL_RATIO;
   const visiblePlaceCount = visibleMapPlaces.length;
   const hasVisiblePins = visiblePlaceCount > 0;
+  const shouldRevealStableMapContent = isInitialViewportReady;
   const inRangeNoun = visiblePlaceCount === 1 ? "place" : "places";
   const closePinPreview = () => setActivePinPreview(null);
   const handleRadiusChange = (value: string) => {
@@ -396,12 +403,14 @@ export function MapScreen({
         clickable: false,
         zIndex: 1,
       });
+      setHasAttachedInitialRadiusCircle(true);
       return;
     }
 
     radiusCircleRef.current.setMap(googleMapInstance);
     radiusCircleRef.current.setCenter(mapCenter);
     radiusCircleRef.current.setRadius(radiusMeters);
+    setHasAttachedInitialRadiusCircle(true);
   }, [googleMapInstance, mapCenter, radiusKm]);
 
   useEffect(() => {
@@ -410,6 +419,8 @@ export function MapScreen({
       radiusCircleRef.current = null;
       googleMapRef.current = null;
       setGoogleMapInstance(null);
+      setHasInitialMapIdle(false);
+      setHasAttachedInitialRadiusCircle(false);
     };
   }, []);
 
@@ -538,18 +549,23 @@ export function MapScreen({
       <div className="wr-map-canvas" aria-label="Map canvas" ref={canvasRef}>
         {isMapReady ? (
           <GoogleMap
-            mapContainerClassName="wr-map-google-surface"
+            mapContainerClassName={`wr-map-google-surface ${shouldRevealStableMapContent ? "is-initially-visible" : "is-initially-hidden"}`}
             center={mapCenter}
             zoom={zoomUsed}
             onLoad={(map) => {
               googleMapRef.current = map;
               setGoogleMapInstance(map);
             }}
+            onIdle={() => {
+              setHasInitialMapIdle(true);
+            }}
             onUnmount={() => {
               radiusCircleRef.current?.setMap(null);
               radiusCircleRef.current = null;
               googleMapRef.current = null;
               setGoogleMapInstance(null);
+              setHasInitialMapIdle(false);
+              setHasAttachedInitialRadiusCircle(false);
             }}
             onClick={() => setActivePinPreview(null)}
             options={{
@@ -560,45 +576,49 @@ export function MapScreen({
               styles: LIGHT_MAP_STYLES,
             }}
           >
-            <MarkerF
-              position={mapCenter}
-              icon={{
-                path: window.google.maps.SymbolPath.CIRCLE,
-                scale: 7,
-                fillColor: "#2b77f5",
-                fillOpacity: 1,
-                strokeColor: "#ffffff",
-                strokeWeight: 3,
-              }}
-              zIndex={1001}
-            />
-            {renderedPins.map((pin) => (
-              <Fragment key={pin.id}>
+            {shouldRevealStableMapContent ? (
+              <>
                 <MarkerF
-                  position={{ lat: pin.lat as number, lng: pin.lng as number }}
-                  onClick={() => setActivePinPreview(pin)}
+                  position={mapCenter}
                   icon={{
                     path: window.google.maps.SymbolPath.CIRCLE,
-                    scale: activePinPreview?.id === pin.id ? 10 : 8,
-                    fillColor: pin.color,
+                    scale: 7,
+                    fillColor: "#2b77f5",
                     fillOpacity: 1,
                     strokeColor: "#ffffff",
                     strokeWeight: 3,
                   }}
-                  zIndex={activePinPreview?.id === pin.id ? 1000 : 10}
+                  zIndex={1001}
                 />
-                {activePinPreview?.id === pin.id ? (
-                  <GoogleMapPinLabel
-                    pin={pin}
-                    selected
-                    onSelect={setActivePinPreview}
-                  />
-                ) : null}
-              </Fragment>
-            ))}
+                {renderedPins.map((pin) => (
+                  <Fragment key={pin.id}>
+                    <MarkerF
+                      position={{ lat: pin.lat as number, lng: pin.lng as number }}
+                      onClick={() => setActivePinPreview(pin)}
+                      icon={{
+                        path: window.google.maps.SymbolPath.CIRCLE,
+                        scale: activePinPreview?.id === pin.id ? 10 : 8,
+                        fillColor: pin.color,
+                        fillOpacity: 1,
+                        strokeColor: "#ffffff",
+                        strokeWeight: 3,
+                      }}
+                      zIndex={activePinPreview?.id === pin.id ? 1000 : 10}
+                    />
+                    {activePinPreview?.id === pin.id ? (
+                      <GoogleMapPinLabel
+                        pin={pin}
+                        selected
+                        onSelect={setActivePinPreview}
+                      />
+                    ) : null}
+                  </Fragment>
+                ))}
+              </>
+            ) : null}
           </GoogleMap>
         ) : null}
-        {!isMapReady ? (
+        {!shouldRevealStableMapContent ? (
           <div className="wr-map-current-area" aria-hidden="true">
           <div
             className="wr-map-radius-overlay"
@@ -613,25 +633,17 @@ export function MapScreen({
           </div>
           </div>
         ) : null}
-        {!isMapReady ? <div className="wr-map-base" /> : null}
-        {!isMapReady ? <div className="wr-map-block wr-map-block-a" /> : null}
-        {!isMapReady ? <div className="wr-map-block wr-map-block-b" /> : null}
-        {!isMapReady ? <div className="wr-map-block wr-map-block-c" /> : null}
-        {!isMapReady ? <div className="wr-map-block wr-map-block-d" /> : null}
-        {!isMapReady ? <div className="wr-map-block wr-map-block-e" /> : null}
-        {!isMapReady ? <div className="wr-map-block wr-map-block-f" /> : null}
-        {!isMapReady ? <div className="wr-map-road wr-map-road-a" /> : null}
-        {!isMapReady ? <div className="wr-map-road wr-map-road-b" /> : null}
-        {!isMapReady ? <div className="wr-map-road wr-map-road-c" /> : null}
-        {!isMapReady ? <div className="wr-map-road wr-map-road-d" /> : null}
-        {!isMapReady ? renderedPins.map((pin) => (
-          <MapPinMarker
-            key={pin.id}
-            pin={pin}
-            selected={activePinPreview?.id === pin.id}
-            onSelect={setActivePinPreview}
-          />
-        )) : null}
+        {!shouldRevealStableMapContent ? <div className="wr-map-base" /> : null}
+        {!shouldRevealStableMapContent ? <div className="wr-map-block wr-map-block-a" /> : null}
+        {!shouldRevealStableMapContent ? <div className="wr-map-block wr-map-block-b" /> : null}
+        {!shouldRevealStableMapContent ? <div className="wr-map-block wr-map-block-c" /> : null}
+        {!shouldRevealStableMapContent ? <div className="wr-map-block wr-map-block-d" /> : null}
+        {!shouldRevealStableMapContent ? <div className="wr-map-block wr-map-block-e" /> : null}
+        {!shouldRevealStableMapContent ? <div className="wr-map-block wr-map-block-f" /> : null}
+        {!shouldRevealStableMapContent ? <div className="wr-map-road wr-map-road-a" /> : null}
+        {!shouldRevealStableMapContent ? <div className="wr-map-road wr-map-road-b" /> : null}
+        {!shouldRevealStableMapContent ? <div className="wr-map-road wr-map-road-c" /> : null}
+        {!shouldRevealStableMapContent ? <div className="wr-map-road wr-map-road-d" /> : null}
 
         <button
           type="button"
@@ -642,11 +654,13 @@ export function MapScreen({
           <LocateFixed size={11} />
         </button>
 
-        <div className={`wr-map-in-range-pill ${isCountBump ? "is-bump" : ""}`} aria-live="polite">
-          <span className="wr-map-in-range-count">{visiblePlaceCount}</span>
-          <span className="wr-map-in-range-label">{inRangeNoun}</span>
-        </div>
-        {!hasVisiblePins ? (
+        {shouldRevealStableMapContent ? (
+          <div className={`wr-map-in-range-pill ${isCountBump ? "is-bump" : ""}`} aria-live="polite">
+            <span className="wr-map-in-range-count">{visiblePlaceCount}</span>
+            <span className="wr-map-in-range-label">{inRangeNoun}</span>
+          </div>
+        ) : null}
+        {shouldRevealStableMapContent && !hasVisiblePins ? (
           <div className="wr-map-empty-state" aria-live="polite">
             <p className="wr-map-empty-title">No mapped places in range</p>
             <p className="wr-map-empty-copy">Increase the radius or update location details to see places on your map.</p>

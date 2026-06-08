@@ -243,6 +243,15 @@
   inset: 0;
   opacity: 1;
   filter: saturate(0.9) contrast(1.05) brightness(1.02);
+  transition: opacity 140ms ease;
+}
+
+.wr-map-google-surface.is-initially-hidden {
+  opacity: 0;
+}
+
+.wr-map-google-surface.is-initially-visible {
+  opacity: 1;
 }
 
 .wr-map-google-label {

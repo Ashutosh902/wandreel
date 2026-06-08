@@ -15,13 +15,19 @@ This folder is the single source of truth for all link-extraction logic.
 6. If mode is `deep`, enrichment runs conditionally:
 - Transcript (`transcript.ts`): YouTube captions -> Whisper fallback; Instagram/social video -> Whisper
 - OCR (`ocr.ts`): frame text extraction for video/social links
-7. Unified JSON response is returned.
+7. Frame selection can extract multiple video keyframes when source ingestion supports it, with metadata image fallback otherwise.
+8. If metadata + caption + transcript + OCR are still weak, shared visual fallback runs:
+- screenshot selection (`frameSelection.ts`)
+- visual candidate generation (`visualSearch.ts`)
+- place verification + ranking (`visualFallback.ts`)
+9. Unified JSON response is returned.
 
 ## Extraction v2 contract
 
 When `EXTRACTION_V2_ENABLED=true` (default), response also includes:
 - `source`, `platform`, `canonicalUrl`
 - `stageStatus` and `stages` for `basicMetadata`, `caption`, `transcript`, `ocr`
+- `visualFallback` summary with verified screenshot candidate suggestions when weak upstream signal triggers fallback
 - `stageTimingsMs` and `stageFailures`
 - `combinedTextRaw`, `combinedTextClean`, `cleanupStats`
 - `sla` (same numbers as `perf`, maintained for compatibility)
@@ -41,6 +47,10 @@ Stage status semantics:
 - `metadata.ts`: metadata extraction entrypoint and provider fallbacks.
 - `transcript.ts`: speech-text enrichment hook.
 - `ocr.ts`: frame OCR enrichment hook.
+- `frameSelection.ts`: source-agnostic screenshot selection once ingestion is complete.
+- `scripts/fetch_video_frames.py`: video-frame extraction for sources where downloader access exists.
+- `visualSearch.ts`: screenshot candidate generation via shared vision model prompt.
+- `visualFallback.ts`: post-OCR fallback ranking + maps verification.
 - `pythonRunner.ts`: safe Python script execution wrapper.
 - `url.ts`: URL canonicalization, platform detection, host safety checks.
 - `types.ts`: shared contracts used by all extraction steps.

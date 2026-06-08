@@ -1,6 +1,8 @@
 import { extractMetadata } from "./metadata";
+import { selectSourceScreenshots } from "./frameSelection";
 import { enrichWithFrameOcr } from "./ocr";
 import { enrichWithTranscript } from "./transcript";
+import { runVisualFallback } from "./visualFallback";
 import { buildCombinedText } from "./combinedText";
 import type { ExtractionMode, ExtractionResult } from "./types";
 import { canonicalizeUrl } from "./url";
@@ -16,6 +18,7 @@ const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_METADATA_BUDGET_MS = 12000;
 const DEFAULT_TRANSCRIPT_BUDGET_MS = 60000;
 const DEFAULT_OCR_BUDGET_MS = 20000;
+const DEFAULT_VISUAL_FALLBACK_BUDGET_MS = 45000;
 
 function getNumberEnv(name: string, fallback: number): number {
   const raw = Number(process.env[name]);
@@ -104,6 +107,7 @@ export async function runExtractionPipeline(input: { url: string; mode: Extracti
       metadata,
       transcript: null,
       ocr: null,
+      visualFallback: null,
       source: metadata.sourceUrl,
       platform: metadata.platform,
       canonicalUrl: metadata.canonicalUrl,
@@ -112,6 +116,7 @@ export async function runExtractionPipeline(input: { url: string; mode: Extracti
         caption: captionText ? "success" : "partial",
         transcript: "partial",
         ocr: "partial",
+        visualFallback: "partial",
       },
       stages: {
         basicMetadata: {
@@ -138,12 +143,19 @@ export async function runExtractionPipeline(input: { url: string; mode: Extracti
           reason: "quick_mode",
           chars: 0,
         },
+        visualFallback: {
+          status: "partial",
+          provider: "not_attempted_quick_mode",
+          reason: "quick_mode",
+          chars: 0,
+        },
       },
       stageTimingsMs: {
         basicMetadata: metadataMs,
         caption: 0,
         transcript: 0,
         ocr: 0,
+        visualFallback: 0,
       },
       stageFailures: metadataFailureReason ? { basicMetadata: metadataFailureReason } : {},
       ...combined,
@@ -152,12 +164,14 @@ export async function runExtractionPipeline(input: { url: string; mode: Extracti
         metadataMs,
         transcriptMs: 0,
         ocrMs: 0,
+        visualFallbackMs: 0,
       },
       sla: {
         totalMs: nowMs() - totalStartedAt,
         metadataMs,
         transcriptMs: 0,
         ocrMs: 0,
+        visualFallbackMs: 0,
       },
       cache: { hit: false, key: cacheKey },
     };
@@ -172,27 +186,54 @@ export async function runExtractionPipeline(input: { url: string; mode: Extracti
   }
 
   const transcriptStartedAt = nowMs();
+  const screenshotsStartedAt = nowMs();
+  const transcriptPromise = withBudget(
+    enrichWithTranscript(metadata),
+    getNumberEnv("EXTRACTION_TRANSCRIPT_BUDGET_MS", DEFAULT_TRANSCRIPT_BUDGET_MS),
+    () => ({ attempted: true, used: false, source: null, text: "", reason: "timeout" }),
+  );
+  const screenshotsPromise = withBudget(
+    selectSourceScreenshots(metadata),
+    getNumberEnv("EXTRACTION_VISUAL_FALLBACK_BUDGET_MS", DEFAULT_VISUAL_FALLBACK_BUDGET_MS),
+    () => [],
+  );
+  const [transcript, screenshots] = await Promise.all([transcriptPromise, screenshotsPromise]);
+  const screenshotsMs = nowMs() - screenshotsStartedAt;
   const ocrStartedAt = nowMs();
-  const [transcript, ocr] = await Promise.all([
-    withBudget(
-      enrichWithTranscript(metadata),
-      getNumberEnv("EXTRACTION_TRANSCRIPT_BUDGET_MS", DEFAULT_TRANSCRIPT_BUDGET_MS),
-      () => ({ attempted: true, used: false, source: null, text: "", reason: "timeout" }),
-    ),
-    withBudget(
-      enrichWithFrameOcr(metadata),
-      getNumberEnv("EXTRACTION_OCR_BUDGET_MS", DEFAULT_OCR_BUDGET_MS),
-      () => ({ attempted: true, used: false, text: "", reason: "timeout" }),
-    ),
-  ]);
+  const ocr = await withBudget(
+    enrichWithFrameOcr(metadata, screenshots),
+    getNumberEnv("EXTRACTION_OCR_BUDGET_MS", DEFAULT_OCR_BUDGET_MS),
+    () => ({ attempted: true, used: false, text: "", reason: "timeout" }),
+  );
   const transcriptMs = nowMs() - transcriptStartedAt;
   const ocrMs = nowMs() - ocrStartedAt;
+  const visualFallbackStartedAt = nowMs();
+  const visualFallback = await withBudget(
+    runVisualFallback({ metadata, transcript, ocr, screenshots }),
+    getNumberEnv("EXTRACTION_VISUAL_FALLBACK_BUDGET_MS", DEFAULT_VISUAL_FALLBACK_BUDGET_MS),
+    () => ({
+      attempted: true,
+      triggered: true,
+      reason: "timeout",
+      provider: "shared_visual_fallback" as const,
+      confidence: "low" as const,
+      needsReview: true,
+      screenshots: [],
+      textQueries: [],
+      visualQueries: [],
+      candidates: [],
+      selectedCandidate: null,
+      summaryText: "Visual fallback timed out before producing verified candidates.",
+    }),
+  );
+  const visualFallbackMs = nowMs() - visualFallbackStartedAt;
 
   const result: ExtractionResult = {
     mode: input.mode,
     metadata,
     transcript,
     ocr,
+    visualFallback,
     source: metadata.sourceUrl,
     platform: metadata.platform,
     canonicalUrl: metadata.canonicalUrl,
@@ -201,6 +242,7 @@ export async function runExtractionPipeline(input: { url: string; mode: Extracti
       caption: String(metadata.description || "").trim() ? "success" : "partial",
       transcript: transcript.used ? "success" : transcript.attempted ? "partial" : "failed",
       ocr: ocr.used ? "success" : ocr.attempted ? "partial" : "failed",
+      visualFallback: !visualFallback.triggered ? "partial" : visualFallback.selectedCandidate ? "success" : visualFallback.attempted ? "partial" : "failed",
     },
     stages: {
       basicMetadata: {
@@ -227,30 +269,40 @@ export async function runExtractionPipeline(input: { url: string; mode: Extracti
         reason: ocr.reason,
         chars: String(ocr.text || "").trim().length,
       },
+      visualFallback: {
+        status: !visualFallback.triggered ? "partial" : visualFallback.selectedCandidate ? "success" : visualFallback.attempted ? "partial" : "failed",
+        provider: visualFallback.provider,
+        reason: visualFallback.reason,
+        chars: String(visualFallback.summaryText || "").trim().length,
+      },
     },
     stageTimingsMs: {
       basicMetadata: metadataMs,
       caption: 0,
       transcript: transcriptMs,
       ocr: ocrMs,
+      visualFallback: visualFallbackMs,
     },
     stageFailures: {
       ...(metadataFailureReason ? { basicMetadata: metadataFailureReason } : {}),
       ...(transcript.reason && !transcript.used ? { transcript: transcript.reason } : {}),
       ...(ocr.reason && !ocr.used ? { ocr: ocr.reason } : {}),
+      ...(visualFallback.reason && !visualFallback.selectedCandidate ? { visualFallback: visualFallback.reason } : {}),
     },
     ...buildCombinedText({ metadata, transcript, ocr }),
     perf: {
       totalMs: nowMs() - totalStartedAt,
       metadataMs,
-      transcriptMs,
+      transcriptMs: Math.max(transcriptMs, screenshotsMs),
       ocrMs,
+      visualFallbackMs,
     },
     sla: {
       totalMs: nowMs() - totalStartedAt,
       metadataMs,
-      transcriptMs,
+      transcriptMs: Math.max(transcriptMs, screenshotsMs),
       ocrMs,
+      visualFallbackMs,
     },
     cache: { hit: false, key: cacheKey },
   };

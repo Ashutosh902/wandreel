@@ -2,6 +2,11 @@ export type SourcePlatform = "youtube" | "instagram" | "web";
 
 export type ExtractionMode = "quick" | "deep";
 
+export const EXTRACTION_STAGE_KEYS = ["basicMetadata", "caption", "transcript", "ocr", "visualFallback"] as const;
+export type ExtractionStageKey = (typeof EXTRACTION_STAGE_KEYS)[number];
+
+export type ConfidenceLabel = "high" | "medium" | "low";
+
 export type ExtractedMetadata = {
   sourceUrl: string;
   canonicalUrl: string;
@@ -38,11 +43,52 @@ export type ExtractionStageResult = {
   chars: number;
 };
 
+export type ScreenshotAsset = {
+  url: string;
+  origin: "video_frame" | "metadata_image";
+  label: string;
+  timestampSec?: number | null;
+};
+
+export type VisualSearchCandidate = {
+  query: string;
+  source: "ocr_text" | "vision_search";
+  rationale: string | null;
+  candidateName: string | null;
+  formattedAddress: string | null;
+  locality: string | null;
+  city: string | null;
+  state: string | null;
+  country: string | null;
+  placeId: string | null;
+  lat: number | null;
+  lng: number | null;
+  verificationConfidence: ConfidenceLabel;
+  rankingScore: number;
+  matchedSignals: string[];
+};
+
+export type VisualFallbackResult = {
+  attempted: boolean;
+  triggered: boolean;
+  reason: string | null;
+  provider: "shared_visual_fallback";
+  confidence: ConfidenceLabel;
+  needsReview: boolean;
+  screenshots: ScreenshotAsset[];
+  textQueries: string[];
+  visualQueries: string[];
+  candidates: VisualSearchCandidate[];
+  selectedCandidate: VisualSearchCandidate | null;
+  summaryText: string;
+};
+
 export type ExtractionSla = {
   totalMs: number;
   metadataMs: number;
   transcriptMs: number;
   ocrMs: number;
+  visualFallbackMs: number;
 };
 
 export type ExtractionResult = {
@@ -50,13 +96,14 @@ export type ExtractionResult = {
   metadata: ExtractedMetadata;
   transcript: TranscriptResult | null;
   ocr: OcrResult | null;
+  visualFallback?: VisualFallbackResult | null;
   source: string;
   platform: SourcePlatform;
   canonicalUrl: string;
-  stageStatus?: Record<"basicMetadata" | "caption" | "transcript" | "ocr", ExtractionStageStatus>;
-  stages?: Record<"basicMetadata" | "caption" | "transcript" | "ocr", ExtractionStageResult>;
-  stageTimingsMs?: Record<"basicMetadata" | "caption" | "transcript" | "ocr", number>;
-  stageFailures?: Partial<Record<"basicMetadata" | "caption" | "transcript" | "ocr", string>>;
+  stageStatus?: Record<ExtractionStageKey, ExtractionStageStatus>;
+  stages?: Record<ExtractionStageKey, ExtractionStageResult>;
+  stageTimingsMs?: Record<ExtractionStageKey, number>;
+  stageFailures?: Partial<Record<ExtractionStageKey, string>>;
   combinedTextRaw?: string;
   combinedTextClean?: string;
   cleanupStats?: {

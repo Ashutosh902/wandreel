@@ -73,6 +73,7 @@ Hard rules:
 export function buildUserPrompt(source: ExtractionResult): string {
   const metadata = source.metadata;
   const combinedText = source.combinedTextClean || source.combinedTextRaw || "";
+  const visualFallback = source.visualFallback;
 
   const payload = {
     url: metadata.canonicalUrl || metadata.sourceUrl,
@@ -82,6 +83,34 @@ export function buildUserPrompt(source: ExtractionResult): string {
     quality: {
       isLowSignal: !String(combinedText || "").trim(),
     },
+    visualFallback: visualFallback
+      ? {
+          triggered: visualFallback.triggered,
+          confidence: visualFallback.confidence,
+          needsReview: visualFallback.needsReview,
+          summaryText: trimText(visualFallback.summaryText, 300),
+          selectedCandidate: visualFallback.selectedCandidate
+            ? {
+                name: visualFallback.selectedCandidate.candidateName,
+                query: visualFallback.selectedCandidate.query,
+                formattedAddress: visualFallback.selectedCandidate.formattedAddress,
+                locality: visualFallback.selectedCandidate.locality,
+                city: visualFallback.selectedCandidate.city,
+                state: visualFallback.selectedCandidate.state,
+                country: visualFallback.selectedCandidate.country,
+                rankingScore: visualFallback.selectedCandidate.rankingScore,
+                verificationConfidence: visualFallback.selectedCandidate.verificationConfidence,
+              }
+            : null,
+          alternateCandidates: visualFallback.candidates.slice(0, 3).map((candidate) => ({
+            name: candidate.candidateName,
+            query: candidate.query,
+            formattedAddress: candidate.formattedAddress,
+            rankingScore: candidate.rankingScore,
+            verificationConfidence: candidate.verificationConfidence,
+          })),
+        }
+      : null,
   };
 
   return `Process this extracted combined text for Wandreel. Return valid JSON only.\n\nInput:\n${JSON.stringify(payload, null, 2)}`;

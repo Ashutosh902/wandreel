@@ -123,6 +123,7 @@ export type IntelligenceRequest = {
   source: ExtractionResult;
   analytics?: {
     attemptId?: string | null;
+    runId?: string | null;
     clientRunId?: string | null;
     attemptNumber?: number | null;
     triggerType?: "initial" | "retry";
