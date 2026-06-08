@@ -193,7 +193,14 @@ export function HomeScreen() {
   const { showToast } = useUx();
   const [activeTab, setActiveTab] = useState<NavLabel>("Discover");
   const [activeCategory, setActiveCategory] = useState<CategoryLabel | null>(null);
-  const [mapFocusedCategory, setMapFocusedCategory] = useState<CategoryLabel | null>(null);
+  const [mapEntryMode, setMapEntryMode] = useState<"global" | "category">("global");
+  const [mapSourceCategory, setMapSourceCategory] = useState<CategoryLabel | null>(null);
+  const [globalMapActiveCategories, setGlobalMapActiveCategories] = useState<CategoryLabel[]>([
+    "Taste",
+    "Activity",
+    "Stay",
+    "Explore",
+  ]);
   const [savedPlacesByCategory, setSavedPlacesByCategory] = useState(createEmptySavedPlacesByCategory);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [readyNotifications, setReadyNotifications] = useState<AddReadyNotification[]>(() => readReadyNotifications());
@@ -262,7 +269,8 @@ export function HomeScreen() {
 
     setActiveTab("Add");
     setActiveCategory(null);
-    setMapFocusedCategory(null);
+    setMapEntryMode("global");
+    setMapSourceCategory(null);
 
     url.searchParams.delete(SHARED_INTENT_TAB_KEY);
     url.searchParams.delete(SHARED_INTENT_QUERY_KEY);
@@ -273,7 +281,8 @@ export function HomeScreen() {
     const handleSharedIntent = () => {
       setTransitionDirection(getTabOrderIndex("Add") >= getTabOrderIndex(activeTab) ? 1 : -1);
       setActiveCategory(null);
-      setMapFocusedCategory(null);
+      setMapEntryMode("global");
+      setMapSourceCategory(null);
       setActiveTab("Add");
     };
 
@@ -322,7 +331,8 @@ export function HomeScreen() {
     setReviewRunId(runId);
     setTransitionDirection(getTabOrderIndex("Add") >= getTabOrderIndex(activeTab) ? 1 : -1);
     setActiveCategory(null);
-    setMapFocusedCategory(null);
+    setMapEntryMode("global");
+    setMapSourceCategory(null);
     setActiveTab("Add");
     setIsReadySheetOpen(false);
   }, [activeTab]);
@@ -549,8 +559,8 @@ export function HomeScreen() {
     if (activeTab === "Map") {
       setTransitionDirection(-1);
       setActiveTab("Discover");
-      if (mapFocusedCategory) {
-        setActiveCategory(mapFocusedCategory);
+      if (mapEntryMode === "category" && mapSourceCategory) {
+        setActiveCategory(mapSourceCategory);
       } else {
         setActiveCategory(null);
       }
@@ -561,7 +571,8 @@ export function HomeScreen() {
       setTransitionDirection(-1);
       setActiveTab("Discover");
       setActiveCategory(null);
-      setMapFocusedCategory(null);
+      setMapEntryMode("global");
+      setMapSourceCategory(null);
     }
   };
 
@@ -587,8 +598,8 @@ export function HomeScreen() {
           heroMode={heroMode}
           onViewMap={(category) => {
             setTransitionDirection(1);
-            setMapFocusedCategory(category);
-            setActiveCategory(null);
+            setMapEntryMode("category");
+            setMapSourceCategory(category);
             setActiveTab("Map");
           }}
         />
@@ -598,18 +609,23 @@ export function HomeScreen() {
     if (activeTab === "Map") {
       return (
         <MapScreen
-          focusedCategory={mapFocusedCategory}
+          entryMode={mapEntryMode}
+          sourceCategory={mapSourceCategory}
+          globalActiveCategories={globalMapActiveCategories}
+          onGlobalActiveCategoriesChange={setGlobalMapActiveCategories}
           savedPlaces={allSavedPlaces}
           onAddLink={() => {
             setTransitionDirection(1);
             setActiveTab("Add");
             setActiveCategory(null);
+            setMapEntryMode("global");
+            setMapSourceCategory(null);
           }}
           onBack={() => {
             setTransitionDirection(-1);
             setActiveTab("Discover");
-            if (mapFocusedCategory) {
-              setActiveCategory(mapFocusedCategory);
+            if (mapEntryMode === "category" && mapSourceCategory) {
+              setActiveCategory(mapSourceCategory);
             } else {
               setActiveCategory(null);
             }
@@ -629,7 +645,8 @@ export function HomeScreen() {
           onViewSavedPlaces={() => {
             setTransitionDirection(-1);
             setActiveCategory(null);
-            setMapFocusedCategory(null);
+            setMapEntryMode("global");
+            setMapSourceCategory(null);
             setActiveTab("Discover");
           }}
         />
@@ -641,7 +658,9 @@ export function HomeScreen() {
     activeCategory,
     activeTab,
     heroMode,
-    mapFocusedCategory,
+    globalMapActiveCategories,
+    mapEntryMode,
+    mapSourceCategory,
     readyNotifications.length,
     visibleSavedPlaces,
     visibleSavedPlacesByCategory,
@@ -748,15 +767,20 @@ export function HomeScreen() {
           activeTab={activeTab}
           onTabChange={(nextTab) => {
             setTransitionDirection(getTabOrderIndex(nextTab) >= getTabOrderIndex(activeTab) ? 1 : -1);
-            if (activeTab === "Map" && mapFocusedCategory && nextTab === "Discover") {
+            if (activeTab === "Map" && mapEntryMode === "category" && mapSourceCategory && nextTab === "Discover") {
               setActiveTab("Discover");
-              setActiveCategory(mapFocusedCategory);
+              setActiveCategory(mapSourceCategory);
               return;
+            }
+            if (nextTab === "Map") {
+              setMapEntryMode("global");
+              setMapSourceCategory(null);
             }
             setActiveTab(nextTab);
             setActiveCategory(null);
             if (nextTab !== "Map") {
-              setMapFocusedCategory(null);
+              setMapEntryMode("global");
+              setMapSourceCategory(null);
             }
           }}
         />

@@ -181,12 +181,18 @@ function MapCategorySegmentedControl({
 }
 
 export function MapScreen({
-  focusedCategory = null,
+  entryMode = "global",
+  sourceCategory = null,
+  globalActiveCategories = ["Taste", "Activity", "Stay", "Explore"],
+  onGlobalActiveCategoriesChange,
   savedPlaces,
   onBack,
   onAddLink,
 }: {
-  focusedCategory?: MapCategoryLabel | null;
+  entryMode?: "global" | "category";
+  sourceCategory?: MapCategoryLabel | null;
+  globalActiveCategories?: MapCategoryLabel[];
+  onGlobalActiveCategoriesChange?: (categories: MapCategoryLabel[]) => void;
   savedPlaces: SavedPlaceRecord[];
   onBack?: () => void;
   onAddLink?: () => void;
@@ -237,12 +243,12 @@ export function MapScreen({
   const isMapReady = hasMapsKey && isMapLoaded && !mapLoadError;
 
   useEffect(() => {
-    if (focusedCategory) {
-      setActiveMapCategories([focusedCategory]);
+    if (entryMode === "category" && sourceCategory) {
+      setActiveMapCategories([sourceCategory]);
       return;
     }
-    setActiveMapCategories(["Taste", "Activity", "Stay", "Explore"]);
-  }, [focusedCategory]);
+    setActiveMapCategories(globalActiveCategories);
+  }, [entryMode, globalActiveCategories, sourceCategory]);
 
   useEffect(() => {
     const node = canvasRef.current;
@@ -259,9 +265,13 @@ export function MapScreen({
   }, []);
 
   const toggleMapCategory = (label: MapCategoryLabel) => {
-    setActiveMapCategories((current) =>
-      current.includes(label) ? current.filter((item) => item !== label) : [...current, label],
-    );
+    setActiveMapCategories((current) => {
+      const next = current.includes(label) ? current.filter((item) => item !== label) : [...current, label];
+      if (entryMode === "global") {
+        onGlobalActiveCategoriesChange?.(next);
+      }
+      return next;
+    });
   };
 
   const filteredSavedPlaces = useMemo(
@@ -322,7 +332,6 @@ export function MapScreen({
   }, [mapPlaces, mapCenter, radiusKm]);
 
   const sliderPercent = ((radiusKm - 2) / 98) * 100;
-  const isCategoryLockActive = focusedCategory !== null;
   const radiusProgress = (radiusKm - 2) / 98;
   const radiusVisualPx = radiusProgress * mapMinDimensionPx * MAX_RADIUS_VISUAL_RATIO;
   const visiblePlaceCount = visibleMapPlaces.length;
@@ -521,7 +530,7 @@ export function MapScreen({
         <MapCategorySegmentedControl
           categories={mapCategoryStyles}
           activeCategories={activeMapCategories}
-          isLocked={isCategoryLockActive}
+          isLocked={false}
           onToggle={toggleMapCategory}
         />
       </div>
