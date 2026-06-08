@@ -1,13 +1,37 @@
-﻿# Deployment (Cloudflare)
+# Deployment
 
-This folder is the single source of truth for Wandreel production deployment on Cloudflare.
+This folder is the single source of truth for Wandreel production deployment.
 
 ## Scope
 
-- Frontend hosting: Cloudflare Pages
-- API hosting: Cloudflare-compatible origin (current Node API) behind Cloudflare DNS/proxy
-- Domain: `wandreel.com` with `www -> wandreel.com` redirect
+- Frontend hosting and deploys: Cloudflare via `wrangler`
+- API hosting: Render
+- Database: Neon Postgres
+- Frontend app domain: `app.wandreel.com`
+- Public API domain: `api.wandreel.com`
+- Apex/web redirects and DNS: Cloudflare
 - SSL/TLS: Full (strict)
+
+## Actual Deployment Stack
+
+Wandreel currently depends on these services in production:
+
+1. Cloudflare + `wrangler`
+   - frontend asset deploy
+   - custom domains
+   - DNS/proxy
+   - SSL/TLS
+
+2. Render
+   - Node/Express API hosting
+   - origin behind `api.wandreel.com`
+
+3. Neon
+   - Postgres database
+
+4. External service dependencies
+   - Google: login and Maps/Places APIs
+   - OpenAI: extraction/intelligence APIs
 
 ## Docs Index
 
@@ -20,11 +44,12 @@ This folder is the single source of truth for Wandreel production deployment on 
 
 ## Deployment Strategy
 
-1. Configure DNS + SSL + redirects in Cloudflare.
-2. Deploy frontend to Pages and bind custom domain.
-3. Route API subdomain (`api.wandreel.com`) to backend origin.
-4. Set production env vars and CORS/cookie domain policy.
-5. Run smoke tests before announcing release.
+1. Deploy frontend with `wrangler` / Cloudflare.
+2. Point `app.wandreel.com` to the frontend deployment in Cloudflare.
+3. Keep `api.wandreel.com` routed to the Render backend origin through Cloudflare DNS/proxy.
+4. Ensure Neon connection/env vars are set correctly in the backend environment.
+5. Set production env vars and CORS/cookie domain policy.
+6. Run smoke tests before announcing release.
 
 ## Preflight Commands
 
