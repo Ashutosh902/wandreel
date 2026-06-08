@@ -335,35 +335,14 @@ export function MapScreen({
     setMapZoomOverride(null);
     setRadiusKm(Math.max(2, Math.min(100, nextRadius)));
   };
-  const handleRecenterCurrentLocationButton = async () => {
-    if (typeof navigator === "undefined" || !navigator.geolocation) {
-      showToast({ message: "Could not get current location. Try again.", variant: "error" });
+  const handleRecenterCurrentLocationButton = () => {
+    const knownCoords = currentCoords || deviceCoords;
+    if (!knownCoords) {
+      showToast({ message: "Current location is not available yet.", variant: "info" });
       return;
     }
 
-    try {
-      if ("permissions" in navigator && navigator.permissions?.query) {
-        const permissionStatus = await navigator.permissions.query({ name: "geolocation" });
-        if (permissionStatus.state === "denied") {
-          showToast({ message: "Location permission is needed to recenter the map.", variant: "info" });
-          return;
-        }
-      }
-    } catch {
-      // Some browsers do not support geolocation permission queries reliably.
-    }
-
-    const result = await useDeviceLocationAsCurrent({ forceRefresh: true });
-    if (!result.ok || !result.coords) {
-      if (result.reason === "permission_denied") {
-        showToast({ message: "Location permission is needed to recenter the map.", variant: "info" });
-        return;
-      }
-      showToast({ message: "Could not get current location. Try again.", variant: "error" });
-      return;
-    }
-
-    const nextCenter = { lat: result.coords.lat, lng: result.coords.lng };
+    const nextCenter = { lat: knownCoords.lat, lng: knownCoords.lng };
     setMapZoomOverride(RECENTER_MAP_ZOOM);
     if (googleMapInstance) {
       googleMapInstance.panTo(nextCenter);
