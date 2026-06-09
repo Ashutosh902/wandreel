@@ -10,7 +10,8 @@
     "lint": "eslint .",
     "preview": "npm run build && wrangler dev",
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
-    "test:intelligence": "tsx --test server/intelligence/tests/async.test.ts server/intelligence/tests/buildUserPrompt.test.ts server/intelligence/tests/normalize.test.ts server/intelligence/tests/prompts.test.ts server/intelligence/tests/schema.test.ts",
+    "test:intelligence": "tsx --test server/extraction/tests/visualFallback.test.ts server/intelligence/tests/async.test.ts server/intelligence/tests/buildUserPrompt.test.ts server/intelligence/tests/normalize.test.ts server/intelligence/tests/prompts.test.ts server/intelligence/tests/schema.test.ts",
+    "extract:runtime:check": "python server/extraction/scripts/check_runtime_health.py",
     "deploy:preflight": "node deployment/scripts/preflight.mjs",
     "deploy:preflight:win": "powershell -ExecutionPolicy Bypass -File deployment/scripts/run-preflight.ps1",
     "deploy": "npm run build && wrangler deploy"

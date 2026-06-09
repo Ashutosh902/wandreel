@@ -4,6 +4,7 @@ import type {
   OcrResult,
   ScreenshotAsset,
   TranscriptResult,
+  VerificationQueryShape,
   VisualFallbackResult,
   VisualSearchCandidate,
 } from "./types";
@@ -21,6 +22,32 @@ type VerifiedPlace = {
   lat: number | null;
   lng: number | null;
   verificationConfidence: ConfidenceLabel;
+};
+
+type VerificationAssessmentInput = {
+  query: string;
+  querySource: "ocr_text" | "vision_search";
+  contextText: string;
+  visualMeta: {
+    name?: string | null;
+    aliases?: string[];
+    locationHint?: string | null;
+    countryOrRegion?: string | null;
+    evidence?: string | null;
+    category?: string | null;
+    supportFrameLabels?: string[];
+  } | null;
+  verified: VerifiedPlace;
+};
+
+type VerificationAssessment = {
+  queryShape: VerificationQueryShape;
+  allowSearchUpgrade: boolean;
+  searchVerificationScore: number;
+  corroborationCount: number;
+  semanticMismatch: boolean;
+  visualNameMatchesVerified: boolean;
+  hasPlaceLikeTextSignal: boolean;
 };
 
 function getApiKey() {
@@ -65,6 +92,10 @@ function isNoiseLine(line: string): boolean {
     /^[@#]/.test(line) ||
     /\b(dm|follow|subscribe|link in bio|comment)\b/i.test(line)
   );
+}
+
+function sanitizeText(input: string): string {
+  return normalizeWhitespace(String(input || "").replace(/[^\p{L}\p{N}\s,&'/-]/gu, " "));
 }
 
 function dedupeQueries(queries: string[]): string[] {
@@ -122,6 +153,163 @@ function tokenize(input: string): string[] {
 
 function buildContextText(metadata: ExtractedMetadata, transcript: TranscriptResult | null, ocr: OcrResult | null): string {
   return normalizeWhitespace([metadata.title, metadata.description, transcript?.text || "", ocr?.text || ""].filter(Boolean).join("\n"));
+}
+
+function scoreTextSupport(candidateParts: Array<string | null | undefined>, contextText: string): number {
+  const contextTokens = new Set(tokenize(contextText));
+  const candidateTokens = new Set(tokenize(candidateParts.filter(Boolean).join(" ")));
+  if (candidateTokens.size === 0 || contextTokens.size === 0) return 0;
+  let matched = 0;
+  for (const token of candidateTokens) {
+    if (contextTokens.has(token)) matched += 1;
+  }
+  return Number(Math.min(1, matched / Math.max(2, Math.min(6, candidateTokens.size))).toFixed(3));
+}
+
+function scoreFrameAgreement(frameLabels: string[] | undefined, screenshotCount: number): number {
+  const uniqueCount = Array.from(new Set((frameLabels || []).filter(Boolean))).length;
+  if (uniqueCount <= 0 || screenshotCount <= 0) return 0;
+  if (uniqueCount >= 2) return 0.7;
+  return screenshotCount === 1 ? 0.55 : 0.25;
+}
+
+function isLikelyPlaceNameQuery(query: string): boolean {
+  const clean = sanitizeText(query);
+  if (!clean || clean.length > 80) return false;
+  const tokens = clean.split(/\s+/).filter(Boolean);
+  if (tokens.length === 0 || tokens.length > 8) return false;
+  if (/\b(i|you|we|they|he|she|my|our|your|are|is|was|were|am|be|being|been|crossing|visited|visiting|watching|going|dangerous|stunning|beautiful|amazing|hidden|best|most|view)\b/i.test(clean)) {
+    return false;
+  }
+  return /\b(waterfall|falls|temple|fort|palace|museum|monument|viewpoint|bridge|ghat|lake|beach|park|island|mount|hill|cafe|café|restaurant|hotel|resort)\b/i.test(clean);
+}
+
+export function classifyQueryShape(query: string): VerificationQueryShape {
+  const clean = sanitizeText(query);
+  const lower = clean.toLowerCase();
+  const tokens = clean.split(/\s+/).filter(Boolean);
+  if (!clean) return "generic_sentence";
+  if (/\b(road|rd|street|st|avenue|ave|lane|ln|sector|block|floor|market|nagar|colony|near|opp|opposite|phase|plot)\b/i.test(clean) && /\d/.test(clean)) {
+    return "address_like";
+  }
+  if (/\b(cafe|cafÃ©|restaurant|hotel|resort|bar|bakery|hostel|villa|homestay|rooftop|lounge)\b/i.test(clean)) {
+    return "business_like";
+  }
+  if (/\b(waterfall|falls|temple|fort|palace|museum|monument|viewpoint|bridge|ghat|lake|beach|park|island|mount|hill|sanctuary|shrine|tower)\b/i.test(clean)) {
+    if (/\b(i|you|we|my|our|your|crossing|visited|visiting|watching|going|most|best|stunning|beautiful|dangerous)\b/i.test(lower)) {
+      return "descriptive_caption";
+    }
+    return "landmark_like";
+  }
+  if (/\b(i|you|we|they|he|she|my|our|your|crossing|visited|visiting|watching|going|feels|look|looks|view)\b/i.test(lower) || tokens.length > 6) {
+    return /\b(stunning|beautiful|amazing|hidden|best|favorite|view)\b/i.test(lower) ? "descriptive_caption" : "generic_sentence";
+  }
+  if (tokens.length <= 5 && tokens.some((token) => /^[A-Z][a-z]+$/.test(token))) {
+    return "place_like";
+  }
+  return "generic_sentence";
+}
+
+function inferSceneTags(input: string): Set<string> {
+  const clean = sanitizeText(input).toLowerCase();
+  const tags = new Set<string>();
+  if (/\bwaterfall|falls|cascade\b/.test(clean)) {
+    tags.add("waterfall");
+    tags.add("nature");
+  }
+  if (/\bnature|forest|mountain|cliff|valley|river|scenic\b/.test(clean)) tags.add("nature");
+  if (/\btemple|shrine|spiritual|ghat\b/.test(clean)) tags.add("spiritual");
+  if (/\bbridge\b/.test(clean)) tags.add("bridge");
+  if (/\bcafe|cafÃ©|restaurant|food|taste\b/.test(clean)) tags.add("food");
+  if (/\bhotel|resort|stay|villa|hostel\b/.test(clean)) tags.add("stay");
+  return tags;
+}
+
+function hasTokenOverlap(partsA: string[], partsB: string[]): boolean {
+  const left = new Set(partsA.flatMap((part) => tokenize(part)));
+  if (left.size === 0) return false;
+  for (const token of partsB.flatMap((part) => tokenize(part))) {
+    if (left.has(token)) return true;
+  }
+  return false;
+}
+
+export function isSemanticMismatch(sceneText: string, candidateText: string): boolean {
+  const sceneTags = inferSceneTags(sceneText);
+  if (sceneTags.size === 0) return false;
+  const candidateTags = inferSceneTags(candidateText);
+  if (sceneTags.has("waterfall") && !candidateTags.has("waterfall") && candidateTags.has("bridge")) return true;
+  if (sceneTags.has("nature") && !candidateTags.has("nature") && (candidateTags.has("food") || candidateTags.has("stay"))) return true;
+  if (sceneTags.has("spiritual") && !candidateTags.has("spiritual") && (candidateTags.has("food") || candidateTags.has("stay"))) return true;
+  return false;
+}
+
+export function assessVerificationCandidate(input: VerificationAssessmentInput): VerificationAssessment {
+  const queryShape = classifyQueryShape(input.query);
+  const queryAllowsSearch =
+    queryShape === "place_like" ||
+    queryShape === "address_like" ||
+    queryShape === "business_like" ||
+    queryShape === "landmark_like";
+  const visualNameMatchesVerified = Boolean(
+    input.visualMeta?.name &&
+      input.verified.candidateName &&
+      hasTokenOverlap([input.visualMeta.name, ...(input.visualMeta.aliases || [])], [input.verified.candidateName]),
+  );
+  const sceneText = [
+    input.contextText,
+    input.visualMeta?.evidence || "",
+    input.visualMeta?.name || "",
+    ...(input.visualMeta?.aliases || []),
+  ].join(" ");
+  const semanticMismatch = isSemanticMismatch(
+    sceneText,
+    [
+      input.verified.candidateName,
+      input.verified.formattedAddress,
+      input.verified.locality,
+      input.verified.city,
+      input.verified.state,
+      input.verified.country,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+  const hasPlaceLikeTextSignal =
+    queryAllowsSearch &&
+    (queryShape === "place_like" || queryShape === "address_like" || queryShape === "business_like" || isLikelyPlaceNameQuery(input.query));
+  const corroborationCount =
+    (hasPlaceLikeTextSignal ? 1 : 0) +
+    (visualNameMatchesVerified ? 1 : 0) +
+    ((input.visualMeta?.supportFrameLabels?.length || 0) >= 2 ? 1 : 0) +
+    (hasTokenOverlap(
+      [input.verified.candidateName || "", input.verified.locality || "", input.verified.city || "", input.verified.state || "", input.verified.country || ""],
+      [input.contextText],
+    )
+      ? 1
+      : 0);
+  const allowSearchUpgrade =
+    input.querySource === "vision_search"
+      ? !semanticMismatch
+      : queryAllowsSearch && corroborationCount > 0 && !semanticMismatch;
+  const rawSearchScore = confidenceToWeight(input.verified.verificationConfidence);
+  const searchVerificationScore = allowSearchUpgrade
+    ? rawSearchScore
+    : input.querySource === "ocr_text" && (queryShape === "generic_sentence" || queryShape === "descriptive_caption")
+      ? Math.min(0.2, rawSearchScore)
+      : semanticMismatch
+        ? Math.min(0.1, rawSearchScore)
+        : Math.min(0.2, rawSearchScore);
+
+  return {
+    queryShape,
+    allowSearchUpgrade,
+    searchVerificationScore: Number(searchVerificationScore.toFixed(3)),
+    corroborationCount,
+    semanticMismatch,
+    visualNameMatchesVerified,
+    hasPlaceLikeTextSignal,
+  };
 }
 
 function matchSignals(query: string, place: VerifiedPlace, contextText: string): string[] {
@@ -232,9 +420,13 @@ function buildSummary(selectedCandidate: VisualSearchCandidate | null, confidenc
   if (!selectedCandidate) {
     return "Visual fallback did not find a verified place candidate.";
   }
+  const prefix = selectedCandidate.reason?.includes("possible_match") ? "Possible match" : "Visual fallback candidate";
   const parts = [
-    `Visual fallback candidate: ${selectedCandidate.candidateName || selectedCandidate.query}`,
+    `${prefix}: ${selectedCandidate.candidateName || selectedCandidate.query}`,
+    selectedCandidate.aliases?.length ? `aliases: ${selectedCandidate.aliases.join(", ")}` : null,
+    selectedCandidate.locationHint ? `location hint: ${selectedCandidate.locationHint}` : null,
     selectedCandidate.formattedAddress ? `address: ${selectedCandidate.formattedAddress}` : null,
+    selectedCandidate.locationVerified === false ? "location not verified" : null,
     `confidence: ${confidence}`,
     needsReview ? "manual verification recommended" : "verified candidate",
   ].filter(Boolean);
@@ -298,25 +490,141 @@ export async function runVisualFallback(input: {
     combinedQueries.map(async (query) => {
       const querySource = textQueries.includes(query) ? "ocr_text" : "vision_search";
       const visualMeta = visualSearch.candidates.find((item) => item.query.toLowerCase() === query.toLowerCase()) || null;
-      const verified = await verifyPlaceQuery(query);
+      const queryShape = classifyQueryShape(query);
+      const shouldVerifyDirectly =
+        querySource === "vision_search" ||
+        queryShape === "place_like" ||
+        queryShape === "address_like" ||
+        queryShape === "business_like" ||
+        queryShape === "landmark_like";
+      const verified = shouldVerifyDirectly
+        ? await verifyPlaceQuery(query)
+        : {
+            candidateName: null,
+            formattedAddress: null,
+            locality: null,
+            city: null,
+            state: null,
+            country: null,
+            placeId: null,
+            lat: null,
+            lng: null,
+            verificationConfidence: "low" as const,
+          };
       const matchedSignals = matchSignals(query, verified, contextText);
-      const verificationWeight = confidenceToWeight(verified.verificationConfidence);
+      const verificationAssessment = assessVerificationCandidate({
+        query,
+        querySource,
+        contextText,
+        visualMeta,
+        verified,
+      });
+      const verificationWeight = verificationAssessment.searchVerificationScore;
       const visualWeight = visualMeta ? confidenceToWeight(visualMeta.confidence) : querySource === "ocr_text" ? 0.75 : 0.35;
       const overlapWeight = Math.min(0.25, matchedSignals.length * 0.05);
-      const rankingScore = Number(Math.min(1, verificationWeight * 0.55 + visualWeight * 0.3 + overlapWeight + (verified.placeId ? 0.1 : 0)).toFixed(3));
+      const textSupportScore = visualMeta
+        ? scoreTextSupport(
+            [
+              visualMeta.name,
+              ...(visualMeta.aliases || []),
+              visualMeta.locationHint,
+              visualMeta.countryOrRegion,
+              verified.candidateName,
+              verified.locality,
+              verified.city,
+              verified.state,
+              verified.country,
+            ],
+            contextText,
+          )
+        : Number(Math.min(1, matchedSignals.length / 6).toFixed(3));
+      const frameAgreementScore = visualMeta ? scoreFrameAgreement(visualMeta.supportFrameLabels, screenshots.length) : 0;
+      const searchVerificationScore = verificationAssessment.searchVerificationScore;
+      const specificLandmarkBoost =
+        visualMeta?.name &&
+        visualMeta?.confidence &&
+        visualMeta.confidence !== "low" &&
+        (textSupportScore >= 0.4 || frameAgreementScore >= 0.7 || verificationAssessment.allowSearchUpgrade)
+          ? 0.15
+          : 0;
+      const categoryBoost = visualMeta?.category === "see" ? 0.05 : 0;
+      const unsupportedVisionPenalty =
+        querySource === "vision_search" && searchVerificationScore <= 0.2 && textSupportScore < 0.35 && frameAgreementScore < 0.7 ? 0.2 : 0;
+      const genericTextPenalty =
+        querySource === "ocr_text" && (queryShape === "generic_sentence" || queryShape === "descriptive_caption") ? 0.25 : 0;
+      const semanticMismatchPenalty = verificationAssessment.semanticMismatch ? 0.35 : 0;
+      const rankingScore = Number(
+        Math.max(
+          0,
+          Math.min(
+            1,
+            verificationWeight * 0.3 +
+              visualWeight * 0.3 +
+              textSupportScore * 0.2 +
+              frameAgreementScore * 0.1 +
+              overlapWeight +
+              specificLandmarkBoost +
+              categoryBoost +
+              (verificationAssessment.allowSearchUpgrade && verified.placeId ? 0.05 : 0) -
+              unsupportedVisionPenalty -
+              genericTextPenalty -
+              semanticMismatchPenalty,
+          ),
+        ).toFixed(3),
+      );
+      const locationHint =
+        [visualMeta?.locationHint, visualMeta?.countryOrRegion].filter(Boolean).join(", ") ||
+        null;
+      const finalConfidence =
+        (querySource === "vision_search" && searchVerificationScore <= 0.2 && textSupportScore < 0.35 && frameAgreementScore < 0.7) ||
+        verificationAssessment.semanticMismatch
+          ? "low"
+          : toConfidenceLabel(rankingScore);
+      const supportReason =
+        verificationAssessment.semanticMismatch
+          ? "semantic_mismatch_rejected"
+          : querySource === "ocr_text" && (queryShape === "generic_sentence" || queryShape === "descriptive_caption")
+            ? "generic_text_not_verifiable"
+          : verificationAssessment.allowSearchUpgrade && verified.verificationConfidence !== "low"
+          ? "search_verified_support"
+          : verificationAssessment.corroborationCount <= 0 && querySource === "ocr_text"
+            ? "needs_corroboration"
+          : textSupportScore >= 0.45
+            ? "text_or_location_support"
+            : frameAgreementScore >= 0.7
+              ? "multiple_frames_agree"
+              : querySource === "vision_search"
+                ? "vision_only_possible_match"
+                : "ocr_text_candidate";
       return {
         query,
         source: querySource,
         rationale: visualMeta?.rationale || null,
-        candidateName: verified.candidateName,
+        candidateName: verified.candidateName || visualMeta?.name || null,
+        aliases: visualMeta?.aliases || [],
+        categoryHint: visualMeta?.category || null,
+        locationHint,
         formattedAddress: verified.formattedAddress,
         locality: verified.locality,
         city: verified.city,
         state: verified.state,
-        country: verified.country,
+        country: verified.country || visualMeta?.countryOrRegion || null,
         placeId: verified.placeId,
         lat: verified.lat,
         lng: verified.lng,
+        visualEvidence: visualMeta?.evidence || null,
+        needsReview: visualMeta?.needsReview ?? true,
+        locationVerified: Boolean(verificationAssessment.allowSearchUpgrade && (verified.placeId || verified.formattedAddress)),
+        supportFrameLabels: visualMeta?.supportFrameLabels || [],
+        queryShape,
+        corroborationCount: verificationAssessment.corroborationCount,
+        semanticMismatch: verificationAssessment.semanticMismatch,
+        visualScore: Number(visualWeight.toFixed(3)),
+        textSupportScore,
+        frameAgreementScore,
+        searchVerificationScore,
+        finalConfidence,
+        reason: supportReason,
         verificationConfidence: verified.verificationConfidence,
         rankingScore,
         matchedSignals,
@@ -326,13 +634,81 @@ export async function runVisualFallback(input: {
 
   candidates.sort((a, b) => b.rankingScore - a.rankingScore);
   const selectedCandidate = candidates[0] || null;
-  const confidence = toConfidenceLabel(selectedCandidate?.rankingScore || 0);
-  const needsReview = confidence !== "high";
+  const topVisionCandidates = candidates.filter((candidate) => candidate.source === "vision_search" && candidate.candidateName);
+  const primaryVisionCandidate = topVisionCandidates[0] || null;
+  const competingVisionCandidate =
+    primaryVisionCandidate &&
+    topVisionCandidates.find(
+      (candidate) =>
+        candidate.candidateName &&
+        candidate.candidateName !== primaryVisionCandidate.candidateName &&
+        Math.abs(candidate.rankingScore - primaryVisionCandidate.rankingScore) <= 0.08 &&
+        (candidate.textSupportScore || 0) < 0.45 &&
+        (primaryVisionCandidate.textSupportScore || 0) < 0.45 &&
+        (candidate.searchVerificationScore || 0) < 0.65 &&
+        (primaryVisionCandidate.searchVerificationScore || 0) < 0.65,
+    );
+  const promotionEligible = (candidate: VisualSearchCandidate | null) =>
+    Boolean(
+      candidate &&
+        (
+          (candidate.locationVerified && !candidate.semanticMismatch) ||
+          (candidate.searchVerificationScore || 0) >= 0.65 ||
+          (candidate.textSupportScore || 0) >= 0.45 ||
+          (candidate.frameAgreementScore || 0) >= 0.7
+        ) &&
+        (candidate.corroborationCount || 0) > 0,
+    );
+  const promotableOcrCandidate = (candidate: VisualSearchCandidate | null) =>
+    Boolean(
+      candidate &&
+        candidate.source === "ocr_text" &&
+        (
+          (candidate.locationVerified && !candidate.semanticMismatch) ||
+          Boolean(candidate.candidateName) ||
+          (candidate.searchVerificationScore || 0) >= 0.65 ||
+          ((candidate.textSupportScore || 0) >= 0.45 && isLikelyPlaceNameQuery(candidate.query))
+        ) &&
+        (candidate.queryShape === "place_like" || candidate.queryShape === "address_like" || candidate.queryShape === "business_like" || candidate.queryShape === "landmark_like") &&
+        !candidate.semanticMismatch &&
+        (candidate.corroborationCount || 0) > 0,
+    );
+  let finalSelectedCandidate: VisualSearchCandidate | null = null;
+  if (promotableOcrCandidate(selectedCandidate)) {
+    finalSelectedCandidate = selectedCandidate;
+  } else if (primaryVisionCandidate && promotionEligible(primaryVisionCandidate) && !competingVisionCandidate) {
+    finalSelectedCandidate = primaryVisionCandidate;
+  }
+
+  if (selectedCandidate?.source === "ocr_text" && !finalSelectedCandidate) {
+    selectedCandidate.reason = "descriptive_ocr_not_promoted";
+  }
+  if (!finalSelectedCandidate && primaryVisionCandidate && !competingVisionCandidate) {
+    primaryVisionCandidate.reason = primaryVisionCandidate.reason === "vision_only_possible_match" ? "vision_only_possible_match" : "possible_match_unverified";
+  }
+  if (!finalSelectedCandidate && primaryVisionCandidate && competingVisionCandidate) {
+    primaryVisionCandidate.reason = "conflicting_visual_landmarks";
+    competingVisionCandidate.reason = "conflicting_visual_landmarks";
+  }
+
+  const confidence = finalSelectedCandidate?.finalConfidence || toConfidenceLabel(finalSelectedCandidate?.rankingScore || 0);
+  const needsReview =
+    !finalSelectedCandidate ||
+    !finalSelectedCandidate.locationVerified ||
+    confidence !== "high";
+  const summaryText =
+    finalSelectedCandidate
+      ? buildSummary(finalSelectedCandidate, confidence, needsReview)
+      : primaryVisionCandidate && competingVisionCandidate
+        ? `Possible matches: ${[primaryVisionCandidate.candidateName, competingVisionCandidate.candidateName].filter(Boolean).join(" | ")} | location not verified | manual verification recommended`
+        : primaryVisionCandidate
+          ? `Possible match: ${primaryVisionCandidate.candidateName || primaryVisionCandidate.query} | location not verified | manual verification recommended`
+          : "Visual fallback did not find a verified place candidate.";
 
   return {
     attempted: true,
     triggered: true,
-    reason: selectedCandidate ? visualSearch.reason : visualSearch.reason || "no_verified_candidates",
+    reason: finalSelectedCandidate ? visualSearch.reason : visualSearch.reason || "no_verified_candidates",
     provider: "shared_visual_fallback",
     confidence,
     needsReview,
@@ -340,7 +716,7 @@ export async function runVisualFallback(input: {
     textQueries,
     visualQueries,
     candidates,
-    selectedCandidate,
-    summaryText: buildSummary(selectedCandidate, confidence, needsReview),
+    selectedCandidate: finalSelectedCandidate,
+    summaryText,
   };
 }

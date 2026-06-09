@@ -6,6 +6,13 @@ export const EXTRACTION_STAGE_KEYS = ["basicMetadata", "caption", "transcript", 
 export type ExtractionStageKey = (typeof EXTRACTION_STAGE_KEYS)[number];
 
 export type ConfidenceLabel = "high" | "medium" | "low";
+export type VerificationQueryShape =
+  | "place_like"
+  | "address_like"
+  | "business_like"
+  | "landmark_like"
+  | "generic_sentence"
+  | "descriptive_caption";
 
 export type ExtractedMetadata = {
   sourceUrl: string;
@@ -55,6 +62,9 @@ export type VisualSearchCandidate = {
   source: "ocr_text" | "vision_search";
   rationale: string | null;
   candidateName: string | null;
+  aliases?: string[];
+  categoryHint?: "eat" | "do" | "stay" | "see" | null;
+  locationHint?: string | null;
   formattedAddress: string | null;
   locality: string | null;
   city: string | null;
@@ -63,6 +73,19 @@ export type VisualSearchCandidate = {
   placeId: string | null;
   lat: number | null;
   lng: number | null;
+  visualEvidence?: string | null;
+  needsReview?: boolean;
+  locationVerified?: boolean;
+  supportFrameLabels?: string[];
+  queryShape?: VerificationQueryShape;
+  corroborationCount?: number;
+  semanticMismatch?: boolean;
+  visualScore?: number;
+  textSupportScore?: number;
+  frameAgreementScore?: number;
+  searchVerificationScore?: number;
+  finalConfidence?: ConfidenceLabel;
+  reason?: string | null;
   verificationConfidence: ConfidenceLabel;
   rankingScore: number;
   matchedSignals: string[];
