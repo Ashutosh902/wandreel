@@ -8,72 +8,7 @@ import subprocess
 import sys
 import tempfile
 from urllib.parse import parse_qs, urlparse
-
-
-def add_user_site_packages() -> None:
-    appdata = os.environ.get("APPDATA", "")
-    if not appdata:
-        return
-    py_version = f"Python{sys.version_info.major}{sys.version_info.minor}"
-    user_site = os.path.join(appdata, "Python", py_version, "site-packages")
-    if os.path.isdir(user_site) and user_site not in sys.path:
-        sys.path.insert(0, user_site)
-
-
-def add_local_site_packages() -> None:
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    candidates = [
-        os.environ.get("LAYER1_PYDEPS_PATH", ""),
-        os.path.normpath(os.path.join(script_dir, "..", "pydeps_runtime")),
-        os.path.normpath(os.path.join(script_dir, "..", "pydeps")),
-    ]
-    for candidate in candidates:
-        if candidate and os.path.isdir(candidate) and candidate not in sys.path:
-            sys.path.append(candidate)
-
-
-def normalize_ffmpeg_dir(path_or_exe: str | None) -> str | None:
-    if not path_or_exe:
-        return None
-    raw = path_or_exe.strip().strip('"')
-    if not raw:
-        return None
-    if os.path.isdir(raw):
-        ffmpeg_exe = os.path.join(raw, "ffmpeg.exe")
-        ffprobe_exe = os.path.join(raw, "ffprobe.exe")
-        if os.path.exists(ffmpeg_exe) and os.path.exists(ffprobe_exe):
-            return raw
-        return None
-    if os.path.isfile(raw):
-        base = os.path.dirname(raw)
-        ffmpeg_exe = os.path.join(base, "ffmpeg.exe")
-        ffprobe_exe = os.path.join(base, "ffprobe.exe")
-        if os.path.exists(ffmpeg_exe) and os.path.exists(ffprobe_exe):
-            return base
-    return None
-
-
-def get_ffmpeg_location() -> str | None:
-    for key in ("LAYER1_FFMPEG_DIR", "LAYER1_FFMPEG_PATH"):
-        resolved = normalize_ffmpeg_dir(os.environ.get(key))
-        if resolved:
-            return resolved
-    ffmpeg_on_path = shutil.which("ffmpeg")
-    ffprobe_on_path = shutil.which("ffprobe")
-    if ffmpeg_on_path and ffprobe_on_path:
-        resolved = normalize_ffmpeg_dir(ffmpeg_on_path)
-        if resolved:
-            return resolved
-    try:
-        import imageio_ffmpeg  # type: ignore
-
-        ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
-        resolved = normalize_ffmpeg_dir(ffmpeg_bin)
-        if resolved:
-            return resolved
-    except Exception:
-        pass
-    return None
+from runtime_support import configure_runtime_paths, emit_runtime_debug_log, get_ffmpeg_location
 
 
 def sanitize_media_id(value: str) -> str:
@@ -122,8 +57,8 @@ def select_timestamps(duration_seconds: float, count: int) -> list[float]:
 
 
 def main() -> int:
-    add_user_site_packages()
-    add_local_site_packages()
+    runtime_path_additions = configure_runtime_paths()
+    emit_runtime_debug_log("fetch_video_frames.py", runtime_path_additions)
 
     if len(sys.argv) < 2:
         print(json.dumps({"ok": False, "error": "URL_REQUIRED"}))

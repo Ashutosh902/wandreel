@@ -30,8 +30,9 @@ export async function extractVisionOcr(imageUrl: string): Promise<{ text: string
   }
 
   try {
+    const model = process.env.EXTRACTION_VISION_MODEL || process.env.OPENAI_MODEL || process.env.INTELLIGENCE_MODEL || "gpt-5-nano";
     const response = await client.responses.create({
-      model: process.env.EXTRACTION_VISION_MODEL || process.env.INTELLIGENCE_MODEL || "gpt-5-nano",
+      model,
       input: [
         {
           role: "user",
@@ -73,8 +74,9 @@ export async function extractVisionOcrFromScreenshots(screenshots: ScreenshotAss
   }
 
   try {
+    const model = process.env.EXTRACTION_VISION_MODEL || process.env.OPENAI_MODEL || process.env.INTELLIGENCE_MODEL || "gpt-5-nano";
     const response = await client.responses.create({
-      model: process.env.EXTRACTION_VISION_MODEL || process.env.INTELLIGENCE_MODEL || "gpt-5-nano",
+      model,
       input: [
         {
           role: "user",

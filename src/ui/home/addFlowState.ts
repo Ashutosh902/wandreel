@@ -5,6 +5,7 @@ export type DetectedPlace = {
   runId: number;
   sourceUrl: string;
   retryCount?: number;
+  entityIndex?: number | null;
   name: string;
   category: DetectedCategory;
   locality: string;
@@ -228,6 +229,7 @@ export function mapEntitiesToPlaces(
         runId,
         sourceUrl: defaults.sourceUrl,
         retryCount: defaults.retryCount ?? 0,
+        entityIndex: index,
         name: entity.name,
         category: mapped,
         locality,

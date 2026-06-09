@@ -8,18 +8,23 @@ import {
   buildClearSessionCookie,
   buildSessionCookie,
   createReelAnalyticsAttempt,
+  createReelJob,
   createOrReuseEmailVerifiedUser,
   createSession,
   deleteSavedPlace,
   ensureAuthSchema,
   finalizeReelAnalyticsAttempt,
   findSessionUser,
+  getReelAnalyticsRunIdByClientRunId,
+  getReelJob,
   getSessionCookieName,
   isPostgresConfigured,
   issueEmailOtp,
   listSavedPlaces,
+  markReelAnalyticsEntityOutcome,
   recordReelAnalyticsEvent,
   revokeSession,
+  upsertReelAnalyticsEntities,
   upsertGoogleVerifiedUser,
   upsertSavedPlace,
   updateDisplayName,
@@ -299,6 +304,18 @@ app.post("/api/metadata/extract/deep-async", async (req, res) => {
 
     const quick = await runExtractionPipeline({ url, mode: "quick" });
     const job = await extractionJobStore.createDeep(url);
+    if (isPostgresConfigured()) {
+      try {
+        await createReelJob({
+          jobId: job.id,
+          jobType: "extraction_deep_async",
+          status: job.status,
+          progressJson: { stage: "extraction", mode: "deep", sourceUrl: url },
+        });
+      } catch (jobError) {
+        console.error("create extraction reel job failed", jobError);
+      }
+    }
 
     return res.status(202).json({
       ok: true,
@@ -320,10 +337,26 @@ app.get("/api/metadata/jobs/:jobId", async (req, res) => {
     return res.status(400).json({ ok: false, error: "jobId is required" });
   }
   const job = await extractionJobStore.get(jobId);
-  if (!job) {
-    return res.status(404).json({ ok: false, error: "job not found" });
+  if (job) {
+    return res.json({ ok: true, job });
   }
-  return res.json({ ok: true, job });
+  if (isPostgresConfigured()) {
+    const durableJob = await getReelJob(jobId);
+    if (durableJob) {
+      return res.json({
+        ok: true,
+        job: {
+          id: durableJob.id,
+          status: durableJob.status,
+          createdAtIso: durableJob.createdAt,
+          updatedAtIso: durableJob.updatedAt,
+          error: durableJob.errorMessage,
+          result: durableJob.resultJson,
+        },
+      });
+    }
+  }
+  return res.status(404).json({ ok: false, error: "job not found" });
 });
 
 async function createAnalyticsAttemptFromRequest(
@@ -334,14 +367,80 @@ async function createAnalyticsAttemptFromRequest(
   const analyticsPayload = req.body?.analytics && typeof req.body.analytics === "object" ? req.body.analytics : null;
   if (!analyticsPayload?.clientRunId) return null;
   const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
-  return createReelAnalyticsAttempt({
-    clientRunId: String(analyticsPayload.clientRunId),
-    userId: authUser?.userId ?? null,
-    anonymousId: analyticsPayload?.anonymousId ? String(analyticsPayload.anonymousId) : null,
-    sourceUrl: String(source?.metadata?.canonicalUrl || source?.metadata?.sourceUrl || source?.source || ""),
-    sourcePlatform: source?.metadata?.platform ? String(source.metadata.platform) : null,
-    attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
-    triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
+  try {
+    return await createReelAnalyticsAttempt({
+      clientRunId: String(analyticsPayload.clientRunId),
+      userId: authUser?.userId ?? null,
+      anonymousId: analyticsPayload?.anonymousId ? String(analyticsPayload.anonymousId) : null,
+      sourceUrl: String(source?.metadata?.canonicalUrl || source?.metadata?.sourceUrl || source?.source || ""),
+      sourcePlatform: source?.metadata?.platform ? String(source.metadata.platform) : null,
+      attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
+      triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
+    });
+  } catch (attemptError) {
+    console.error("create analytics attempt failed", attemptError);
+    return null;
+  }
+}
+
+async function persistAnalyticsEntitiesForAttempt(input: {
+  runId: string;
+  attemptId?: string | null;
+  attemptNumber: number;
+  result: {
+    output?: {
+      structuredEntities?: Array<Record<string, unknown>>;
+      entities?: Array<Record<string, unknown>>;
+    };
+  };
+}) {
+  const structuredEntities = Array.isArray(input.result.output?.structuredEntities)
+    ? input.result.output?.structuredEntities ?? []
+    : [];
+  const entities = Array.isArray(input.result.output?.entities) ? input.result.output?.entities ?? [] : [];
+
+  await upsertReelAnalyticsEntities({
+    runId: input.runId,
+    attemptId: input.attemptId ?? null,
+    attemptNumber: input.attemptNumber,
+    entities: structuredEntities.map((entity, index) => {
+      const rawEntity = entities[index] || {};
+      const locality = typeof entity.locality === "string" ? entity.locality : null;
+      const city = typeof entity.city === "string" ? entity.city : null;
+      const subtitle = locality || city || (typeof entity.address === "string" ? entity.address : null);
+      return {
+        entityIndex: index,
+        entityType:
+          typeof rawEntity.entityType === "string"
+            ? rawEntity.entityType
+            : typeof entity.category === "string"
+              ? entity.category
+              : null,
+        title: typeof entity.name === "string" ? entity.name : null,
+        subtitle,
+        placeCandidateId:
+          typeof entity.placeId === "string"
+            ? entity.placeId
+            : typeof entity.googleMapsQuery === "string"
+              ? entity.googleMapsQuery
+              : null,
+        finalPlaceId: typeof entity.placeId === "string" ? entity.placeId : null,
+        confidence:
+          typeof entity.confidence === "number"
+            ? entity.confidence
+            : entity.confidence === "high"
+              ? 0.9
+              : entity.confidence === "medium"
+                ? 0.6
+                : entity.confidence === "low"
+                  ? 0.3
+                  : null,
+        metadataJson: {
+          structuredEntity: entity,
+          rawEntity,
+        },
+      };
+    }),
   });
 }
 
@@ -368,6 +467,7 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
         source,
         analytics: {
           attemptId: attemptRecord?.attemptId ?? null,
+          runId: attemptRecord?.runId ?? null,
           clientRunId: analyticsPayload?.clientRunId ? String(analyticsPayload.clientRunId) : null,
           attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
           triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
@@ -375,6 +475,21 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
           userId: authUser?.userId ?? null,
         },
       });
+      if (isPostgresConfigured()) {
+        try {
+          await createReelJob({
+            jobId: job.id,
+            runId: attemptRecord?.runId ?? null,
+            attemptId: attemptRecord?.attemptId ?? null,
+            attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
+            jobType: "intelligence_async",
+            status: job.status,
+            progressJson: { mode, stage: "intelligence" },
+          });
+        } catch (jobError) {
+          console.error("create reel job failed", jobError);
+        }
+      }
       return res.status(202).json({
         ok: true,
         mode,
@@ -392,6 +507,7 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
         source,
         analytics: {
           attemptId: attemptRecord?.attemptId ?? null,
+          runId: attemptRecord?.runId ?? null,
           clientRunId: analyticsPayload?.clientRunId ? String(analyticsPayload.clientRunId) : null,
           attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
           triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
@@ -399,6 +515,21 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
           userId: authUser?.userId ?? null,
         },
       });
+      if (isPostgresConfigured()) {
+        try {
+          await createReelJob({
+            jobId: job.id,
+            runId: attemptRecord?.runId ?? null,
+            attemptId: attemptRecord?.attemptId ?? null,
+            attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
+            jobType: "intelligence_draft_async",
+            status: job.status,
+            progressJson: { mode, stage: "intelligence", draft: true },
+          });
+        } catch (jobError) {
+          console.error("create reel job failed", jobError);
+        }
+      }
       const draftOutput = buildDraftIntelligenceOutput(source);
       return res.status(202).json({
         ok: true,
@@ -447,20 +578,36 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
     const attemptRecord = await createAnalyticsAttemptFromRequest(req, source);
     const result = await runIntelligencePipeline({ source });
     if (attemptRecord?.attemptId) {
-      await finalizeReelAnalyticsAttempt({
-        attemptId: attemptRecord.attemptId,
-        status: "completed",
-        sourcePlatform: source?.metadata?.platform ? String(source.metadata.platform) : null,
-        model: result.providerMeta?.model ?? null,
-        inputTokens: result.usage?.inputTokens ?? null,
-        outputTokens: result.usage?.outputTokens ?? null,
-        totalTokens: result.usage?.totalTokens ?? null,
-        providerLatencyMs: result.timingsMs?.provider ?? null,
-        totalLatencyMs: result.timingsMs?.total ?? null,
-        entityCount: Array.isArray(result.output?.structuredEntities) ? result.output.structuredEntities.length : 0,
-        intelligenceStatus: result.output?.status ?? null,
-        validationErrorCount: Array.isArray(result.validationErrors) ? result.validationErrors.length : 0,
-      });
+      try {
+        await finalizeReelAnalyticsAttempt({
+          attemptId: attemptRecord.attemptId,
+          status: "completed",
+          sourcePlatform: source?.metadata?.platform ? String(source.metadata.platform) : null,
+          model: result.providerMeta?.model ?? null,
+          inputTokens: result.usage?.inputTokens ?? null,
+          outputTokens: result.usage?.outputTokens ?? null,
+          totalTokens: result.usage?.totalTokens ?? null,
+          providerLatencyMs: result.timingsMs?.provider ?? null,
+          totalLatencyMs: result.timingsMs?.total ?? null,
+          entityCount: Array.isArray(result.output?.structuredEntities) ? result.output.structuredEntities.length : 0,
+          intelligenceStatus: result.output?.status ?? null,
+          validationErrorCount: Array.isArray(result.validationErrors) ? result.validationErrors.length : 0,
+        });
+      } catch (attemptFinalizeError) {
+        console.error("finalize analytics attempt failed", attemptFinalizeError);
+      }
+    }
+    if (attemptRecord?.runId) {
+      try {
+        await persistAnalyticsEntitiesForAttempt({
+          runId: attemptRecord.runId,
+          attemptId: attemptRecord.attemptId,
+          attemptNumber: Number(req.body?.analytics?.attemptNumber) || 1,
+          result,
+        });
+      } catch (entityError) {
+        console.error("persist analytics entities failed", entityError);
+      }
     }
     return res.json({ ok: true, mode, ...result });
   } catch (error) {
@@ -476,11 +623,26 @@ app.get("/api/intelligence/jobs/:jobId", async (req, res) => {
   }
 
   const job = await intelligenceJobStore.get(jobId);
-  if (!job) {
-    return res.status(404).json({ ok: false, error: "job not found" });
+  if (job) {
+    return res.json({ ok: true, job });
   }
-
-  return res.json({ ok: true, job });
+  if (isPostgresConfigured()) {
+    const durableJob = await getReelJob(jobId);
+    if (durableJob) {
+      return res.json({
+        ok: true,
+        job: {
+          id: durableJob.id,
+          status: durableJob.status,
+          createdAtIso: durableJob.createdAt,
+          updatedAtIso: durableJob.updatedAt,
+          error: durableJob.errorMessage,
+          result: durableJob.resultJson,
+        },
+      });
+    }
+  }
+  return res.status(404).json({ ok: false, error: "job not found" });
 });
 
 app.post("/api/analytics/reel-event", optionalAuth, async (req, res) => {
@@ -504,6 +666,25 @@ app.post("/api/analytics/reel-event", optionalAuth, async (req, res) => {
       eventName: eventName as "saved" | "edited" | "discarded",
       payload: req.body?.payload ?? {},
     });
+    try {
+      const runId = await getReelAnalyticsRunIdByClientRunId(clientRunId);
+      if (runId) {
+        const payloadEntityIndex =
+          req.body?.payload && typeof req.body.payload === "object" && Number.isFinite(Number((req.body.payload as Record<string, unknown>).entityIndex))
+            ? Number((req.body.payload as Record<string, unknown>).entityIndex)
+            : null;
+        await markReelAnalyticsEntityOutcome({
+          runId,
+          attemptNumber: Number(req.body?.attemptNumber) || 1,
+          entityId: req.body?.entityId ? String(req.body.entityId).trim() : null,
+          entityIndex: Number.isFinite(Number(req.body?.entityIndex)) ? Number(req.body.entityIndex) : payloadEntityIndex,
+          eventName: eventName as "saved" | "edited" | "discarded",
+          finalPlaceId: req.body?.finalPlaceId ? String(req.body.finalPlaceId).trim() : null,
+        });
+      }
+    } catch (entityError) {
+      console.error("mark analytics entity outcome failed", entityError);
+    }
     return res.status(201).json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not record analytics event";

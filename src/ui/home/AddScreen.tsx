@@ -122,6 +122,8 @@ export function AddScreen() {
     eventName: "saved" | "edited" | "discarded";
     sourceUrl?: string | null;
     sourcePlatform?: string | null;
+    entityIndex?: number | null;
+    finalPlaceId?: string | null;
     payload?: Record<string, unknown>;
   }) => {
     try {
@@ -136,6 +138,8 @@ export function AddScreen() {
           eventName: input.eventName,
           sourceUrl: input.sourceUrl ?? null,
           sourcePlatform: input.sourcePlatform ?? null,
+          entityIndex: input.entityIndex ?? null,
+          finalPlaceId: input.finalPlaceId ?? null,
           payload: input.payload ?? {},
         }),
       });
@@ -966,9 +970,12 @@ export function AddScreen() {
       eventName: "edited",
       sourceUrl: editingPlace.sourceUrl,
       sourcePlatform: editingPlace.source,
+      entityIndex: editingPlace.entityIndex ?? null,
+      finalPlaceId: editPlaceId ?? editingPlace.placeId ?? null,
       payload: {
         category: editCategory,
         hasPlaceId: Boolean(editPlaceId ?? editingPlace.placeId),
+        entityIndex: editingPlace.entityIndex ?? null,
       },
     });
     setIsEditing(false);
@@ -1056,10 +1063,13 @@ export function AddScreen() {
         eventName: "saved",
         sourceUrl: place.sourceUrl,
         sourcePlatform: place.source,
+        entityIndex: place.entityIndex ?? null,
+        finalPlaceId: place.placeId ?? null,
         payload: {
           category: place.category,
           afterEdit: editingPlaceId === place.id || isEditing,
           hasPlaceId: Boolean(place.placeId),
+          entityIndex: place.entityIndex ?? null,
         },
       });
       removeReadyNotificationByRunId(place.runId);
@@ -1105,7 +1115,8 @@ export function AddScreen() {
         eventName: "discarded",
         sourceUrl: card.sourceUrl,
         sourcePlatform: card.pending.source,
-        payload: { state: "pending" },
+        entityIndex: card.pending.fallbackPlace.entityIndex ?? null,
+        payload: { state: "pending", entityIndex: card.pending.fallbackPlace.entityIndex ?? null },
       });
       const nextPlaces = replaceRunPlaces(detectedPlacesRef.current, card.runId);
       const nextPendingJobs = pendingJobsRef.current.filter((item) => item.runId !== card.runId);
@@ -1124,7 +1135,9 @@ export function AddScreen() {
       eventName: "discarded",
       sourceUrl: selectedPreview.sourceUrl,
       sourcePlatform: selectedPreview.source,
-      payload: { state: "resolved", category: selectedPreview.category },
+      entityIndex: selectedPreview.entityIndex ?? null,
+      finalPlaceId: selectedPreview.placeId ?? null,
+      payload: { state: "resolved", category: selectedPreview.category, entityIndex: selectedPreview.entityIndex ?? null },
     });
     const nextPlaces = detectedPlacesRef.current.filter((item) => item.id !== selectedPreview.id);
     syncDraftState(nextPlaces, pendingJobsRef.current, nextPlaces.length || pendingJobsRef.current.length ? linkInput : "");

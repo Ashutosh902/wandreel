@@ -41,6 +41,20 @@ type ReelAnalyticsRunRecord = {
   id: string;
 };
 
+type ReelJobRecord = {
+  id: string;
+  run_id: string | null;
+  attempt_id: string | null;
+  attempt_number: number | null;
+  job_type: string;
+  status: string;
+  progress_json: Record<string, unknown> | null;
+  result_json: Record<string, unknown> | null;
+  error_message: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 const DATABASE_URL = process.env.DATABASE_URL || "";
 const SESSION_COOKIE_NAME = "wr_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
@@ -69,6 +83,7 @@ export type ReelAnalyticsAttemptInput = {
 
 export type ReelAnalyticsAttemptResult = {
   attemptId: string;
+  runId: string;
 };
 
 export type ReelAnalyticsAttemptCompletion = {
@@ -96,6 +111,63 @@ export type ReelAnalyticsEventInput = {
   attemptNumber?: number | null;
   eventName: "saved" | "edited" | "discarded";
   payload?: unknown;
+};
+
+export type ReelAnalyticsEntitiesUpsertInput = {
+  runId: string;
+  attemptId?: string | null;
+  attemptNumber: number;
+  entities: Array<{
+    entityIndex: number;
+    entityType?: string | null;
+    title?: string | null;
+    subtitle?: string | null;
+    placeCandidateId?: string | null;
+    finalPlaceId?: string | null;
+    confidence?: number | null;
+    metadataJson?: Record<string, unknown> | null;
+  }>;
+};
+
+export type ReelAnalyticsEntityOutcomeInput = {
+  runId: string;
+  attemptNumber: number;
+  entityIndex?: number | null;
+  entityId?: string | null;
+  eventName: "saved" | "edited" | "discarded";
+  finalPlaceId?: string | null;
+};
+
+export type ReelJobCreateInput = {
+  jobId?: string;
+  runId?: string | null;
+  attemptId?: string | null;
+  attemptNumber?: number | null;
+  jobType?: string;
+  status?: "queued" | "running" | "completed" | "failed";
+  progressJson?: Record<string, unknown>;
+};
+
+export type ReelJobUpdateInput = {
+  jobId: string;
+  status?: "queued" | "running" | "completed" | "failed";
+  progressJson?: Record<string, unknown>;
+  resultJson?: Record<string, unknown> | null;
+  errorMessage?: string | null;
+};
+
+export type ReelJobDto = {
+  id: string;
+  runId: string | null;
+  attemptId: string | null;
+  attemptNumber: number | null;
+  jobType: string;
+  status: string;
+  progressJson: Record<string, unknown>;
+  resultJson: Record<string, unknown> | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export async function ensureAuthSchema() {
@@ -223,6 +295,77 @@ export async function ensureAuthSchema() {
       payload_json jsonb not null default '{}'::jsonb,
       created_at timestamptz not null default now()
     );
+  `);
+
+  await pool.query(`
+    create table if not exists reel_analytics_entities (
+      id uuid primary key default gen_random_uuid(),
+      run_id uuid not null references reel_analytics_runs(id) on delete cascade,
+      attempt_id uuid references reel_analytics_attempts(id) on delete cascade,
+      attempt_number integer not null,
+      entity_index integer not null,
+      entity_type text,
+      title text,
+      subtitle text,
+      place_candidate_id text,
+      final_place_id text,
+      confidence numeric,
+      metadata_json jsonb not null default '{}'::jsonb,
+      was_saved boolean not null default false,
+      was_edited boolean not null default false,
+      was_discarded boolean not null default false,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (run_id, attempt_number, entity_index)
+    );
+  `);
+
+  await pool.query(`
+    create index if not exists idx_reel_entities_run_id on reel_analytics_entities(run_id);
+  `);
+
+  await pool.query(`
+    create index if not exists idx_reel_entities_attempt_id on reel_analytics_entities(attempt_id);
+  `);
+
+  await pool.query(`
+    create index if not exists idx_reel_entities_final_place_id on reel_analytics_entities(final_place_id);
+  `);
+
+  await pool.query(`
+    create index if not exists idx_reel_entities_type on reel_analytics_entities(entity_type);
+  `);
+
+  await pool.query(`
+    create table if not exists reel_jobs (
+      id uuid primary key default gen_random_uuid(),
+      run_id uuid references reel_analytics_runs(id) on delete cascade,
+      attempt_id uuid references reel_analytics_attempts(id) on delete cascade,
+      attempt_number integer,
+      job_type text not null default 'full_pipeline',
+      status text not null default 'queued',
+      progress_json jsonb not null default '{}'::jsonb,
+      result_json jsonb,
+      error_message text,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+  `);
+
+  await pool.query(`
+    create index if not exists idx_reel_jobs_run_id on reel_jobs(run_id);
+  `);
+
+  await pool.query(`
+    create index if not exists idx_reel_jobs_attempt_id on reel_jobs(attempt_id);
+  `);
+
+  await pool.query(`
+    create index if not exists idx_reel_jobs_status on reel_jobs(status);
+  `);
+
+  await pool.query(`
+    create index if not exists idx_reel_jobs_created_at on reel_jobs(created_at desc);
   `);
 
   schemaReady = true;
@@ -608,7 +751,7 @@ export async function createReelAnalyticsAttempt(input: ReelAnalyticsAttemptInpu
   if (!runId) return null;
 
   const attemptId = randomUUID();
-  await pool.query(
+  const attemptResult = await pool.query<{ id: string }>(
     `
       insert into reel_analytics_attempts (
         id, run_id, attempt_number, trigger_type, status, source_url, source_platform, created_at, started_at
@@ -623,6 +766,7 @@ export async function createReelAnalyticsAttempt(input: ReelAnalyticsAttemptInpu
         failure_reason = null,
         completed_at = null,
         started_at = now()
+      returning id
     `,
     [attemptId, runId, input.attemptNumber, input.triggerType, input.sourceUrl, input.sourcePlatform ?? null],
   );
@@ -632,7 +776,17 @@ export async function createReelAnalyticsAttempt(input: ReelAnalyticsAttemptInpu
     [runId, input.attemptNumber],
   );
 
-  return { attemptId };
+  return { attemptId: attemptResult.rows[0]?.id || attemptId, runId };
+}
+
+export async function getReelAnalyticsRunIdByClientRunId(clientRunId: string) {
+  const normalized = String(clientRunId || "").trim();
+  if (!normalized) return null;
+  const result = await pool.query<ReelAnalyticsRunRecord>(
+    "select id from reel_analytics_runs where client_run_id = $1 limit 1",
+    [normalized],
+  );
+  return result.rows[0]?.id || null;
 }
 
 export async function finalizeReelAnalyticsAttempt(input: ReelAnalyticsAttemptCompletion) {
@@ -706,4 +860,167 @@ export async function recordReelAnalyticsEvent(input: ReelAnalyticsEventInput) {
     `,
     [runId, input.eventName, input.attemptNumber ?? null],
   );
+}
+
+export async function upsertReelAnalyticsEntities(input: ReelAnalyticsEntitiesUpsertInput): Promise<void> {
+  for (const entity of input.entities) {
+    await pool.query(
+      `
+        insert into reel_analytics_entities (
+          id, run_id, attempt_id, attempt_number, entity_index, entity_type, title, subtitle,
+          place_candidate_id, final_place_id, confidence, metadata_json, created_at, updated_at
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, now(), now())
+        on conflict (run_id, attempt_number, entity_index)
+        do update set
+          attempt_id = excluded.attempt_id,
+          entity_type = excluded.entity_type,
+          title = excluded.title,
+          subtitle = excluded.subtitle,
+          place_candidate_id = excluded.place_candidate_id,
+          final_place_id = excluded.final_place_id,
+          confidence = excluded.confidence,
+          metadata_json = excluded.metadata_json,
+          updated_at = now()
+      `,
+      [
+        randomUUID(),
+        input.runId,
+        input.attemptId ?? null,
+        input.attemptNumber,
+        entity.entityIndex,
+        entity.entityType ?? null,
+        entity.title ?? null,
+        entity.subtitle ?? null,
+        entity.placeCandidateId ?? null,
+        entity.finalPlaceId ?? null,
+        entity.confidence ?? null,
+        JSON.stringify(entity.metadataJson ?? {}),
+      ],
+    );
+  }
+}
+
+export async function markReelAnalyticsEntityOutcome(input: ReelAnalyticsEntityOutcomeInput): Promise<void> {
+  const flagColumn =
+    input.eventName === "saved"
+      ? "was_saved"
+      : input.eventName === "edited"
+        ? "was_edited"
+        : "was_discarded";
+
+  if (input.entityId) {
+    await pool.query(
+      `
+        update reel_analytics_entities
+        set
+          ${flagColumn} = true,
+          final_place_id = coalesce($2, final_place_id),
+          updated_at = now()
+        where id = $1
+      `,
+      [input.entityId, input.finalPlaceId ?? null],
+    );
+    return;
+  }
+
+  if (input.entityIndex === null || typeof input.entityIndex !== "number") return;
+
+  await pool.query(
+    `
+      update reel_analytics_entities
+      set
+        ${flagColumn} = true,
+        final_place_id = coalesce($4, final_place_id),
+        updated_at = now()
+      where run_id = $1 and attempt_number = $2 and entity_index = $3
+    `,
+    [input.runId, input.attemptNumber, input.entityIndex, input.finalPlaceId ?? null],
+  );
+}
+
+export async function createReelJob(input: ReelJobCreateInput): Promise<{ id: string }> {
+  const jobId = input.jobId || randomUUID();
+  await pool.query(
+    `
+      insert into reel_jobs (
+        id, run_id, attempt_id, attempt_number, job_type, status, progress_json, created_at, updated_at
+      )
+      values ($1, $2, $3, $4, $5, $6, $7::jsonb, now(), now())
+      on conflict (id)
+      do update set
+        run_id = coalesce(excluded.run_id, reel_jobs.run_id),
+        attempt_id = coalesce(excluded.attempt_id, reel_jobs.attempt_id),
+        attempt_number = coalesce(excluded.attempt_number, reel_jobs.attempt_number),
+        job_type = excluded.job_type,
+        status = excluded.status,
+        progress_json = excluded.progress_json,
+        updated_at = now()
+    `,
+    [
+      jobId,
+      input.runId ?? null,
+      input.attemptId ?? null,
+      input.attemptNumber ?? null,
+      input.jobType || "full_pipeline",
+      input.status || "queued",
+      JSON.stringify(input.progressJson ?? {}),
+    ],
+  );
+  return { id: jobId };
+}
+
+export async function updateReelJob(input: ReelJobUpdateInput): Promise<void> {
+  const hasProgressJson = Object.prototype.hasOwnProperty.call(input, "progressJson");
+  const hasResultJson = Object.prototype.hasOwnProperty.call(input, "resultJson");
+  const hasErrorMessage = Object.prototype.hasOwnProperty.call(input, "errorMessage");
+  await pool.query(
+    `
+      update reel_jobs
+      set
+        status = coalesce($2, status),
+        progress_json = case when $6 then $3::jsonb else progress_json end,
+        result_json = case when $7 then $4::jsonb else result_json end,
+        error_message = case when $8 then $5 else error_message end,
+        updated_at = now()
+      where id = $1
+    `,
+    [
+      input.jobId,
+      input.status ?? null,
+      hasProgressJson ? JSON.stringify(input.progressJson ?? {}) : null,
+      hasResultJson ? (input.resultJson === null ? null : JSON.stringify(input.resultJson)) : null,
+      input.errorMessage ?? null,
+      hasProgressJson,
+      hasResultJson,
+      hasErrorMessage,
+    ],
+  );
+}
+
+function toReelJobDto(row: ReelJobRecord): ReelJobDto {
+  return {
+    id: row.id,
+    runId: row.run_id,
+    attemptId: row.attempt_id,
+    attemptNumber: row.attempt_number,
+    jobType: row.job_type,
+    status: row.status,
+    progressJson: row.progress_json || {},
+    resultJson: row.result_json || null,
+    errorMessage: row.error_message,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function getReelJob(jobId: string): Promise<ReelJobDto | null> {
+  const normalized = String(jobId || "").trim();
+  if (!normalized) return null;
+  const result = await pool.query<ReelJobRecord>(
+    "select * from reel_jobs where id = $1 limit 1",
+    [normalized],
+  );
+  const row = result.rows[0];
+  return row ? toReelJobDto(row) : null;
 }

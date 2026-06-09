@@ -370,3 +370,62 @@ create table reel_analytics_events (
   payload_json jsonb not null default '{}'::jsonb,
   created_at timestamptz not null default now()
 );
+
+create table reel_analytics_entities (
+  id uuid primary key default gen_random_uuid(),
+  run_id uuid not null references reel_analytics_runs(id) on delete cascade,
+  attempt_id uuid references reel_analytics_attempts(id) on delete cascade,
+  attempt_number integer not null,
+  entity_index integer not null,
+  entity_type text,
+  title text,
+  subtitle text,
+  place_candidate_id text,
+  final_place_id text,
+  confidence numeric,
+  metadata_json jsonb not null default '{}'::jsonb,
+  was_saved boolean not null default false,
+  was_edited boolean not null default false,
+  was_discarded boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (run_id, attempt_number, entity_index)
+);
+
+create index if not exists idx_reel_entities_run_id
+on reel_analytics_entities(run_id);
+
+create index if not exists idx_reel_entities_attempt_id
+on reel_analytics_entities(attempt_id);
+
+create index if not exists idx_reel_entities_final_place_id
+on reel_analytics_entities(final_place_id);
+
+create index if not exists idx_reel_entities_type
+on reel_analytics_entities(entity_type);
+
+create table reel_jobs (
+  id uuid primary key default gen_random_uuid(),
+  run_id uuid references reel_analytics_runs(id) on delete cascade,
+  attempt_id uuid references reel_analytics_attempts(id) on delete cascade,
+  attempt_number integer,
+  job_type text not null default 'full_pipeline',
+  status text not null default 'queued',
+  progress_json jsonb not null default '{}'::jsonb,
+  result_json jsonb,
+  error_message text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists idx_reel_jobs_run_id
+on reel_jobs(run_id);
+
+create index if not exists idx_reel_jobs_attempt_id
+on reel_jobs(attempt_id);
+
+create index if not exists idx_reel_jobs_status
+on reel_jobs(status);
+
+create index if not exists idx_reel_jobs_created_at
+on reel_jobs(created_at desc);

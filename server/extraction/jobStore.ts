@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import type { ExtractionResult } from "./types";
 import { runExtractionPipeline } from "./pipeline";
+import { createReelJob, updateReelJob } from "../auth/postgresAuth";
 
 type ExtractionJobStatus = "queued" | "running" | "completed" | "failed";
 
@@ -33,6 +34,16 @@ export class InMemoryExtractionJobStore implements ExtractionJobStore {
       result: null,
     };
     this.jobs.set(id, job);
+    try {
+      await createReelJob({
+        jobId: id,
+        jobType: "extraction_deep_async",
+        status: "queued",
+        progressJson: { stage: "extraction", mode: "deep", sourceUrl: url },
+      });
+    } catch {
+      // Durable jobs are best-effort.
+    }
     void this.run(id, url);
     return job;
   }
@@ -47,9 +58,29 @@ export class InMemoryExtractionJobStore implements ExtractionJobStore {
     running.status = "running";
     running.updatedAtIso = new Date().toISOString();
     this.jobs.set(id, running);
+    try {
+      await updateReelJob({
+        jobId: id,
+        status: "running",
+        progressJson: { stage: "extraction", mode: "deep", sourceUrl: url },
+      });
+    } catch {
+      // Durable jobs are best-effort.
+    }
 
     try {
       const result = await runExtractionPipeline({ url, mode: "deep" });
+      try {
+        await updateReelJob({
+          jobId: id,
+          status: "completed",
+          progressJson: { stage: "extraction", mode: "deep", sourceUrl: url },
+          resultJson: result as unknown as Record<string, unknown>,
+          errorMessage: null,
+        });
+      } catch {
+        // Durable jobs are best-effort.
+      }
       const completed = this.jobs.get(id);
       if (!completed) return;
       completed.status = "completed";
@@ -57,6 +88,16 @@ export class InMemoryExtractionJobStore implements ExtractionJobStore {
       completed.updatedAtIso = new Date().toISOString();
       this.jobs.set(id, completed);
     } catch (error) {
+      try {
+        await updateReelJob({
+          jobId: id,
+          status: "failed",
+          progressJson: { stage: "extraction", mode: "deep", sourceUrl: url },
+          errorMessage: error instanceof Error ? error.message : "unknown_error",
+        });
+      } catch {
+        // Durable jobs are best-effort.
+      }
       const failed = this.jobs.get(id);
       if (!failed) return;
       failed.status = "failed";
@@ -68,4 +109,3 @@ export class InMemoryExtractionJobStore implements ExtractionJobStore {
 }
 
 export const extractionJobStore: ExtractionJobStore = new InMemoryExtractionJobStore();
-
