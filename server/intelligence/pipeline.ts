@@ -86,6 +86,23 @@ function normalizeVisualHint(input: string): string {
     .trim();
 }
 
+function isGenericScenicFallbackEntity(entity: StructuredEntity): boolean {
+  const name = String(entity.name || "").trim().toLowerCase();
+  if (!name) return false;
+  if (String(entity.confidence || "").toLowerCase() === "high") return false;
+  return (
+    name === "waterfall viewpoint" ||
+    name === "bridge viewpoint" ||
+    name === "scenic viewpoint" ||
+    name === "waterfall bridge viewpoint" ||
+    /\b(viewpoint|scenic spot|waterfall)\b/.test(name)
+  );
+}
+
+function shouldSkipGoogleResolution(entity: StructuredEntity, source: ExtractionResult): boolean {
+  return Boolean(!source.visualFallback?.selectedCandidate && isGenericScenicFallbackEntity(entity));
+}
+
 function inferScenicVisualEntity(source: ExtractionResult): { entity: DiscoveryEntity; structured: StructuredEntity } | null {
   const selectedCandidate = source.visualFallback?.selectedCandidate;
   if (selectedCandidate?.candidateName) {
@@ -260,12 +277,15 @@ export function applyVisualEntityFallback(output: IntelligenceOutput, req: Intel
   };
 }
 
-async function enrichWithResolvedLocations(output: IntelligencePipelineResult["output"]) {
+async function enrichWithResolvedLocations(output: IntelligencePipelineResult["output"], source: ExtractionResult) {
   const enabled = String(process.env.PLACE_RESOLUTION_ENABLED || "true").toLowerCase() !== "false";
   if (!enabled || !Array.isArray(output.structuredEntities) || output.structuredEntities.length === 0) return output;
 
   const resolved = await Promise.all(
     output.structuredEntities.map(async (entity) => {
+      if (shouldSkipGoogleResolution(entity, source)) {
+        return entity;
+      }
       const resolution = await resolveEntityLocality(entity);
       return {
         ...entity,
@@ -327,7 +347,7 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
   const firstPass = intelligenceOutputSchema.safeParse(raw);
   const schemaFirstPassMs = Date.now() - schemaFirstStartedAt;
   if (firstPass.success) {
-    const enrichedOutput = await enrichWithResolvedLocations(applyVisualEntityFallback(firstPass.data, req));
+    const enrichedOutput = await enrichWithResolvedLocations(applyVisualEntityFallback(firstPass.data, req), req.source);
     const agg = recordSla("intelligence.total", Date.now() - totalStartedAt);
     if (Number(process.env.INTELLIGENCE_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.INTELLIGENCE_SLA_LOG_EVERY) === 0) {
       console.info("[sla][intelligence.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
@@ -356,7 +376,7 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
   const schemaSecondPassMs = Date.now() - schemaSecondStartedAt;
 
   if (secondPass.success) {
-    const enrichedOutput = await enrichWithResolvedLocations(applyVisualEntityFallback(secondPass.data, req));
+    const enrichedOutput = await enrichWithResolvedLocations(applyVisualEntityFallback(secondPass.data, req), req.source);
     const agg = recordSla("intelligence.total", Date.now() - totalStartedAt);
     if (Number(process.env.INTELLIGENCE_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.INTELLIGENCE_SLA_LOG_EVERY) === 0) {
       console.info("[sla][intelligence.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
