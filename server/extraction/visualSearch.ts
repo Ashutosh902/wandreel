@@ -176,6 +176,7 @@ async function requestVisionCandidates(input: {
   mode: "json_schema" | "json_object";
   error: string | null;
   fatalError: string | null;
+  debug: Record<string, unknown>;
 }> {
   const requestInput = [
     {
@@ -217,11 +218,22 @@ async function requestVisionCandidates(input: {
         },
       },
     });
+    const candidates = parseCandidates(extractResponseText(response as any));
     return {
-      candidates: parseCandidates(extractResponseText(response as any)),
+      candidates,
       mode: "json_schema",
       error: null,
       fatalError: null,
+      debug: {
+        requestMode: "json_schema",
+        model: input.model,
+        schemaName: input.schemaName,
+        imageCount: input.screenshots.length,
+        imagePayloadSizes: input.screenshots.map((shot) => shot.sizeBytes ?? shot.url.length),
+        success: true,
+        candidateCount: candidates.length,
+        candidates,
+      },
     };
   } catch (error) {
     const schemaError = error instanceof Error ? error.message : "unknown_error";
@@ -246,11 +258,23 @@ async function requestVisionCandidates(input: {
           },
         },
       });
+      const candidates = parseCandidates(extractResponseText(response as any));
       return {
-        candidates: parseCandidates(extractResponseText(response as any)),
+        candidates,
         mode: "json_object",
         error: schemaError,
         fatalError: null,
+        debug: {
+          requestMode: "json_object",
+          model: input.model,
+          schemaName: input.schemaName,
+          imageCount: input.screenshots.length,
+          imagePayloadSizes: input.screenshots.map((shot) => shot.sizeBytes ?? shot.url.length),
+          success: true,
+          priorError: schemaError,
+          candidateCount: candidates.length,
+          candidates,
+        },
       };
     } catch (fallbackError) {
       const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : "unknown_error";
@@ -265,6 +289,18 @@ async function requestVisionCandidates(input: {
         mode: "json_object",
         error: schemaError,
         fatalError: fallbackMessage,
+        debug: {
+          requestMode: "json_object",
+          model: input.model,
+          schemaName: input.schemaName,
+          imageCount: input.screenshots.length,
+          imagePayloadSizes: input.screenshots.map((shot) => shot.sizeBytes ?? shot.url.length),
+          success: false,
+          priorError: schemaError,
+          fatalError: fallbackMessage,
+          candidateCount: 0,
+          candidates: [],
+        },
       };
     }
   }
@@ -275,14 +311,31 @@ export async function generateVisualSearchCandidates(input: {
   metadata: ExtractedMetadata;
   transcript: TranscriptResult | null;
   ocr: OcrResult | null;
-}): Promise<{ candidates: VisionCandidate[]; reason: string | null }> {
+}): Promise<{ candidates: VisionCandidate[]; reason: string | null; debug?: Record<string, unknown> }> {
+  const model =
+    process.env.EXTRACTION_VISUAL_SEARCH_MODEL || process.env.EXTRACTION_VISION_MODEL || process.env.OPENAI_MODEL || process.env.INTELLIGENCE_MODEL || "gpt-5-nano";
+  const fallbackModel =
+    process.env.EXTRACTION_VISUAL_SEARCH_FALLBACK_MODEL || process.env.OPENAI_MODEL || "gpt-5-nano";
+  const baseDebug = {
+    didRun: true,
+    selectedModel: model,
+    fallbackModel,
+    screenshotCount: input.screenshots.length,
+    sentScreenshots: input.screenshots.slice(0, 4).map((shot) => ({
+      origin: shot.origin,
+      label: shot.label,
+      timestampSec: shot.timestampSec ?? null,
+      sizeBytes: shot.sizeBytes ?? (shot.url.startsWith("data:") ? Math.round(shot.url.length * 0.75) : null),
+      urlKind: shot.url.startsWith("data:") ? "data_url" : "remote_url",
+    })),
+  };
   if (input.screenshots.length === 0) {
-    return { candidates: [], reason: "no_screenshots_available" };
+    return { candidates: [], reason: "no_screenshots_available", debug: { ...baseDebug, didRun: false, error: "no_screenshots_available" } };
   }
 
   const client = getClient();
   if (!client) {
-    return { candidates: [], reason: "openai_api_key_missing" };
+    return { candidates: [], reason: "openai_api_key_missing", debug: { ...baseDebug, error: "openai_api_key_missing" } };
   }
 
   const payload = {
@@ -292,10 +345,6 @@ export async function generateVisualSearchCandidates(input: {
     ocr: input.ocr?.text || "",
     platform: input.metadata.platform,
   };
-  const model =
-    process.env.EXTRACTION_VISUAL_SEARCH_MODEL || process.env.EXTRACTION_VISION_MODEL || process.env.OPENAI_MODEL || process.env.INTELLIGENCE_MODEL || "gpt-5-nano";
-  const fallbackModel =
-    process.env.EXTRACTION_VISUAL_SEARCH_FALLBACK_MODEL || process.env.OPENAI_MODEL || "gpt-5-nano";
   const basePrompt =
     "You are identifying landmark or place candidates directly from social-video frames. " +
     "Use image understanding first. OCR text, caption, and transcript are only supporting evidence. " +
@@ -321,6 +370,7 @@ export async function generateVisualSearchCandidates(input: {
     prompt: basePrompt,
     schemaName: VISUAL_SEARCH_SCHEMA_NAME,
   });
+  const requestDebug: Record<string, unknown>[] = [batchResponse.debug];
   let candidates = mergeCandidates(batchResponse.candidates);
   let reason = candidates.length ? null : batchResponse.error ? `vision_batch_failed:${batchResponse.error}` : "vision_candidates_empty";
   let finalModelUsed = model;
@@ -339,6 +389,7 @@ export async function generateVisualSearchCandidates(input: {
       prompt: basePrompt,
       schemaName: `${VISUAL_SEARCH_SCHEMA_NAME}_fallback`,
     });
+    requestDebug.push(fallbackResponse.debug);
     finalModelUsed = fallbackModel;
     candidates = mergeCandidates(fallbackResponse.candidates);
     if (candidates.length) {
@@ -352,6 +403,7 @@ export async function generateVisualSearchCandidates(input: {
       return {
         candidates,
         reason: "vision_fallback_model_candidates",
+        debug: { ...baseDebug, requests: requestDebug, finalModelUsed, candidateCount: candidates.length, candidates },
       };
     }
     reason = fallbackResponse.fatalError
@@ -369,6 +421,7 @@ export async function generateVisualSearchCandidates(input: {
     return {
       candidates,
       reason,
+      debug: { ...baseDebug, requests: requestDebug, finalModelUsed, error: reason, candidateCount: candidates.length, candidates },
     };
   }
 
@@ -385,6 +438,7 @@ export async function generateVisualSearchCandidates(input: {
         prompt: framePrompt,
         schemaName: `${VISUAL_SEARCH_SCHEMA_NAME}_frame_${index + 1}`,
       });
+      requestDebug.push(frameResponse.debug);
       framewiseCandidates.push(
         ...frameResponse.candidates.map((candidate) => ({
           ...candidate,
@@ -404,6 +458,7 @@ export async function generateVisualSearchCandidates(input: {
       return {
         candidates,
         reason: "vision_framewise_candidates",
+        debug: { ...baseDebug, requests: requestDebug, finalModelUsed, candidateCount: candidates.length, candidates },
       };
     }
   }
@@ -416,11 +471,13 @@ export async function generateVisualSearchCandidates(input: {
       prompt: `${basePrompt}\n\nBe especially attentive to distinctive natural landmarks, cliffside waterfalls, iconic bridges, and scenic viewpoints.`,
       schemaName: `${VISUAL_SEARCH_SCHEMA_NAME}_fallback`,
     });
+    requestDebug.push(strongerResponse.debug);
     candidates = mergeCandidates(strongerResponse.candidates);
     if (candidates.length) {
       return {
         candidates,
         reason: "vision_fallback_model_candidates",
+        debug: { ...baseDebug, requests: requestDebug, finalModelUsed: fallbackModel, candidateCount: candidates.length, candidates },
       };
     }
     if (strongerResponse.error) {
@@ -438,5 +495,6 @@ export async function generateVisualSearchCandidates(input: {
   return {
     candidates,
     reason,
+    debug: { ...baseDebug, requests: requestDebug, finalModelUsed, error: candidates.length ? null : reason, candidateCount: candidates.length, candidates },
   };
 }

@@ -55,6 +55,8 @@ export type ScreenshotAsset = {
   origin: "video_frame" | "metadata_image";
   label: string;
   timestampSec?: number | null;
+  sizeBytes?: number | null;
+  sourcePath?: string | null;
 };
 
 export type VisualSearchCandidate = {
@@ -104,6 +106,7 @@ export type VisualFallbackResult = {
   candidates: VisualSearchCandidate[];
   selectedCandidate: VisualSearchCandidate | null;
   summaryText: string;
+  debug?: Record<string, unknown>;
 };
 
 export type ExtractionSla = {
@@ -143,4 +146,5 @@ export type ExtractionResult = {
     hit: boolean;
     key: string;
   };
+  debug?: Record<string, unknown>;
 };

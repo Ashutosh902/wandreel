@@ -442,6 +442,11 @@ export async function runVisualFallback(input: {
   const screenshots = input.screenshots ?? (await selectSourceScreenshots(input.metadata));
   const shouldTrigger = isWeakEarlySignal(input.metadata, input.transcript, input.ocr);
   if (!shouldTrigger) {
+    const debug = {
+      didRun: false,
+      reason: "sufficient_upstream_signal",
+    };
+    console.info("[visual-fallback-debug]", debug);
     return {
       attempted: false,
       triggered: false,
@@ -455,10 +460,17 @@ export async function runVisualFallback(input: {
       candidates: [],
       selectedCandidate: null,
       summaryText: "",
+      debug,
     };
   }
 
   if (screenshots.length === 0) {
+    const debug = {
+      didRun: true,
+      reason: "no_screenshots_available",
+      screenshotCount: 0,
+    };
+    console.info("[visual-fallback-debug]", debug);
     return {
       attempted: true,
       triggered: true,
@@ -472,6 +484,7 @@ export async function runVisualFallback(input: {
       candidates: [],
       selectedCandidate: null,
       summaryText: "Visual fallback triggered but no screenshot was available for candidate generation.",
+      debug,
     };
   }
 
@@ -705,6 +718,56 @@ export async function runVisualFallback(input: {
           ? `Possible match: ${primaryVisionCandidate.candidateName || primaryVisionCandidate.query} | location not verified | manual verification recommended`
           : "Visual fallback did not find a verified place candidate.";
 
+  const debug = {
+    didRun: true,
+    screenshotCount: screenshots.length,
+    screenshots: screenshots.map((shot) => ({
+      origin: shot.origin,
+      label: shot.label,
+      timestampSec: shot.timestampSec ?? null,
+      sizeBytes: shot.sizeBytes ?? (shot.url.startsWith("data:") ? Math.round(shot.url.length * 0.75) : null),
+      urlKind: shot.url.startsWith("data:") ? "data_url" : "remote_url",
+    })),
+    textQueries,
+    visualQueries,
+    visualRecognition: visualSearch.debug || null,
+    candidateVerification: candidates.map((candidate) => ({
+      query: candidate.query,
+      source: candidate.source,
+      candidateName: candidate.candidateName,
+      aliases: candidate.aliases || [],
+      queryShape: candidate.queryShape || null,
+      searchVerificationScore: candidate.searchVerificationScore ?? null,
+      visualScore: candidate.visualScore ?? null,
+      textSupportScore: candidate.textSupportScore ?? null,
+      frameAgreementScore: candidate.frameAgreementScore ?? null,
+      rankingScore: candidate.rankingScore,
+      finalConfidence: candidate.finalConfidence || null,
+      reason: candidate.reason || null,
+      locationVerified: candidate.locationVerified ?? false,
+      verificationConfidence: candidate.verificationConfidence,
+      semanticMismatch: candidate.semanticMismatch ?? false,
+      corroborationCount: candidate.corroborationCount ?? null,
+      matchedSignals: candidate.matchedSignals,
+    })),
+    selection: {
+      selectedCandidate: finalSelectedCandidate,
+      possibleMatches: [primaryVisionCandidate, competingVisionCandidate].filter(Boolean),
+      confidence,
+      needsReview,
+      locationVerified: finalSelectedCandidate?.locationVerified ?? false,
+      summaryText,
+      reason: finalSelectedCandidate
+        ? "selected_promoted_candidate"
+        : primaryVisionCandidate && competingVisionCandidate
+          ? "conflicting_visual_landmarks"
+          : primaryVisionCandidate
+            ? primaryVisionCandidate.reason || "unverified_possible_match"
+            : visualSearch.reason || "no_visual_candidates",
+    },
+  };
+  console.info("[visual-fallback-debug]", debug);
+
   return {
     attempted: true,
     triggered: true,
@@ -718,5 +781,6 @@ export async function runVisualFallback(input: {
     candidates,
     selectedCandidate: finalSelectedCandidate,
     summaryText,
+    debug,
   };
 }

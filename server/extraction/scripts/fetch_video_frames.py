@@ -8,7 +8,12 @@ import subprocess
 import sys
 import tempfile
 from urllib.parse import parse_qs, urlparse
-from runtime_support import configure_runtime_paths, emit_runtime_debug_log, get_ffmpeg_location
+from runtime_support import (
+    build_runtime_diagnostics,
+    configure_runtime_paths,
+    emit_runtime_debug_log,
+    get_ffmpeg_location,
+)
 
 
 def sanitize_media_id(value: str) -> str:
@@ -59,6 +64,7 @@ def select_timestamps(duration_seconds: float, count: int) -> list[float]:
 def main() -> int:
     runtime_path_additions = configure_runtime_paths()
     emit_runtime_debug_log("fetch_video_frames.py", runtime_path_additions)
+    runtime_debug = build_runtime_diagnostics("fetch_video_frames.py", runtime_path_additions)
 
     if len(sys.argv) < 2:
         print(json.dumps({"ok": False, "error": "URL_REQUIRED"}))
@@ -69,13 +75,13 @@ def main() -> int:
     max_duration = int(os.environ.get("LAYER1_FRAME_MAX_DURATION_SECONDS", "180") or "180")
     ffmpeg_location = get_ffmpeg_location()
     if not ffmpeg_location:
-        print(json.dumps({"ok": False, "error": "FFMPEG_NOT_AVAILABLE"}))
+        print(json.dumps({"ok": False, "error": "FFMPEG_NOT_AVAILABLE", "debug": {"runtime": runtime_debug}}))
         return 0
 
     try:
         import yt_dlp  # type: ignore
     except Exception:
-        print(json.dumps({"ok": False, "error": "MISSING_YT_DLP"}))
+        print(json.dumps({"ok": False, "error": "MISSING_YT_DLP", "debug": {"runtime": runtime_debug}}))
         return 0
 
     media_id = extract_media_id(source_url)
@@ -98,12 +104,30 @@ def main() -> int:
 
     video_path = ""
     extracted_paths: list[str] = []
+    frame_debug: list[dict] = []
+    media_debug: dict = {"mediaUrlAvailable": False, "durationSeconds": None}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(source_url, download=True)
         duration = float(info.get("duration") or 0)
+        media_debug = {
+            "mediaUrlAvailable": bool(info.get("url") or info.get("requested_downloads")),
+            "durationSeconds": duration,
+            "extractor": info.get("extractor"),
+            "webpageUrl": info.get("webpage_url"),
+            "thumbnailAvailable": bool(info.get("thumbnail")),
+        }
         if duration and duration > max_duration:
-            print(json.dumps({"ok": False, "error": "DURATION_TOO_LONG", "duration_seconds": duration}))
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "DURATION_TOO_LONG",
+                        "duration_seconds": duration,
+                        "debug": {"runtime": runtime_debug, "media": media_debug},
+                    }
+                )
+            )
             return 0
 
         for filename in os.listdir(temp_dir):
@@ -113,7 +137,15 @@ def main() -> int:
                 break
 
         if not video_path:
-            print(json.dumps({"ok": False, "error": "VIDEO_NOT_FOUND"}))
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "error": "VIDEO_NOT_FOUND",
+                        "debug": {"runtime": runtime_debug, "media": media_debug, "tempDir": temp_dir},
+                    }
+                )
+            )
             return 0
 
         timestamps = select_timestamps(duration, max(1, min(frame_count, 4)))
@@ -137,14 +169,18 @@ def main() -> int:
             ]
             subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             extracted_paths.append(output_path)
+            frame_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
             with open(output_path, "rb") as handle:
                 encoded = base64.b64encode(handle.read()).decode("ascii")
+            frame_debug.append({"path": output_path, "timestampSec": ts, "sizeBytes": frame_size})
             frames.append(
                 {
                     "label": f"frame_{index + 1}",
                     "timestampSec": ts,
                     "mimeType": "image/jpeg",
                     "dataBase64": encoded,
+                    "sizeBytes": frame_size,
+                    "sourcePath": output_path,
                 }
             )
 
@@ -156,12 +192,42 @@ def main() -> int:
                     "count": len(frames),
                     "durationSeconds": duration,
                     "ffmpegLocation": ffmpeg_location,
+                    "debug": {
+                        "runtime": runtime_debug,
+                        "media": media_debug,
+                        "frameExtraction": {
+                            "videoPath": video_path,
+                            "videoSizeBytes": os.path.getsize(video_path) if video_path and os.path.exists(video_path) else None,
+                            "frameFilePaths": [item["path"] for item in frame_debug],
+                            "frameFileSizes": [item["sizeBytes"] for item in frame_debug],
+                            "timestamps": [item["timestampSec"] for item in frame_debug],
+                            "ffmpegExe": ffmpeg_exe,
+                        },
+                    },
                 }
             )
         )
         return 0
     except Exception as err:
-        print(json.dumps({"ok": False, "error": f"FRAME_EXTRACTION_FAILED: {err}"}))
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": f"FRAME_EXTRACTION_FAILED: {err}",
+                    "debug": {
+                        "runtime": runtime_debug,
+                        "media": media_debug,
+                        "frameExtraction": {
+                            "videoPath": video_path or None,
+                            "frameFilePaths": [item["path"] for item in frame_debug],
+                            "frameFileSizes": [item["sizeBytes"] for item in frame_debug],
+                            "timestamps": [item["timestampSec"] for item in frame_debug],
+                            "ffmpegExe": ffmpeg_exe,
+                        },
+                    },
+                }
+            )
+        )
         return 0
     finally:
         for path in extracted_paths:

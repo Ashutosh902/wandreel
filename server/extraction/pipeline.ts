@@ -1,10 +1,10 @@
 import { extractMetadata } from "./metadata";
-import { selectSourceScreenshots } from "./frameSelection";
+import { selectSourceScreenshotsDetailed } from "./frameSelection";
 import { enrichWithFrameOcr } from "./ocr";
 import { enrichWithTranscript } from "./transcript";
 import { runVisualFallback } from "./visualFallback";
 import { buildCombinedText } from "./combinedText";
-import type { ExtractionMode, ExtractionResult } from "./types";
+import type { ExtractionMode, ExtractionResult, OcrResult, ScreenshotAsset, VisualFallbackResult } from "./types";
 import { canonicalizeUrl } from "./url";
 import { recordSla } from "../metrics/slaTracker";
 
@@ -55,11 +55,92 @@ function isLowSignalInstagramResult(result: ExtractionResult): boolean {
   return false;
 }
 
-export async function runExtractionPipeline(input: { url: string; mode: ExtractionMode }): Promise<ExtractionResult> {
+function isTraceEnabled(debugEnabled: boolean): boolean {
+  return debugEnabled || String(process.env.EXTRACTION_DEBUG_TRACE || "").toLowerCase() === "true";
+}
+
+function summarizeScreenshot(shot: ScreenshotAsset): Record<string, unknown> {
+  return {
+    origin: shot.origin,
+    label: shot.label,
+    timestampSec: shot.timestampSec ?? null,
+    sizeBytes: shot.sizeBytes ?? (shot.url.startsWith("data:") ? Math.round(shot.url.length * 0.75) : null),
+    sourcePath: shot.sourcePath ?? null,
+    urlKind: shot.url.startsWith("data:") ? "data_url" : "remote_url",
+  };
+}
+
+function buildExtractionDebug(input: {
+  metadata: ExtractionResult["metadata"];
+  metadataFailureReason: string | null;
+  screenshotsDebug?: Record<string, unknown> | null;
+  screenshots?: ScreenshotAsset[];
+  ocr: OcrResult | null;
+  visualFallback: VisualFallbackResult | null;
+}): Record<string, unknown> {
+  const selectedCandidate = input.visualFallback?.selectedCandidate || null;
+  return {
+    mediaIngestion: {
+      platform: input.metadata.platform,
+      canonicalUrl: input.metadata.canonicalUrl,
+      metadataProvider: input.metadata.provider,
+      mediaUrlAvailable: Boolean((input.screenshotsDebug?.mediaIngestion as any)?.mediaUrlAvailable),
+      thumbnailImageUrlAvailable: Boolean(input.metadata.imageUrl),
+      metadataFailureReason: input.metadataFailureReason,
+    },
+    frameExtraction: input.screenshotsDebug?.frameExtraction || {
+      didRun: false,
+      reason: "not_attempted",
+    },
+    screenshots: input.screenshotsDebug?.screenshots || {
+      count: input.screenshots?.length || 0,
+      sentCandidates: (input.screenshots || []).map(summarizeScreenshot),
+    },
+    ocr: {
+      attempted: input.ocr?.attempted ?? false,
+      used: input.ocr?.used ?? false,
+      text: input.ocr?.text || "",
+      reason: input.ocr?.reason || null,
+      confidence: null,
+      sourceImages: (input.screenshots || []).map(summarizeScreenshot),
+    },
+    visualRecognition: input.visualFallback?.debug?.visualRecognition || {
+      didRun: false,
+      reason: input.visualFallback?.reason || "not_attempted",
+    },
+    candidateVerification: input.visualFallback?.debug?.candidateVerification || [],
+    finalOutput: {
+      selectedCandidate,
+      possibleMatches:
+        (input.visualFallback?.debug?.selection as any)?.possibleMatches ||
+        input.visualFallback?.candidates?.slice(0, 3) ||
+        [],
+      finalEntity: selectedCandidate
+        ? {
+            name: selectedCandidate.candidateName || selectedCandidate.query,
+            aliases: selectedCandidate.aliases || [],
+            locality: selectedCandidate.locality,
+            city: selectedCandidate.city,
+            state: selectedCandidate.state,
+            country: selectedCandidate.country,
+            formattedAddress: selectedCandidate.formattedAddress,
+          }
+        : null,
+      needsReview: input.visualFallback?.needsReview ?? true,
+      locationVerified: selectedCandidate?.locationVerified ?? false,
+      confidence: input.visualFallback?.confidence || "low",
+      summaryText: input.visualFallback?.summaryText || "",
+    },
+  };
+}
+
+export async function runExtractionPipeline(input: { url: string; mode: ExtractionMode; debug?: boolean }): Promise<ExtractionResult> {
+  const debugEnabled = Boolean(input.debug);
+  const traceEnabled = isTraceEnabled(debugEnabled);
   const cacheTtlMs = getNumberEnv("EXTRACTION_CACHE_TTL_MS", DEFAULT_CACHE_TTL_MS);
   const cacheKey = `${input.mode}:${canonicalizeUrl(input.url)}`;
   const cached = extractionCache.get(cacheKey);
-  if (cached && cached.expiresAt > nowMs()) {
+  if (!debugEnabled && cached && cached.expiresAt > nowMs()) {
     const cachedResult = cloneResult(cached.result);
     cachedResult.cache = { hit: true, key: cacheKey };
     return cachedResult;
@@ -175,7 +256,18 @@ export async function runExtractionPipeline(input: { url: string; mode: Extracti
       },
       cache: { hit: false, key: cacheKey },
     };
-    if (!isLowSignalInstagramResult(quickResult)) {
+    if (debugEnabled || traceEnabled) {
+      quickResult.debug = buildExtractionDebug({
+        metadata,
+        metadataFailureReason,
+        screenshotsDebug: null,
+        screenshots: [],
+        ocr: null,
+        visualFallback: null,
+      });
+      console.info("[extraction-debug]", quickResult.debug);
+    }
+    if (!debugEnabled && !isLowSignalInstagramResult(quickResult)) {
       extractionCache.set(cacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(quickResult) });
     }
     const agg = recordSla("extraction.total", quickResult.sla?.totalMs ?? quickResult.perf?.totalMs ?? 0);
@@ -193,11 +285,36 @@ export async function runExtractionPipeline(input: { url: string; mode: Extracti
     () => ({ attempted: true, used: false, source: null, text: "", reason: "timeout" }),
   );
   const screenshotsPromise = withBudget(
-    selectSourceScreenshots(metadata),
+    selectSourceScreenshotsDetailed(metadata),
     getNumberEnv("EXTRACTION_VISUAL_FALLBACK_BUDGET_MS", DEFAULT_VISUAL_FALLBACK_BUDGET_MS),
-    () => [],
+    () => ({
+      screenshots: [],
+      debug: {
+        mediaIngestion: {
+          platform: metadata.platform,
+          canonicalUrl: metadata.canonicalUrl,
+          metadataProvider: metadata.provider,
+          mediaUrlAvailable: false,
+          thumbnailImageUrlAvailable: Boolean(metadata.imageUrl),
+        },
+        frameExtraction: {
+          didRun: metadata.platform === "youtube" || metadata.platform === "instagram",
+          ok: false,
+          error: "timeout",
+          count: 0,
+        },
+        screenshots: {
+          count: 0,
+          videoFrameCount: 0,
+          metadataImageCount: 0,
+          sentCandidates: [],
+        },
+      },
+    }),
   );
-  const [transcript, screenshots] = await Promise.all([transcriptPromise, screenshotsPromise]);
+  const [transcript, screenshotSelection] = await Promise.all([transcriptPromise, screenshotsPromise]);
+  const screenshots = screenshotSelection.screenshots;
+  const screenshotsDebug = screenshotSelection.debug;
   const screenshotsMs = nowMs() - screenshotsStartedAt;
   const ocrStartedAt = nowMs();
   const ocr = await withBudget(
@@ -307,7 +424,19 @@ export async function runExtractionPipeline(input: { url: string; mode: Extracti
     cache: { hit: false, key: cacheKey },
   };
 
-  if (!isLowSignalInstagramResult(result)) {
+  if (debugEnabled || traceEnabled) {
+    result.debug = buildExtractionDebug({
+      metadata,
+      metadataFailureReason,
+      screenshotsDebug,
+      screenshots,
+      ocr,
+      visualFallback,
+    });
+    console.info("[extraction-debug]", result.debug);
+  }
+
+  if (!debugEnabled && !isLowSignalInstagramResult(result)) {
     extractionCache.set(cacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
   }
   const agg = recordSla("extraction.total", result.sla?.totalMs ?? result.perf?.totalMs ?? 0);

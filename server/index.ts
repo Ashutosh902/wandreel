@@ -278,12 +278,19 @@ app.post("/api/metadata/extract", async (req, res) => {
     const url = String(req.body?.url || "").trim();
     const modeRaw = String(req.body?.mode || "quick").trim().toLowerCase();
     const mode: ExtractionMode = modeRaw === "deep" ? "deep" : "quick";
+    const debugRaw = String(req.body?.debug ?? req.query?.debug ?? "").trim().toLowerCase();
+    const debug =
+      debugRaw === "1" ||
+      debugRaw === "true" ||
+      debugRaw === "yes" ||
+      /[?&](debug|fresh)=frame-debug/i.test(url) ||
+      /[?&]fresh=[^&]*frame-debug/i.test(url);
 
     if (!url) {
       return res.status(400).json({ ok: false, error: "url is required" });
     }
 
-    const result = await runExtractionPipeline({ url, mode });
+    const result = await runExtractionPipeline({ url, mode, debug });
     if (featureFlags.extractionV2) {
       return res.json({ ok: true, ...result });
     }
