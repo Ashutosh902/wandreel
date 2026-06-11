@@ -1,0 +1,4 @@
+-r requirements.media.txt
+-r requirements.instagram.txt
+Pillow>=10,<13
+pytesseract>=0.3,<1
