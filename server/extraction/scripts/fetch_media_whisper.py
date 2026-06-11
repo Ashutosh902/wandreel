@@ -5,7 +5,7 @@ import re
 import sys
 from urllib.parse import parse_qs, urlparse
 
-from runtime_support import configure_runtime_paths, emit_runtime_debug_log, get_ffmpeg_location
+from runtime_support import configure_runtime_paths, emit_runtime_debug_log, get_ffmpeg_executable
 
 
 RUNTIME_PATH_ADDITIONS = configure_runtime_paths()
@@ -78,7 +78,7 @@ def main() -> int:
         "outtmpl": out_tmpl,
     }
 
-    ffmpeg_location = get_ffmpeg_location()
+    ffmpeg_location = get_ffmpeg_executable()
     if ffmpeg_location:
         ydl_opts["ffmpeg_location"] = ffmpeg_location
 

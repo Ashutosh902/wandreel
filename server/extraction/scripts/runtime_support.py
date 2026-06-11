@@ -74,6 +74,26 @@ def configure_runtime_paths() -> list[str]:
     return additions
 
 
+def _find_ffmpeg_executable_in_dir(directory: str) -> str | None:
+    if not directory or not os.path.isdir(directory):
+        return None
+    preferred_names = ("ffmpeg", "ffmpeg.exe")
+    for name in preferred_names:
+        candidate = os.path.join(directory, name)
+        if os.path.isfile(candidate):
+            return candidate
+    try:
+        for entry in os.listdir(directory):
+            if not entry.lower().startswith("ffmpeg"):
+                continue
+            candidate = os.path.join(directory, entry)
+            if os.path.isfile(candidate):
+                return candidate
+    except Exception:
+        return None
+    return None
+
+
 def normalize_ffmpeg_dir(path_or_exe: str | None) -> str | None:
     if not path_or_exe:
         return None
@@ -81,50 +101,58 @@ def normalize_ffmpeg_dir(path_or_exe: str | None) -> str | None:
     if not raw:
         return None
     if os.path.isdir(raw):
-        ffmpeg_exe = os.path.join(raw, "ffmpeg.exe")
-        ffprobe_exe = os.path.join(raw, "ffprobe.exe")
-        if os.path.exists(ffmpeg_exe) and os.path.exists(ffprobe_exe):
+        if _find_ffmpeg_executable_in_dir(raw):
             return raw
         return None
     if os.path.isfile(raw):
-        base = os.path.dirname(raw)
-        ffmpeg_exe = os.path.join(base, "ffmpeg.exe")
-        ffprobe_exe = os.path.join(base, "ffprobe.exe")
-        if os.path.exists(ffmpeg_exe) and os.path.exists(ffprobe_exe):
+        filename = os.path.basename(raw).lower()
+        if filename.startswith("ffmpeg"):
+            base = os.path.dirname(raw)
             return base
     return None
 
 
-def get_ffmpeg_location() -> str | None:
-    for key in ("LAYER1_FFMPEG_DIR", "LAYER1_FFMPEG_PATH"):
-        resolved = normalize_ffmpeg_dir(os.environ.get(key))
-        if resolved:
-            return resolved
+def get_ffmpeg_executable() -> str | None:
+    for key in ("LAYER1_FFMPEG_PATH", "LAYER1_FFMPEG_DIR"):
+        raw = os.environ.get(key)
+        if not raw:
+            continue
+        normalized_dir = normalize_ffmpeg_dir(raw)
+        if not normalized_dir:
+            continue
+        if os.path.isfile(raw.strip().strip('"')):
+            return raw.strip().strip('"')
+        candidate = _find_ffmpeg_executable_in_dir(normalized_dir)
+        if candidate:
+            return candidate
 
     ffmpeg_on_path = shutil.which("ffmpeg")
-    ffprobe_on_path = shutil.which("ffprobe")
-    if ffmpeg_on_path and ffprobe_on_path:
-        resolved = normalize_ffmpeg_dir(ffmpeg_on_path)
-        if resolved:
-            return resolved
+    if ffmpeg_on_path:
+        return ffmpeg_on_path
 
     local_appdata = os.environ.get("LOCALAPPDATA", "")
     if local_appdata:
         winget_links = os.path.join(local_appdata, "Microsoft", "WinGet", "Links")
-        resolved = normalize_ffmpeg_dir(winget_links)
-        if resolved:
-            return resolved
+        candidate = _find_ffmpeg_executable_in_dir(winget_links)
+        if candidate:
+            return candidate
 
     try:
         imageio_ffmpeg = importlib.import_module("imageio_ffmpeg")
         ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
-        resolved = normalize_ffmpeg_dir(ffmpeg_bin)
-        if resolved:
-            return resolved
+        if ffmpeg_bin and os.path.isfile(ffmpeg_bin):
+            return ffmpeg_bin
     except Exception:
         pass
 
     return None
+
+
+def get_ffmpeg_location() -> str | None:
+    ffmpeg_executable = get_ffmpeg_executable()
+    if not ffmpeg_executable:
+        return None
+    return normalize_ffmpeg_dir(ffmpeg_executable)
 
 
 def _module_check(module_name: str) -> dict[str, Any]:
@@ -152,6 +180,7 @@ def build_runtime_diagnostics(script_name: str, sys_path_additions: list[str]) -
         "instaloader": _module_check("instaloader"),
         "ytDlp": _module_check("yt_dlp"),
         "imageioFfmpeg": _module_check("imageio_ffmpeg"),
+        "resolvedFfmpegExecutable": get_ffmpeg_executable(),
         "resolvedFfmpegPath": get_ffmpeg_location(),
     }
 

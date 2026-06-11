@@ -12,6 +12,7 @@ from runtime_support import (
     build_runtime_diagnostics,
     configure_runtime_paths,
     emit_runtime_debug_log,
+    get_ffmpeg_executable,
     get_ffmpeg_location,
 )
 
@@ -74,7 +75,8 @@ def main() -> int:
     frame_count = int(os.environ.get("LAYER1_FRAME_COUNT", "3") or "3")
     max_duration = int(os.environ.get("LAYER1_FRAME_MAX_DURATION_SECONDS", "180") or "180")
     ffmpeg_location = get_ffmpeg_location()
-    if not ffmpeg_location:
+    ffmpeg_exe = get_ffmpeg_executable()
+    if not ffmpeg_location or not ffmpeg_exe:
         print(json.dumps({"ok": False, "error": "FFMPEG_NOT_AVAILABLE", "debug": {"runtime": runtime_debug}}))
         return 0
 
@@ -87,9 +89,6 @@ def main() -> int:
     media_id = extract_media_id(source_url)
     temp_dir = tempfile.mkdtemp(prefix=f"wr_frames_{media_id}_")
     out_tmpl = os.path.join(temp_dir, f"{media_id}.%(ext)s")
-    ffmpeg_exe = os.path.join(ffmpeg_location, "ffmpeg.exe")
-    if not os.path.exists(ffmpeg_exe):
-        ffmpeg_exe = shutil.which("ffmpeg") or "ffmpeg"
 
     ydl_opts = {
         "quiet": True,
@@ -99,7 +98,7 @@ def main() -> int:
         "noplaylist": True,
         "format": "mp4/best[ext=mp4]/best",
         "outtmpl": out_tmpl,
-        "ffmpeg_location": ffmpeg_location,
+        "ffmpeg_location": ffmpeg_exe,
     }
 
     video_path = ""
