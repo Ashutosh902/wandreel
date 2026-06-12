@@ -341,7 +341,7 @@ async function enrichWithResolvedLocations(output: IntelligencePipelineResult["o
 
 export async function runIntelligencePipeline(req: IntelligenceRequest): Promise<IntelligencePipelineResult> {
   const totalStartedAt = Date.now();
-  const providerResult = await callOpenAiStructuredExtraction(req.source);
+  const providerResult = await callOpenAiStructuredExtraction(req.source, req.analytics);
   const raw = adaptStructuredRaw(providerResult.raw, req);
   const schemaFirstStartedAt = Date.now();
   const firstPass = intelligenceOutputSchema.safeParse(raw);

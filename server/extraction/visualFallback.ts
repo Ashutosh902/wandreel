@@ -77,6 +77,16 @@ function isWeakEarlySignal(metadata: ExtractedMetadata, transcript: TranscriptRe
   return totalChars < 220 || signalCount < 2 || ambiguityHints;
 }
 
+export function shouldTriggerVisualFallback(input: {
+  metadata: ExtractedMetadata;
+  transcript: TranscriptResult | null;
+  ocr: OcrResult | null;
+  forceTrigger?: boolean;
+}): boolean {
+  if (input.forceTrigger) return true;
+  return isWeakEarlySignal(input.metadata, input.transcript, input.ocr);
+}
+
 function extractLines(input: string): string[] {
   return normalizeWhitespace(input)
     .split("\n")
@@ -438,9 +448,16 @@ export async function runVisualFallback(input: {
   transcript: TranscriptResult | null;
   ocr: OcrResult | null;
   screenshots?: ScreenshotAsset[];
+  forceTrigger?: boolean;
+  forceTriggerReason?: string | null;
 }): Promise<VisualFallbackResult> {
   const screenshots = input.screenshots ?? (await selectSourceScreenshots(input.metadata));
-  const shouldTrigger = isWeakEarlySignal(input.metadata, input.transcript, input.ocr);
+  const shouldTrigger = shouldTriggerVisualFallback({
+    metadata: input.metadata,
+    transcript: input.transcript,
+    ocr: input.ocr,
+    forceTrigger: input.forceTrigger,
+  });
   if (!shouldTrigger) {
     const debug = {
       didRun: false,
@@ -467,14 +484,14 @@ export async function runVisualFallback(input: {
   if (screenshots.length === 0) {
     const debug = {
       didRun: true,
-      reason: "no_screenshots_available",
+      reason: input.forceTriggerReason || "no_screenshots_available",
       screenshotCount: 0,
     };
     console.info("[visual-fallback-debug]", debug);
     return {
       attempted: true,
       triggered: true,
-      reason: "no_screenshots_available",
+      reason: input.forceTriggerReason || "no_screenshots_available",
       provider: "shared_visual_fallback",
       confidence: "low",
       needsReview: true,

@@ -102,3 +102,36 @@ test("user prompt includes visual fallback summary for weak sources", () => {
   assert.match(prompt, /Cafe Delhi Heights/);
   assert.match(prompt, /manual verification recommended/i);
 });
+
+test("user prompt includes retry attempt context when available", () => {
+  const source = buildSource();
+  source.attemptInfo = { attemptNumber: 2, triggerType: "retry" };
+  source.debug = {
+    priorAttemptHypotheses: [
+      {
+        attemptNumber: 1,
+        previousBestResult: {
+          name: "Tumpak Sewu Waterfall",
+          categoryGuess: "see",
+          locationHint: "Lumajang, East Java, Indonesia",
+          confidence: "low",
+          confidenceReason: "Caption hinted at waterfall",
+          missingFields: ["address"],
+          uncertainFields: ["address"],
+          rejectedFields: [],
+        },
+      },
+    ],
+    orchestration: {
+      route: "retry_1",
+      acceptedAfter: "manual_review",
+      decisions: [{ stage: "visualFallback", ran: true, reason: "retry_1_skips_visual_fallback" }],
+    },
+  };
+  const prompt = buildUserPrompt(source, { attemptNumber: 2, triggerType: "retry" });
+  assert.match(prompt, /"attemptNumber": 2/);
+  assert.match(prompt, /"triggerType": "retry"/);
+  assert.match(prompt, /retry_1_skips_visual_fallback/);
+  assert.match(prompt, /priorAttemptHypotheses/);
+  assert.match(prompt, /Tumpak Sewu Waterfall/);
+});

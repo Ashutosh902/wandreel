@@ -1,7 +1,15 @@
 import crypto from "node:crypto";
 import type { IntelligenceJob, IntelligenceRequest } from "./types";
 import { runIntelligencePipeline } from "./pipeline";
-import { createReelJob, finalizeReelAnalyticsAttempt, updateReelJob, upsertReelAnalyticsEntities } from "../auth/postgresAuth";
+import {
+  createReelJob,
+  finalizeReelAnalyticsAttempt,
+  persistReelAnalyticsAttemptArtifacts,
+  updateReelJob,
+  upsertReelAnalyticsEntities,
+} from "../auth/postgresAuth";
+import { saveAttemptHypothesisSummary } from "../attemptHypothesisStore";
+import { buildAttemptHypothesisSummary } from "./hypothesisSummary";
 
 export interface IntelligenceJobStore {
   create(req: IntelligenceRequest): Promise<IntelligenceJob>;
@@ -71,6 +79,32 @@ export class InMemoryIntelligenceJobStore implements IntelligenceJobStore {
 
     try {
       const result = await runIntelligencePipeline(req);
+      const hypothesisSummary = req.analytics?.attemptNumber
+        ? buildAttemptHypothesisSummary({
+            source: req.source,
+            result,
+            attemptNumber: req.analytics.attemptNumber,
+          })
+        : null;
+      if (req.analytics?.attemptNumber && hypothesisSummary) {
+        saveAttemptHypothesisSummary({
+          mode: req.source.mode === "deep" ? "deep" : "quick",
+          url: req.source.canonicalUrl || req.source.metadata?.canonicalUrl || req.source.metadata?.sourceUrl || req.source.source,
+          attemptNumber: req.analytics.attemptNumber,
+          summary: hypothesisSummary,
+        });
+      }
+      if (req.analytics?.attemptId) {
+        try {
+          await persistReelAnalyticsAttemptArtifacts({
+            attemptId: req.analytics.attemptId,
+            intelligenceResult: result,
+            hypothesisSummary,
+          });
+        } catch {
+          // Attempt artifacts are best-effort.
+        }
+      }
       if (req.analytics?.attemptId) {
         try {
           await finalizeReelAnalyticsAttempt({

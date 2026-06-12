@@ -68,16 +68,17 @@ function buildPythonEnv(pydepsPath: string) {
   };
 }
 
-async function executePythonScript(scriptPath: string, url: string, timeoutMs: number, pydepsPath: string): Promise<any | null> {
+async function executePythonScript(scriptPath: string, args: string[], timeoutMs: number, pydepsPath: string): Promise<any | null> {
   const commands = ["python", "py"];
   let lastError: unknown = null;
 
   for (const cmd of commands) {
     try {
-      const args = cmd === "py" ? ["-3", scriptPath, url] : [scriptPath, url];
-      const { stdout } = await execFileAsync(cmd, args, {
+      const commandArgs = cmd === "py" ? ["-3", scriptPath, ...args] : [scriptPath, ...args];
+      const { stdout } = await execFileAsync(cmd, commandArgs, {
         timeout: timeoutMs,
         env: buildPythonEnv(pydepsPath),
+        maxBuffer: 20 * 1024 * 1024,
       });
       const raw = String(stdout || "").trim();
       if (!raw) continue;
@@ -137,6 +138,7 @@ async function ensureRuntimeProfileInstalled(profile: RuntimeProfile, pydepsPath
         await execFileAsync(cmd, args, {
           timeout: DEFAULT_BOOTSTRAP_TIMEOUT_MS,
           env: buildPythonEnv(pydepsPath),
+          maxBuffer: 20 * 1024 * 1024,
         });
         return true;
       } catch (error) {
@@ -161,9 +163,13 @@ async function ensureRuntimeProfileInstalled(profile: RuntimeProfile, pydepsPath
 }
 
 export async function runPythonJsonScript(scriptName: string, url: string, timeoutMs = 45000): Promise<any | null> {
+  return runPythonJsonScriptWithArgs(scriptName, [url], timeoutMs);
+}
+
+export async function runPythonJsonScriptWithArgs(scriptName: string, args: string[], timeoutMs = 45000): Promise<any | null> {
   const scriptPath = path.resolve(import.meta.dirname, "scripts", scriptName);
   const configuredPydepsPath = getRuntimePydepsPath();
-  const firstAttempt = await executePythonScript(scriptPath, url, timeoutMs, configuredPydepsPath);
+  const firstAttempt = await executePythonScript(scriptPath, args, timeoutMs, configuredPydepsPath);
 
   if (!shouldBootstrapRuntime(scriptName, firstAttempt)) {
     return firstAttempt;
@@ -175,5 +181,5 @@ export async function runPythonJsonScript(scriptName: string, url: string, timeo
   const installed = await ensureRuntimeProfileInstalled(profile, configuredPydepsPath);
   if (!installed) return firstAttempt;
 
-  return executePythonScript(scriptPath, url, timeoutMs, configuredPydepsPath);
+  return executePythonScript(scriptPath, args, timeoutMs, configuredPydepsPath);
 }

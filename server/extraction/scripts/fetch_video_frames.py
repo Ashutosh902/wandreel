@@ -62,6 +62,80 @@ def select_timestamps(duration_seconds: float, count: int) -> list[float]:
     return deduped[:count]
 
 
+def dedupe_preserve_order(values: list[float]) -> list[float]:
+    out: list[float] = []
+    seen = set()
+    for item in values:
+        key = round(item, 1)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(round(item, 2))
+    return out
+
+
+def compute_resized_dimensions(width: int | None, height: int | None, max_width: int = 640) -> tuple[int | None, int | None]:
+    if not width or not height or width <= 0 or height <= 0:
+        return None, None
+    if width <= max_width:
+        return width, height
+    resized_width = max_width
+    resized_height = int(round((height * max_width) / width))
+    return resized_width, resized_height
+
+
+def select_scene_edge_timestamps(video_path: str, duration_seconds: float, ffmpeg_exe: str, temp_dir: str) -> tuple[list[float], list[dict]]:
+    scene_dir = os.path.join(temp_dir, "scene_frames")
+    os.makedirs(scene_dir, exist_ok=True)
+    scene_pattern = os.path.join(scene_dir, "scene_%03d.jpg")
+    cmd = [
+        ffmpeg_exe,
+        "-y",
+        "-i",
+        video_path,
+        "-filter:v",
+        "select='gt(scene,0.28)',showinfo,scale='min(960,iw)':-2",
+        "-vsync",
+        "vfr",
+        "-q:v",
+        "3",
+        scene_pattern,
+    ]
+    completed = subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+    stderr = completed.stderr or ""
+    scene_times: list[float] = []
+    for match in re.finditer(r"pts_time:([0-9]+(?:\.[0-9]+)?)", stderr):
+        try:
+            scene_times.append(float(match.group(1)))
+        except Exception:
+            continue
+
+    scene_images = sorted(
+        [os.path.join(scene_dir, name) for name in os.listdir(scene_dir) if name.lower().endswith(".jpg")]
+    )
+    pair_count = min(len(scene_times), len(scene_images))
+    pairs = [(scene_times[index], scene_images[index]) for index in range(pair_count)]
+    if not pairs:
+        fallback = select_timestamps(duration_seconds, 4)
+        return fallback, []
+
+    selected_pairs = pairs[:4]
+    if len(pairs) > 4:
+        tail = pairs[-3:]
+        seen_tail = {round(item[0], 1) for item in selected_pairs}
+        for item in tail:
+            if round(item[0], 1) not in seen_tail:
+                selected_pairs.append(item)
+                seen_tail.add(round(item[0], 1))
+
+    timestamps = dedupe_preserve_order([item[0] for item in selected_pairs])
+    debug = [
+        {"timestampSec": round(item[0], 2), "path": item[1], "source": "scene_change"}
+        for item in selected_pairs
+    ]
+    return timestamps, debug
+
+
 def main() -> int:
     runtime_path_additions = configure_runtime_paths()
     emit_runtime_debug_log("fetch_video_frames.py", runtime_path_additions)
@@ -72,6 +146,8 @@ def main() -> int:
         return 0
 
     source_url = sys.argv[1].strip()
+    selection_mode = (sys.argv[2].strip().lower() if len(sys.argv) >= 3 else "anchors") or "anchors"
+    output_mode = (sys.argv[3].strip().lower() if len(sys.argv) >= 4 else "base64") or "base64"
     frame_count = int(os.environ.get("LAYER1_FRAME_COUNT", "3") or "3")
     max_duration = int(os.environ.get("LAYER1_FRAME_MAX_DURATION_SECONDS", "180") or "180")
     ffmpeg_location = get_ffmpeg_location()
@@ -115,7 +191,12 @@ def main() -> int:
             "extractor": info.get("extractor"),
             "webpageUrl": info.get("webpage_url"),
             "thumbnailAvailable": bool(info.get("thumbnail")),
+            "width": int(info.get("width") or 0) or None,
+            "height": int(info.get("height") or 0) or None,
         }
+        original_width = int(info.get("width") or 0) or None
+        original_height = int(info.get("height") or 0) or None
+        resized_width, resized_height = compute_resized_dimensions(original_width, original_height, 640)
         if duration and duration > max_duration:
             print(
                 json.dumps(
@@ -147,7 +228,11 @@ def main() -> int:
             )
             return 0
 
-        timestamps = select_timestamps(duration, max(1, min(frame_count, 4)))
+        scene_selection_debug: list[dict] = []
+        if selection_mode == "scene_edges":
+            timestamps, scene_selection_debug = select_scene_edge_timestamps(video_path, duration, ffmpeg_exe, temp_dir)
+        else:
+            timestamps = select_timestamps(duration, max(1, min(frame_count, 4)))
         frames = []
         for index, ts in enumerate(timestamps):
             output_path = os.path.join(temp_dir, f"frame_{index + 1}.jpg")
@@ -161,27 +246,45 @@ def main() -> int:
                 "-frames:v",
                 "1",
                 "-vf",
-                "scale='min(960,iw)':-2",
+                "scale='min(640,iw)':-2",
                 "-q:v",
-                "3",
+                "6",
                 output_path,
             ]
             subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             extracted_paths.append(output_path)
             frame_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
-            with open(output_path, "rb") as handle:
-                encoded = base64.b64encode(handle.read()).decode("ascii")
-            frame_debug.append({"path": output_path, "timestampSec": ts, "sizeBytes": frame_size})
-            frames.append(
-                {
-                    "label": f"frame_{index + 1}",
-                    "timestampSec": ts,
-                    "mimeType": "image/jpeg",
-                    "dataBase64": encoded,
-                    "sizeBytes": frame_size,
-                    "sourcePath": output_path,
-                }
-            )
+            frame_debug.append({
+                "path": output_path,
+                "timestampSec": ts,
+                "sizeBytes": frame_size,
+                "originalWidth": original_width,
+                "originalHeight": original_height,
+                "resizedWidth": resized_width,
+                "resizedHeight": resized_height,
+            })
+            frame_payload = {
+                "label": f"frame_{index + 1}",
+                "timestampSec": ts,
+                "mimeType": "image/jpeg",
+                "sizeBytes": frame_size,
+                "sourcePath": output_path,
+                "originalWidth": original_width,
+                "originalHeight": original_height,
+                "resizedWidth": resized_width,
+                "resizedHeight": resized_height,
+            }
+            if output_mode == "manifest":
+                frames.append(frame_payload)
+            else:
+                with open(output_path, "rb") as handle:
+                    encoded = base64.b64encode(handle.read()).decode("ascii")
+                frames.append(
+                    {
+                        **frame_payload,
+                        "dataBase64": encoded,
+                    }
+                )
 
         print(
             json.dumps(
@@ -190,6 +293,7 @@ def main() -> int:
                     "frames": frames,
                     "count": len(frames),
                     "durationSeconds": duration,
+                    "outputMode": output_mode,
                     "ffmpegLocation": ffmpeg_location,
                     "debug": {
                         "runtime": runtime_debug,
@@ -200,7 +304,10 @@ def main() -> int:
                             "frameFilePaths": [item["path"] for item in frame_debug],
                             "frameFileSizes": [item["sizeBytes"] for item in frame_debug],
                             "timestamps": [item["timestampSec"] for item in frame_debug],
+                            "selectionMode": selection_mode,
+                            "sceneSelection": scene_selection_debug,
                             "ffmpegExe": ffmpeg_exe,
+                            "tempDir": temp_dir,
                         },
                     },
                 }
@@ -221,6 +328,7 @@ def main() -> int:
                             "frameFilePaths": [item["path"] for item in frame_debug],
                             "frameFileSizes": [item["sizeBytes"] for item in frame_debug],
                             "timestamps": [item["timestampSec"] for item in frame_debug],
+                            "selectionMode": selection_mode,
                             "ffmpegExe": ffmpeg_exe,
                         },
                     },
@@ -229,22 +337,23 @@ def main() -> int:
         )
         return 0
     finally:
-        for path in extracted_paths:
-            if os.path.exists(path):
+        if output_mode != "manifest":
+            for path in extracted_paths:
+                if os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
+            if video_path and os.path.exists(video_path):
                 try:
-                    os.remove(path)
+                    os.remove(video_path)
                 except Exception:
                     pass
-        if video_path and os.path.exists(video_path):
-            try:
-                os.remove(video_path)
-            except Exception:
-                pass
-        if os.path.isdir(temp_dir):
-            try:
-                shutil.rmtree(temp_dir)
-            except Exception:
-                pass
+            if os.path.isdir(temp_dir):
+                try:
+                    shutil.rmtree(temp_dir)
+                except Exception:
+                    pass
 
 
 if __name__ == "__main__":

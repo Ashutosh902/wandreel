@@ -1,24 +1,73 @@
 import { extractMetadata } from "./metadata";
-import { selectSourceScreenshotsDetailed } from "./frameSelection";
-import { enrichWithFrameOcr } from "./ocr";
+import {
+  createFrameManifest,
+  loadScreenshotAssetFromManifest,
+  type FrameManifestItem,
+  type ScreenshotSelectionMode,
+} from "./frameSelection";
 import { enrichWithTranscript } from "./transcript";
 import { runVisualFallback } from "./visualFallback";
 import { buildCombinedText } from "./combinedText";
-import type { ExtractionMode, ExtractionResult, OcrResult, ScreenshotAsset, VisualFallbackResult } from "./types";
+import { runIntelligencePipeline } from "../intelligence";
+import { extractVisionOcrFromScreenshots } from "./visionOcr";
+import type {
+  ExtractionMode,
+  ExtractionResult,
+  ExtractionTriggerType,
+  OcrResult,
+  ScreenshotAsset,
+  TranscriptResult,
+  VisualFallbackResult,
+} from "./types";
 import { canonicalizeUrl } from "./url";
 import { recordSla } from "../metrics/slaTracker";
+import { getAttemptHypothesisSummary } from "../attemptHypothesisStore";
+import fs from "node:fs/promises";
 
 type CacheEntry = {
   expiresAt: number;
   result: ExtractionResult;
 };
 
+type StageDecision = {
+  stage: "description" | "transcript" | "ocr" | "visualFallback";
+  ran: boolean;
+  reason: string;
+};
+
+type OrchestrationTrace = {
+  attemptNumber: number;
+  triggerType: ExtractionTriggerType;
+  sourcePlatform: ExtractionResult["metadata"]["platform"];
+  route: "quick" | "attempt_1" | "retry_1" | "retry_2";
+  transcriptReused?: boolean;
+  ocrFrameCount?: number;
+  visualFrameCount?: number;
+  decisions: StageDecision[];
+  acceptedAfter: "description" | "transcript" | "ocr" | "visualFallback" | "manual_review";
+  inheritedEvidence?: {
+    transcriptAttempts: number[];
+    ocrAttempts: number[];
+    hypothesisAttempts?: number[];
+  };
+};
+
+type LlmConfidenceProbe = {
+  accepted: boolean;
+  confidence: "high" | "medium" | "low";
+  status: string | null;
+  entityCount: number;
+};
+
+type AttemptVisualFallbackPolicy = {
+  includeVisual: boolean;
+  decisionReason: string;
+};
+
 const extractionCache = new Map<string, CacheEntry>();
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_METADATA_BUDGET_MS = 12000;
 const DEFAULT_TRANSCRIPT_BUDGET_MS = 60000;
-const DEFAULT_OCR_BUDGET_MS = 20000;
-const DEFAULT_VISUAL_FALLBACK_BUDGET_MS = 45000;
 
 function getNumberEnv(name: string, fallback: number): number {
   const raw = Number(process.env[name]);
@@ -45,6 +94,33 @@ function cloneResult(result: ExtractionResult): ExtractionResult {
   return JSON.parse(JSON.stringify(result)) as ExtractionResult;
 }
 
+function buildAttemptCacheKey(mode: ExtractionMode, url: string, attemptNumber: number): string {
+  return `${mode}:a${attemptNumber}:${canonicalizeUrl(url)}`;
+}
+
+function buildSharedCacheKey(mode: ExtractionMode, url: string): string {
+  return `${mode}:${canonicalizeUrl(url)}`;
+}
+
+export function getAttemptVisualFallbackPolicy(attemptNumber: number): AttemptVisualFallbackPolicy {
+  if (attemptNumber >= 3) {
+    return {
+      includeVisual: true,
+      decisionReason: "retry_2_visual_default_final_attempt",
+    };
+  }
+  if (attemptNumber === 2) {
+    return {
+      includeVisual: false,
+      decisionReason: "retry_1_skips_visual_fallback",
+    };
+  }
+  return {
+    includeVisual: false,
+    decisionReason: "initial_attempt_only",
+  };
+}
+
 function isLowSignalInstagramResult(result: ExtractionResult): boolean {
   if (result.metadata.platform !== "instagram") return false;
   const title = String(result.metadata.title || "").trim().toLowerCase();
@@ -59,6 +135,17 @@ function isTraceEnabled(debugEnabled: boolean): boolean {
   return debugEnabled || String(process.env.EXTRACTION_DEBUG_TRACE || "").toLowerCase() === "true";
 }
 
+function normalizeAttemptNumber(value: unknown): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 1) return 1;
+  if (parsed >= 3) return 3;
+  return 2;
+}
+
+function normalizeTriggerType(value: unknown): ExtractionTriggerType {
+  return value === "retry" ? "retry" : "initial";
+}
+
 function summarizeScreenshot(shot: ScreenshotAsset): Record<string, unknown> {
   return {
     origin: shot.origin,
@@ -70,6 +157,101 @@ function summarizeScreenshot(shot: ScreenshotAsset): Record<string, unknown> {
   };
 }
 
+function isWeakDescription(metadata: ExtractionResult["metadata"]): boolean {
+  const title = String(metadata.title || "").trim();
+  const description = String(metadata.description || "").trim();
+  const combined = `${title}\n${description}`.replace(/\s+/g, " ").trim().toLowerCase();
+  if (!combined) return true;
+  if (description.length < 24) return true;
+  if (combined === "instagram") return true;
+  if (combined.includes("create an account or log in to instagram")) return true;
+  if (/^\s*(dm|comment|follow|save|share)\b/i.test(description)) return true;
+  return false;
+}
+
+function hasMeaningfulOcr(ocr: OcrResult | null): boolean {
+  return Boolean(String(ocr?.text || "").trim().length >= 12);
+}
+
+function hasMeaningfulTranscript(transcript: TranscriptResult | null): boolean {
+  return Boolean(String(transcript?.text || "").trim().length >= 12);
+}
+
+function getBestEntityConfidence(source: {
+  output?: {
+    structuredEntities?: Array<{ confidence?: string | null }>;
+  };
+}): "high" | "medium" | "low" {
+  const entities = Array.isArray(source.output?.structuredEntities) ? source.output?.structuredEntities : [];
+  const labels = entities.map((item) => String(item?.confidence || "").trim().toLowerCase());
+  if (labels.includes("high")) return "high";
+  if (labels.includes("medium")) return "medium";
+  return "low";
+}
+
+async function probeLlmConfidence(input: {
+  metadata: ExtractionResult["metadata"];
+  mode: ExtractionMode;
+  attemptNumber: number;
+  triggerType: ExtractionTriggerType;
+  transcript?: TranscriptResult | null;
+  ocr?: OcrResult | null;
+}): Promise<LlmConfidenceProbe> {
+  const probeSource: ExtractionResult = {
+    mode: input.mode,
+    metadata: input.metadata,
+    transcript: input.transcript ?? { attempted: false, used: false, source: null, text: "", reason: "not_attempted" },
+    ocr: input.ocr ?? { attempted: false, used: false, text: "", reason: "not_attempted" },
+    visualFallback: {
+      attempted: false,
+      triggered: false,
+      reason: "not_attempted",
+      provider: "shared_visual_fallback",
+      confidence: "low",
+      needsReview: true,
+      screenshots: [],
+      textQueries: [],
+      visualQueries: [],
+      candidates: [],
+      selectedCandidate: null,
+      summaryText: "",
+    },
+    attemptInfo: {
+      attemptNumber: input.attemptNumber,
+      triggerType: input.triggerType,
+    },
+    source: input.metadata.sourceUrl,
+    platform: input.metadata.platform,
+    canonicalUrl: input.metadata.canonicalUrl,
+    ...buildCombinedText({
+      metadata: input.metadata,
+      transcript: input.transcript ?? null,
+      ocr: input.ocr ?? null,
+    }),
+  };
+
+  const intelligence = await runIntelligencePipeline({
+    source: probeSource,
+    analytics: {
+      attemptNumber: input.attemptNumber,
+      triggerType: input.triggerType,
+    },
+  });
+
+  const confidence = getBestEntityConfidence(intelligence);
+  const status = intelligence.output?.status ?? null;
+  const entityCount = Array.isArray(intelligence.output?.structuredEntities)
+    ? intelligence.output.structuredEntities.length
+    : 0;
+
+  return {
+    accepted: (confidence === "high" || confidence === "medium") && status !== "no_supported_entity_found",
+    confidence,
+    status,
+    entityCount,
+  };
+}
+
 function buildExtractionDebug(input: {
   metadata: ExtractionResult["metadata"];
   metadataFailureReason: string | null;
@@ -77,9 +259,12 @@ function buildExtractionDebug(input: {
   screenshots?: ScreenshotAsset[];
   ocr: OcrResult | null;
   visualFallback: VisualFallbackResult | null;
+  orchestration?: OrchestrationTrace;
+  priorAttemptHypotheses?: unknown[] | null;
 }): Record<string, unknown> {
   const selectedCandidate = input.visualFallback?.selectedCandidate || null;
   return {
+    orchestration: input.orchestration || null,
     mediaIngestion: {
       platform: input.metadata.platform,
       canonicalUrl: input.metadata.canonicalUrl,
@@ -109,6 +294,16 @@ function buildExtractionDebug(input: {
       reason: input.visualFallback?.reason || "not_attempted",
     },
     candidateVerification: input.visualFallback?.debug?.candidateVerification || [],
+    priorAttemptHypotheses: input.priorAttemptHypotheses || [],
+    evidenceUsage: {
+      transcriptReused: Boolean(input.orchestration?.transcriptReused),
+      inheritedTranscriptAttempts: input.orchestration?.inheritedEvidence?.transcriptAttempts || [],
+      inheritedOcrAttempts: input.orchestration?.inheritedEvidence?.ocrAttempts || [],
+      inheritedHypothesisAttempts: input.orchestration?.inheritedEvidence?.hypothesisAttempts || [],
+      ocrFrameCount: input.orchestration?.ocrFrameCount ?? 0,
+      visualFrameCount: input.orchestration?.visualFrameCount ?? 0,
+      route: input.orchestration?.route || null,
+    },
     finalOutput: {
       selectedCandidate,
       possibleMatches:
@@ -134,27 +329,15 @@ function buildExtractionDebug(input: {
   };
 }
 
-export async function runExtractionPipeline(input: { url: string; mode: ExtractionMode; debug?: boolean }): Promise<ExtractionResult> {
-  const debugEnabled = Boolean(input.debug);
-  const traceEnabled = isTraceEnabled(debugEnabled);
-  const cacheTtlMs = getNumberEnv("EXTRACTION_CACHE_TTL_MS", DEFAULT_CACHE_TTL_MS);
-  const cacheKey = `${input.mode}:${canonicalizeUrl(input.url)}`;
-  const cached = extractionCache.get(cacheKey);
-  if (!debugEnabled && cached && cached.expiresAt > nowMs()) {
-    const cachedResult = cloneResult(cached.result);
-    cachedResult.cache = { hit: true, key: cacheKey };
-    return cachedResult;
-  }
-
-  const totalStartedAt = nowMs();
-  const metadataStartedAt = nowMs();
+async function readMetadata(inputUrl: string) {
   let metadataFailureReason: string | null = null;
+  const metadataStartedAt = nowMs();
   const metadata = await withBudget(
-    extractMetadata(input.url),
+    extractMetadata(inputUrl),
     getNumberEnv("EXTRACTION_METADATA_BUDGET_MS", DEFAULT_METADATA_BUDGET_MS),
     () => ({
-      sourceUrl: input.url,
-      canonicalUrl: canonicalizeUrl(input.url),
+      sourceUrl: inputUrl,
+      canonicalUrl: canonicalizeUrl(inputUrl),
       platform: "web" as const,
       title: "Untitled",
       description: "",
@@ -166,8 +349,8 @@ export async function runExtractionPipeline(input: { url: string; mode: Extracti
   ).catch((error: unknown) => {
     metadataFailureReason = error instanceof Error ? error.message : "metadata_failed";
     return {
-      sourceUrl: input.url,
-      canonicalUrl: canonicalizeUrl(input.url),
+      sourceUrl: inputUrl,
+      canonicalUrl: canonicalizeUrl(inputUrl),
       platform: "web" as const,
       title: "Untitled",
       description: "",
@@ -177,94 +360,537 @@ export async function runExtractionPipeline(input: { url: string; mode: Extracti
       provider: "html" as const,
     };
   });
-  const metadataMs = nowMs() - metadataStartedAt;
+  return { metadata, metadataFailureReason, metadataMs: nowMs() - metadataStartedAt };
+}
+
+async function readTranscript(metadata: ExtractionResult["metadata"]): Promise<{ transcript: TranscriptResult; transcriptMs: number }> {
+  const transcriptStartedAt = nowMs();
+  const transcript = await withBudget(
+    enrichWithTranscript(metadata),
+    getNumberEnv("EXTRACTION_TRANSCRIPT_BUDGET_MS", DEFAULT_TRANSCRIPT_BUDGET_MS),
+    () => ({ attempted: true, used: false, source: null, text: "", reason: "timeout" }),
+  );
+  return { transcript, transcriptMs: nowMs() - transcriptStartedAt };
+}
+
+function mergeOcrTexts(parts: string[]): string {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const part of parts) {
+    for (const line of String(part || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
+      if (/^no readable text/i.test(line)) continue;
+      const key = line.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      lines.push(line);
+    }
+  }
+  return lines.join("\n").trim();
+}
+
+function mergeTextBlocks(parts: Array<string | null | undefined>): string {
+  return mergeOcrTexts(parts.map((part) => String(part || "")));
+}
+
+function candidateConfidenceWeight(label: string | null | undefined): number {
+  if (label === "high") return 3;
+  if (label === "medium") return 2;
+  return 1;
+}
+
+function mergeTranscriptResults(base: TranscriptResult | null, extra: TranscriptResult | null): TranscriptResult | null {
+  if (!base && !extra) return null;
+  const text = mergeTextBlocks([base?.text, extra?.text]);
+  return {
+    attempted: Boolean(base?.attempted || extra?.attempted),
+    used: Boolean(base?.used || extra?.used || text),
+    source: extra?.source || base?.source || null,
+    text,
+    reason: text ? null : extra?.reason || base?.reason || null,
+  };
+}
+
+function mergeOcrResults(base: OcrResult | null, extra: OcrResult | null): OcrResult | null {
+  if (!base && !extra) return null;
+  const text = mergeTextBlocks([base?.text, extra?.text]);
+  return {
+    attempted: Boolean(base?.attempted || extra?.attempted),
+    used: Boolean(base?.used || extra?.used || text),
+    text,
+    reason: text ? null : extra?.reason || base?.reason || null,
+  };
+}
+
+function chooseBetterVisualResult(left: VisualFallbackResult | null, right: VisualFallbackResult | null): VisualFallbackResult | null {
+  if (!left) return right;
+  if (!right) return left;
+  const leftScore =
+    (left.selectedCandidate ? 100 : 0) +
+    candidateConfidenceWeight(left.confidence) * 10 +
+    Number(left.selectedCandidate?.rankingScore || left.candidates?.[0]?.rankingScore || 0);
+  const rightScore =
+    (right.selectedCandidate ? 100 : 0) +
+    candidateConfidenceWeight(right.confidence) * 10 +
+    Number(right.selectedCandidate?.rankingScore || right.candidates?.[0]?.rankingScore || 0);
+  return rightScore > leftScore ? right : left;
+}
+
+async function cleanupFrameManifest(tempDir: string | null, frames: FrameManifestItem[]) {
+  for (const frame of frames) {
+    if (!frame.sourcePath) continue;
+    try {
+      await fs.unlink(frame.sourcePath);
+    } catch {}
+  }
+  if (tempDir) {
+    try {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+async function processRetryFramesSequentially(input: {
+  metadata: ExtractionResult["metadata"];
+  transcript: TranscriptResult | null;
+  selectionMode: ScreenshotSelectionMode;
+  includeVisual: boolean;
+  visualForceReason?: string | null;
+}): Promise<{
+  screenshots: ScreenshotAsset[];
+  screenshotsDebug: Record<string, unknown>;
+  ocr: OcrResult;
+  ocrMs: number;
+  visualFallback: VisualFallbackResult;
+  visualFallbackMs: number;
+}> {
+  const startedAt = nowMs();
+  const manifest = await createFrameManifest(input.metadata, input.selectionMode);
+  const screenshots: ScreenshotAsset[] = [];
+  const ocrParts: string[] = [];
+  let ocrReason: string | null = null;
+  let bestVisual: VisualFallbackResult | null = null;
+  const perFrameVisualDebug: unknown[] = [];
+  const perFrameOcrDebug: Array<Record<string, unknown>> = [];
+
+  try {
+    for (const frame of manifest.frames) {
+      const screenshot = await loadScreenshotAssetFromManifest(frame);
+      if (!screenshot) continue;
+      screenshots.push({
+        ...screenshot,
+        url: `processed://${frame.label}`,
+      });
+
+      const ocrStartedAt = nowMs();
+      const ocrResult = await extractVisionOcrFromScreenshots([screenshot]);
+      const ocrDurationMs = nowMs() - ocrStartedAt;
+      if (ocrResult.text.trim()) {
+        ocrParts.push(ocrResult.text.trim());
+      } else if (ocrResult.reason) {
+        ocrReason = ocrReason ? `${ocrReason};${ocrResult.reason}` : ocrResult.reason;
+      }
+      perFrameOcrDebug.push({
+        frame: frame.label,
+        timestampSec: frame.timestampSec ?? null,
+        originalWidth: frame.originalWidth ?? null,
+        originalHeight: frame.originalHeight ?? null,
+        resizedWidth: frame.resizedWidth ?? null,
+        resizedHeight: frame.resizedHeight ?? null,
+        compressedSizeBytes: frame.sizeBytes ?? screenshot.sizeBytes ?? null,
+        ocrDurationMs,
+        ocrTextChars: ocrResult.text.trim().length,
+        ocrUsed: Boolean(ocrResult.text.trim()),
+        ocrReason: ocrResult.reason ?? null,
+      });
+
+      if (input.includeVisual) {
+        const aggregateOcr: OcrResult = {
+          attempted: true,
+          used: ocrParts.length > 0,
+          text: mergeOcrTexts(ocrParts),
+          reason: ocrParts.length > 0 ? null : ocrReason || "vision_ocr_empty",
+        };
+        const visualResult = await runVisualFallback({
+          metadata: input.metadata,
+          transcript: input.transcript,
+          ocr: aggregateOcr,
+          screenshots: [screenshot],
+          forceTrigger: Boolean(input.visualForceReason),
+          forceTriggerReason: input.visualForceReason ?? null,
+        });
+        perFrameVisualDebug.push({
+          frame: frame.label,
+          timestampSec: frame.timestampSec ?? null,
+          summaryText: visualResult.summaryText,
+          confidence: visualResult.confidence,
+          selectedCandidate: visualResult.selectedCandidate?.candidateName || null,
+          reason: visualResult.reason,
+        });
+        bestVisual = chooseBetterVisualResult(bestVisual, visualResult);
+      }
+
+      if (frame.sourcePath) {
+        try {
+          await fs.unlink(frame.sourcePath);
+        } catch {}
+      }
+    }
+  } finally {
+    await cleanupFrameManifest(manifest.tempDir, manifest.frames);
+  }
+
+  const mergedOcrText = mergeOcrTexts(ocrParts);
+  const ocr: OcrResult = {
+    attempted: true,
+    used: Boolean(mergedOcrText),
+    text: mergedOcrText,
+    reason: mergedOcrText ? null : ocrReason || "vision_ocr_empty",
+  };
+
+  const visualFallback =
+    bestVisual ||
+    {
+      attempted: input.includeVisual,
+      triggered: input.includeVisual,
+      reason: input.includeVisual ? "no_verified_candidates" : "not_attempted",
+      provider: "shared_visual_fallback" as const,
+      confidence: "low" as const,
+      needsReview: true,
+      screenshots,
+      textQueries: [],
+      visualQueries: [],
+      candidates: [],
+      selectedCandidate: null,
+      summaryText: input.includeVisual ? "Visual fallback did not find a verified place candidate." : "",
+      debug: input.includeVisual ? { perFrame: perFrameVisualDebug } : undefined,
+    };
+
+  if (visualFallback && !visualFallback.screenshots.length) {
+    visualFallback.screenshots = screenshots;
+  }
+  if (visualFallback?.debug && typeof visualFallback.debug === "object") {
+    visualFallback.debug = {
+      ...(visualFallback.debug as Record<string, unknown>),
+      perFrame: perFrameVisualDebug,
+    };
+  }
+
+  const totalMs = nowMs() - startedAt;
+  return {
+    screenshots,
+    screenshotsDebug: {
+      mediaIngestion: {
+        platform: input.metadata.platform,
+        canonicalUrl: input.metadata.canonicalUrl,
+        metadataProvider: input.metadata.provider,
+        mediaUrlAvailable: Boolean((manifest.debug as any)?.mediaUrlAvailable),
+        thumbnailImageUrlAvailable: Boolean(input.metadata.imageUrl),
+      },
+      frameExtraction: {
+        ...manifest.debug,
+        processingMode: "sequential_per_frame",
+        perFrameOcr: perFrameOcrDebug,
+      },
+      screenshots: {
+        count: screenshots.length,
+        videoFrameCount: screenshots.length,
+        metadataImageCount: 0,
+        sentCandidates: screenshots.map(summarizeScreenshot),
+      },
+    },
+    ocr,
+    ocrMs: totalMs,
+    visualFallback,
+    visualFallbackMs: input.includeVisual ? totalMs : 0,
+  };
+}
+
+function getCachedAttemptTranscript(input: {
+  url: string;
+  mode: ExtractionMode;
+  attemptNumber: number;
+}): TranscriptResult | null {
+  const cacheKey = buildAttemptCacheKey(input.mode, input.url, input.attemptNumber);
+  const cached = extractionCache.get(cacheKey);
+  if (!cached || cached.expiresAt <= nowMs()) return null;
+  return cached.result.transcript ? cloneResult(cached.result).transcript : null;
+}
+
+function getCachedAttemptResult(input: {
+  url: string;
+  mode: ExtractionMode;
+  attemptNumber: number;
+}): ExtractionResult | null {
+  const cacheKey = buildAttemptCacheKey(input.mode, input.url, input.attemptNumber);
+  const cached = extractionCache.get(cacheKey);
+  if (!cached || cached.expiresAt <= nowMs()) return null;
+  return cloneResult(cached.result);
+}
+
+function createTrace(input: Omit<OrchestrationTrace, "decisions" | "acceptedAfter">): OrchestrationTrace {
+  return {
+    ...input,
+    transcriptReused: false,
+    ocrFrameCount: 0,
+    visualFrameCount: 0,
+    decisions: [],
+    acceptedAfter: "manual_review",
+    inheritedEvidence: {
+      transcriptAttempts: [],
+      ocrAttempts: [],
+    },
+  };
+}
+
+function pushDecision(trace: OrchestrationTrace, stage: StageDecision["stage"], ran: boolean, reason: string) {
+  trace.decisions.push({ stage, ran, reason });
+}
+
+function finalizeTrace(trace: OrchestrationTrace, acceptedAfter: OrchestrationTrace["acceptedAfter"]) {
+  trace.acceptedAfter = acceptedAfter;
+}
+
+function logTrace(trace: OrchestrationTrace) {
+  console.info("[extraction-stage-routing]", trace);
+}
+
+function buildResult(input: {
+  mode: ExtractionMode;
+  metadata: ExtractionResult["metadata"];
+  metadataFailureReason: string | null;
+  metadataMs: number;
+  transcript: TranscriptResult | null;
+  transcriptMs: number;
+  ocr: OcrResult | null;
+  ocrMs: number;
+  visualFallback: VisualFallbackResult | null;
+  visualFallbackMs: number;
+  screenshotsDebug: Record<string, unknown> | null;
+  screenshots: ScreenshotAsset[];
+  cacheKey: string;
+  totalStartedAt: number;
+  attemptNumber: number;
+  triggerType: ExtractionTriggerType;
+  orchestration: OrchestrationTrace;
+  priorAttemptHypotheses?: unknown[] | null;
+}): ExtractionResult {
+  const captionText = String(input.metadata.description || "").trim();
+  const combined = buildCombinedText({
+    metadata: input.metadata,
+    transcript: input.transcript,
+    ocr: input.ocr,
+  });
+  return {
+    mode: input.mode,
+    metadata: input.metadata,
+    transcript: input.transcript,
+    ocr: input.ocr,
+    visualFallback: input.visualFallback,
+    attemptInfo: {
+      attemptNumber: input.attemptNumber,
+      triggerType: input.triggerType,
+    },
+    source: input.metadata.sourceUrl,
+    platform: input.metadata.platform,
+    canonicalUrl: input.metadata.canonicalUrl,
+    stageStatus: {
+      basicMetadata: input.metadataFailureReason ? "partial" : "success",
+      caption: captionText ? "success" : "partial",
+      transcript: input.transcript?.used ? "success" : input.transcript?.attempted ? "partial" : "partial",
+      ocr: input.ocr?.used ? "success" : input.ocr?.attempted ? "partial" : "partial",
+      visualFallback: !input.visualFallback?.triggered
+        ? "partial"
+        : input.visualFallback.selectedCandidate
+          ? "success"
+          : input.visualFallback.attempted
+            ? "partial"
+            : "failed",
+    },
+    stages: {
+      basicMetadata: {
+        status: input.metadataFailureReason ? "partial" : "success",
+        provider: input.metadata.provider,
+        reason: input.metadataFailureReason,
+        chars: [input.metadata.title, input.metadata.description].join(" ").trim().length,
+      },
+      caption: {
+        status: captionText ? "success" : "partial",
+        provider: input.metadata.provider,
+        reason: captionText ? null : "caption_not_available",
+        chars: captionText.length,
+      },
+      transcript: {
+        status: input.transcript?.used ? "success" : input.transcript?.attempted ? "partial" : "partial",
+        provider: input.transcript?.source || "none",
+        reason: input.transcript?.reason || "not_attempted",
+        chars: String(input.transcript?.text || "").trim().length,
+      },
+      ocr: {
+        status: input.ocr?.used ? "success" : input.ocr?.attempted ? "partial" : "partial",
+        provider: "frame_ocr",
+        reason: input.ocr?.reason || "not_attempted",
+        chars: String(input.ocr?.text || "").trim().length,
+      },
+      visualFallback: {
+        status: !input.visualFallback?.triggered
+          ? "partial"
+          : input.visualFallback.selectedCandidate
+            ? "success"
+            : input.visualFallback.attempted
+              ? "partial"
+              : "failed",
+        provider: input.visualFallback?.provider || "shared_visual_fallback",
+        reason: input.visualFallback?.reason || "not_attempted",
+        chars: String(input.visualFallback?.summaryText || "").trim().length,
+      },
+    },
+    stageTimingsMs: {
+      basicMetadata: input.metadataMs,
+      caption: 0,
+      transcript: input.transcriptMs,
+      ocr: input.ocrMs,
+      visualFallback: input.visualFallbackMs,
+    },
+    stageFailures: {
+      ...(input.metadataFailureReason ? { basicMetadata: input.metadataFailureReason } : {}),
+      ...(input.transcript?.reason && !input.transcript.used ? { transcript: input.transcript.reason } : {}),
+      ...(input.ocr?.reason && !input.ocr.used ? { ocr: input.ocr.reason } : {}),
+      ...(input.visualFallback?.reason && !input.visualFallback.selectedCandidate ? { visualFallback: input.visualFallback.reason } : {}),
+    },
+    ...combined,
+    perf: {
+      totalMs: nowMs() - input.totalStartedAt,
+      metadataMs: input.metadataMs,
+      transcriptMs: input.transcriptMs,
+      ocrMs: input.ocrMs,
+      visualFallbackMs: input.visualFallbackMs,
+    },
+    sla: {
+      totalMs: nowMs() - input.totalStartedAt,
+      metadataMs: input.metadataMs,
+      transcriptMs: input.transcriptMs,
+      ocrMs: input.ocrMs,
+      visualFallbackMs: input.visualFallbackMs,
+    },
+    cache: { hit: false, key: input.cacheKey },
+    debug: buildExtractionDebug({
+      metadata: input.metadata,
+      metadataFailureReason: input.metadataFailureReason,
+      screenshotsDebug: input.screenshotsDebug,
+      screenshots: input.screenshots,
+      ocr: input.ocr,
+      visualFallback: input.visualFallback,
+      orchestration: input.orchestration,
+      priorAttemptHypotheses: input.priorAttemptHypotheses,
+    }),
+  };
+}
+
+export async function runExtractionPipeline(input: {
+  url: string;
+  mode: ExtractionMode;
+  debug?: boolean;
+  attemptNumber?: number;
+  triggerType?: ExtractionTriggerType;
+}): Promise<ExtractionResult> {
+  const debugEnabled = Boolean(input.debug);
+  const traceEnabled = isTraceEnabled(debugEnabled);
+  const attemptNumber = normalizeAttemptNumber(input.attemptNumber);
+  const triggerType = normalizeTriggerType(input.triggerType);
+  const cacheTtlMs = getNumberEnv("EXTRACTION_CACHE_TTL_MS", DEFAULT_CACHE_TTL_MS);
+  const cacheKey = buildAttemptCacheKey(input.mode, input.url, attemptNumber);
+  const sharedCacheKey = buildSharedCacheKey(input.mode, input.url);
+  const cached = extractionCache.get(cacheKey) || extractionCache.get(sharedCacheKey);
+  if (!debugEnabled && cached && cached.expiresAt > nowMs()) {
+    const cachedResult = cloneResult(cached.result);
+    const priorAttemptHypotheses = attemptNumber >= 2
+      ? Array.from({ length: attemptNumber - 1 }, (_, index) => index + 1)
+          .map((value) => getAttemptHypothesisSummary({
+            url: input.url,
+            mode: input.mode,
+            attemptNumber: value,
+          }))
+          .filter(Boolean)
+      : [];
+    cachedResult.attemptInfo = {
+      attemptNumber,
+      triggerType,
+    };
+    if (!cachedResult.debug || typeof cachedResult.debug !== "object") {
+      cachedResult.debug = {};
+    }
+    cachedResult.debug = {
+      ...cachedResult.debug,
+      priorAttemptHypotheses,
+    };
+    const orchestration = cachedResult.debug.orchestration;
+    if (orchestration && typeof orchestration === "object") {
+      cachedResult.debug.orchestration = {
+        ...(orchestration as Record<string, unknown>),
+        inheritedEvidence: {
+          ...((orchestration as Record<string, any>).inheritedEvidence || {}),
+          hypothesisAttempts: priorAttemptHypotheses
+            .map((item: any) => Number(item?.attemptNumber))
+            .filter((value) => Number.isFinite(value)),
+        },
+      };
+    }
+    cachedResult.cache = { hit: true, key: extractionCache.get(cacheKey) ? cacheKey : sharedCacheKey };
+    extractionCache.set(cacheKey, { expiresAt: cached.expiresAt, result: cloneResult(cachedResult) });
+    extractionCache.set(sharedCacheKey, { expiresAt: cached.expiresAt, result: cloneResult(cachedResult) });
+    return cachedResult;
+  }
+
+  const totalStartedAt = nowMs();
+  const { metadata, metadataFailureReason, metadataMs } = await readMetadata(input.url);
 
   if (input.mode === "quick") {
-    const combined = buildCombinedText({ metadata, transcript: null, ocr: null });
-    const metadataStatus = metadataFailureReason ? "partial" : "success";
-    const captionText = String(metadata.description || "").trim();
-    const quickResult: ExtractionResult = {
+    const orchestration = createTrace({
+      attemptNumber,
+      triggerType,
+      sourcePlatform: metadata.platform,
+      route: "quick",
+    });
+    pushDecision(orchestration, "description", true, "quick_mode_metadata_only");
+    pushDecision(orchestration, "transcript", false, "quick_mode_skipped");
+    pushDecision(orchestration, "ocr", false, "quick_mode_skipped");
+    pushDecision(orchestration, "visualFallback", false, "quick_mode_skipped");
+    finalizeTrace(orchestration, "description");
+    logTrace(orchestration);
+
+    const quickResult = buildResult({
       mode: input.mode,
       metadata,
-      transcript: null,
-      ocr: null,
-      visualFallback: null,
-      source: metadata.sourceUrl,
-      platform: metadata.platform,
-      canonicalUrl: metadata.canonicalUrl,
-      stageStatus: {
-        basicMetadata: metadataStatus,
-        caption: captionText ? "success" : "partial",
-        transcript: "partial",
-        ocr: "partial",
-        visualFallback: "partial",
-      },
-      stages: {
-        basicMetadata: {
-          status: metadataStatus,
-          provider: metadata.provider,
-          reason: metadataFailureReason,
-          chars: [metadata.title, metadata.description].join(" ").trim().length,
-        },
-        caption: {
-          status: captionText ? "success" : "partial",
-          provider: metadata.provider,
-          reason: captionText ? null : "caption_not_available",
-          chars: captionText.length,
-        },
-        transcript: {
-          status: "partial",
-          provider: "not_attempted_quick_mode",
-          reason: "quick_mode",
-          chars: 0,
-        },
-        ocr: {
-          status: "partial",
-          provider: "not_attempted_quick_mode",
-          reason: "quick_mode",
-          chars: 0,
-        },
-        visualFallback: {
-          status: "partial",
-          provider: "not_attempted_quick_mode",
-          reason: "quick_mode",
-          chars: 0,
-        },
-      },
-      stageTimingsMs: {
-        basicMetadata: metadataMs,
-        caption: 0,
-        transcript: 0,
-        ocr: 0,
-        visualFallback: 0,
-      },
-      stageFailures: metadataFailureReason ? { basicMetadata: metadataFailureReason } : {},
-      ...combined,
-      perf: {
-        totalMs: nowMs() - totalStartedAt,
-        metadataMs,
-        transcriptMs: 0,
-        ocrMs: 0,
-        visualFallbackMs: 0,
-      },
-      sla: {
-        totalMs: nowMs() - totalStartedAt,
-        metadataMs,
-        transcriptMs: 0,
-        ocrMs: 0,
-        visualFallbackMs: 0,
-      },
-      cache: { hit: false, key: cacheKey },
-    };
-    if (debugEnabled || traceEnabled) {
-      quickResult.debug = buildExtractionDebug({
-        metadata,
-        metadataFailureReason,
-        screenshotsDebug: null,
+      metadataFailureReason,
+      metadataMs,
+      transcript: { attempted: false, used: false, source: null, text: "", reason: "quick_mode" },
+      transcriptMs: 0,
+      ocr: { attempted: false, used: false, text: "", reason: "quick_mode" },
+      ocrMs: 0,
+      visualFallback: {
+        attempted: false,
+        triggered: false,
+        reason: "quick_mode",
+        provider: "shared_visual_fallback",
+        confidence: "low",
+        needsReview: true,
         screenshots: [],
-        ocr: null,
-        visualFallback: null,
-      });
+        textQueries: [],
+        visualQueries: [],
+        candidates: [],
+        selectedCandidate: null,
+        summaryText: "",
+      },
+      visualFallbackMs: 0,
+      screenshotsDebug: null,
+      screenshots: [],
+      cacheKey,
+      totalStartedAt,
+      attemptNumber,
+      triggerType,
+      orchestration,
+    });
+    if (traceEnabled) {
       console.info("[extraction-debug]", quickResult.debug);
     }
     if (!debugEnabled && !isLowSignalInstagramResult(quickResult)) {
@@ -277,167 +903,343 @@ export async function runExtractionPipeline(input: { url: string; mode: Extracti
     return quickResult;
   }
 
-  const transcriptStartedAt = nowMs();
-  const screenshotsStartedAt = nowMs();
-  const transcriptPromise = withBudget(
-    enrichWithTranscript(metadata),
-    getNumberEnv("EXTRACTION_TRANSCRIPT_BUDGET_MS", DEFAULT_TRANSCRIPT_BUDGET_MS),
-    () => ({ attempted: true, used: false, source: null, text: "", reason: "timeout" }),
-  );
-  const screenshotsPromise = withBudget(
-    selectSourceScreenshotsDetailed(metadata),
-    getNumberEnv("EXTRACTION_VISUAL_FALLBACK_BUDGET_MS", DEFAULT_VISUAL_FALLBACK_BUDGET_MS),
-    () => ({
-      screenshots: [],
-      debug: {
-        mediaIngestion: {
-          platform: metadata.platform,
-          canonicalUrl: metadata.canonicalUrl,
-          metadataProvider: metadata.provider,
-          mediaUrlAvailable: false,
-          thumbnailImageUrlAvailable: Boolean(metadata.imageUrl),
-        },
-        frameExtraction: {
-          didRun: metadata.platform === "youtube" || metadata.platform === "instagram",
-          ok: false,
-          error: "timeout",
-          count: 0,
-        },
-        screenshots: {
-          count: 0,
-          videoFrameCount: 0,
-          metadataImageCount: 0,
-          sentCandidates: [],
-        },
-      },
-    }),
-  );
-  const [transcript, screenshotSelection] = await Promise.all([transcriptPromise, screenshotsPromise]);
-  const screenshots = screenshotSelection.screenshots;
-  const screenshotsDebug = screenshotSelection.debug;
-  const screenshotsMs = nowMs() - screenshotsStartedAt;
-  const ocrStartedAt = nowMs();
-  const ocr = await withBudget(
-    enrichWithFrameOcr(metadata, screenshots),
-    getNumberEnv("EXTRACTION_OCR_BUDGET_MS", DEFAULT_OCR_BUDGET_MS),
-    () => ({ attempted: true, used: false, text: "", reason: "timeout" }),
-  );
-  const transcriptMs = nowMs() - transcriptStartedAt;
-  const ocrMs = nowMs() - ocrStartedAt;
-  const visualFallbackStartedAt = nowMs();
-  const visualFallback = await withBudget(
-    runVisualFallback({ metadata, transcript, ocr, screenshots }),
-    getNumberEnv("EXTRACTION_VISUAL_FALLBACK_BUDGET_MS", DEFAULT_VISUAL_FALLBACK_BUDGET_MS),
-    () => ({
-      attempted: true,
-      triggered: true,
-      reason: "timeout",
-      provider: "shared_visual_fallback" as const,
-      confidence: "low" as const,
-      needsReview: true,
-      screenshots: [],
-      textQueries: [],
-      visualQueries: [],
-      candidates: [],
-      selectedCandidate: null,
-      summaryText: "Visual fallback timed out before producing verified candidates.",
-    }),
-  );
-  const visualFallbackMs = nowMs() - visualFallbackStartedAt;
+  const route = attemptNumber >= 3 ? "retry_2" : attemptNumber === 2 ? "retry_1" : "attempt_1";
+  const visualFallbackPolicy = getAttemptVisualFallbackPolicy(attemptNumber);
+  const orchestration = createTrace({
+    attemptNumber,
+    triggerType,
+    sourcePlatform: metadata.platform,
+    route,
+  });
 
-  const result: ExtractionResult = {
-    mode: input.mode,
-    metadata,
-    transcript,
-    ocr,
-    visualFallback,
-    source: metadata.sourceUrl,
-    platform: metadata.platform,
-    canonicalUrl: metadata.canonicalUrl,
-    stageStatus: {
-      basicMetadata: metadataFailureReason ? "partial" : "success",
-      caption: String(metadata.description || "").trim() ? "success" : "partial",
-      transcript: transcript.used ? "success" : transcript.attempted ? "partial" : "failed",
-      ocr: ocr.used ? "success" : ocr.attempted ? "partial" : "failed",
-      visualFallback: !visualFallback.triggered ? "partial" : visualFallback.selectedCandidate ? "success" : visualFallback.attempted ? "partial" : "failed",
-    },
-    stages: {
-      basicMetadata: {
-        status: metadataFailureReason ? "partial" : "success",
-        provider: metadata.provider,
-        reason: metadataFailureReason,
-        chars: [metadata.title, metadata.description].join(" ").trim().length,
-      },
-      caption: {
-        status: String(metadata.description || "").trim() ? "success" : "partial",
-        provider: metadata.provider,
-        reason: String(metadata.description || "").trim() ? null : "caption_not_available",
-        chars: String(metadata.description || "").trim().length,
-      },
-      transcript: {
-        status: transcript.used ? "success" : transcript.attempted ? "partial" : "failed",
-        provider: transcript.source || "none",
-        reason: transcript.reason,
-        chars: String(transcript.text || "").trim().length,
-      },
-      ocr: {
-        status: ocr.used ? "success" : ocr.attempted ? "partial" : "failed",
-        provider: "frame_ocr",
-        reason: ocr.reason,
-        chars: String(ocr.text || "").trim().length,
-      },
-      visualFallback: {
-        status: !visualFallback.triggered ? "partial" : visualFallback.selectedCandidate ? "success" : visualFallback.attempted ? "partial" : "failed",
-        provider: visualFallback.provider,
-        reason: visualFallback.reason,
-        chars: String(visualFallback.summaryText || "").trim().length,
-      },
-    },
-    stageTimingsMs: {
-      basicMetadata: metadataMs,
-      caption: 0,
-      transcript: transcriptMs,
-      ocr: ocrMs,
-      visualFallback: visualFallbackMs,
-    },
-    stageFailures: {
-      ...(metadataFailureReason ? { basicMetadata: metadataFailureReason } : {}),
-      ...(transcript.reason && !transcript.used ? { transcript: transcript.reason } : {}),
-      ...(ocr.reason && !ocr.used ? { ocr: ocr.reason } : {}),
-      ...(visualFallback.reason && !visualFallback.selectedCandidate ? { visualFallback: visualFallback.reason } : {}),
-    },
-    ...buildCombinedText({ metadata, transcript, ocr }),
-    perf: {
-      totalMs: nowMs() - totalStartedAt,
-      metadataMs,
-      transcriptMs: Math.max(transcriptMs, screenshotsMs),
-      ocrMs,
-      visualFallbackMs,
-    },
-    sla: {
-      totalMs: nowMs() - totalStartedAt,
-      metadataMs,
-      transcriptMs: Math.max(transcriptMs, screenshotsMs),
-      ocrMs,
-      visualFallbackMs,
-    },
-    cache: { hit: false, key: cacheKey },
+  const descriptionWeak = isWeakDescription(metadata);
+  let descriptionProbe: LlmConfidenceProbe | null = null;
+  if (attemptNumber === 1 && !descriptionWeak) {
+    descriptionProbe = await probeLlmConfidence({
+      metadata,
+      mode: input.mode,
+      attemptNumber,
+      triggerType,
+    });
+  }
+  const shouldRunTranscript = attemptNumber >= 2 || descriptionWeak;
+  let transcript: TranscriptResult = {
+    attempted: false,
+    used: false,
+    source: null,
+    text: "",
+    reason: shouldRunTranscript ? "pending" : "skipped_description_accepted",
   };
+  let transcriptMs = 0;
 
-  if (debugEnabled || traceEnabled) {
-    result.debug = buildExtractionDebug({
+  if (attemptNumber === 1 && !descriptionWeak && descriptionProbe?.accepted) {
+    pushDecision(
+      orchestration,
+      "description",
+      true,
+      `accepted_description_llm_${descriptionProbe.confidence}`,
+    );
+    pushDecision(orchestration, "transcript", false, "description_confidence_sufficient");
+    pushDecision(orchestration, "ocr", false, "description_confidence_sufficient");
+    pushDecision(orchestration, "visualFallback", false, "initial_attempt_only");
+    finalizeTrace(orchestration, "description");
+    logTrace(orchestration);
+
+    const result = buildResult({
+      mode: input.mode,
       metadata,
       metadataFailureReason,
-      screenshotsDebug,
-      screenshots,
-      ocr,
-      visualFallback,
+      metadataMs,
+      transcript,
+      transcriptMs,
+      ocr: { attempted: false, used: false, text: "", reason: "skipped_description_accepted" },
+      ocrMs: 0,
+      visualFallback: {
+        attempted: false,
+        triggered: false,
+        reason: "skipped_description_accepted",
+        provider: "shared_visual_fallback",
+        confidence: "low",
+        needsReview: true,
+        screenshots: [],
+        textQueries: [],
+        visualQueries: [],
+        candidates: [],
+        selectedCandidate: null,
+        summaryText: "",
+      },
+      visualFallbackMs: 0,
+      screenshotsDebug: null,
+      screenshots: [],
+      cacheKey,
+      totalStartedAt,
+      attemptNumber,
+      triggerType,
+      orchestration,
     });
-    console.info("[extraction-debug]", result.debug);
+    if (traceEnabled) {
+      console.info("[extraction-debug]", result.debug);
+    }
+    if (!debugEnabled && !isLowSignalInstagramResult(result)) {
+      extractionCache.set(cacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
+      extractionCache.set(sharedCacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
+    }
+    const agg = recordSla("extraction.total", result.sla?.totalMs ?? result.perf?.totalMs ?? 0);
+    if (Number(process.env.EXTRACTION_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.EXTRACTION_SLA_LOG_EVERY) === 0) {
+      console.info("[sla][extraction.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
+    }
+    return result;
   }
 
+  pushDecision(
+    orchestration,
+    "description",
+    true,
+    attemptNumber === 1
+      ? descriptionWeak
+        ? "missing_or_weak_description"
+        : `description_llm_${descriptionProbe?.confidence || "low"}`
+      : "retry_forced_reanalysis",
+  );
+
+  let screenshots: ScreenshotAsset[] = [];
+  let screenshotsDebug: Record<string, unknown> | null = null;
+  let ocr: OcrResult = { attempted: false, used: false, text: "", reason: "not_attempted" };
+  let ocrMs = 0;
+  let visualFallback: VisualFallbackResult = {
+    attempted: false,
+    triggered: false,
+    reason: "not_attempted",
+    provider: "shared_visual_fallback",
+    confidence: "low",
+    needsReview: true,
+    screenshots: [],
+    textQueries: [],
+    visualQueries: [],
+    candidates: [],
+    selectedCandidate: null,
+    summaryText: "",
+  };
+  let visualFallbackMs = 0;
+  const priorAttempt1 = attemptNumber >= 2
+    ? getCachedAttemptResult({
+        url: input.url,
+        mode: input.mode,
+        attemptNumber: 1,
+      })
+    : null;
+  const priorAttempt2 = attemptNumber >= 3
+    ? getCachedAttemptResult({
+        url: input.url,
+        mode: input.mode,
+        attemptNumber: 2,
+      })
+    : null;
+  const priorAttemptHypotheses = attemptNumber >= 2
+    ? Array.from({ length: attemptNumber - 1 }, (_, index) => index + 1)
+        .map((value) => getAttemptHypothesisSummary({
+          url: input.url,
+          mode: input.mode,
+          attemptNumber: value,
+        }))
+        .filter(Boolean)
+    : [];
+
+  if (attemptNumber >= 3) {
+    const inheritedTranscript = mergeTranscriptResults(priorAttempt1?.transcript ?? null, priorAttempt2?.transcript ?? null);
+    orchestration.inheritedEvidence = {
+      transcriptAttempts: [1, 2].filter((value) => Boolean((value === 1 ? priorAttempt1 : priorAttempt2)?.transcript?.text)),
+      ocrAttempts: [1, 2].filter((value) => Boolean((value === 1 ? priorAttempt1 : priorAttempt2)?.ocr?.text)),
+      hypothesisAttempts: priorAttemptHypotheses.map((item: any) => Number(item?.attemptNumber)).filter((value) => Number.isFinite(value)),
+    };
+    if (inheritedTranscript && hasMeaningfulTranscript(inheritedTranscript)) {
+      transcript = inheritedTranscript;
+      transcriptMs = 0;
+      orchestration.transcriptReused = true;
+      pushDecision(orchestration, "transcript", false, "retry_2_transcript_reused");
+    } else {
+      const transcriptRead = await readTranscript(metadata);
+      transcript = mergeTranscriptResults(inheritedTranscript, transcriptRead.transcript) ?? {
+        attempted: true,
+        used: false,
+        source: transcriptRead.transcript.source || null,
+        text: "",
+        reason: transcriptRead.transcript.reason || "retry_2_transcript_missing_rerun",
+      };
+      transcriptMs = transcriptRead.transcriptMs;
+      orchestration.transcriptReused = false;
+      pushDecision(orchestration, "transcript", true, "retry_2_transcript_missing_rerun");
+    }
+    pushDecision(orchestration, "ocr", true, "retry_2_frame_ocr");
+    const sequential = await processRetryFramesSequentially({
+      metadata,
+      transcript,
+      selectionMode: "scene_edges",
+      includeVisual: visualFallbackPolicy.includeVisual,
+      visualForceReason: visualFallbackPolicy.includeVisual ? visualFallbackPolicy.decisionReason : null,
+    });
+    screenshots = sequential.screenshots;
+    screenshotsDebug = sequential.screenshotsDebug;
+    ocr = mergeOcrResults(
+      mergeOcrResults(priorAttempt1?.ocr ?? null, priorAttempt2?.ocr ?? null),
+      sequential.ocr,
+    ) ?? sequential.ocr;
+    ocrMs = sequential.ocrMs;
+    visualFallback = sequential.visualFallback;
+    visualFallbackMs = sequential.visualFallbackMs;
+    orchestration.ocrFrameCount = sequential.screenshots.length;
+    orchestration.visualFrameCount = sequential.screenshots.length;
+  } else if (attemptNumber === 2) {
+    orchestration.inheritedEvidence = {
+      transcriptAttempts: priorAttempt1?.transcript?.text ? [1] : [],
+      ocrAttempts: priorAttempt1?.ocr?.text ? [1] : [],
+    };
+    const reusedTranscript = priorAttempt1?.transcript ?? getCachedAttemptTranscript({
+      url: input.url,
+      mode: input.mode,
+      attemptNumber: 1,
+    });
+    if (reusedTranscript && hasMeaningfulTranscript(reusedTranscript)) {
+      transcript = reusedTranscript;
+      transcriptMs = 0;
+      orchestration.transcriptReused = true;
+      pushDecision(orchestration, "transcript", false, "retry_1_transcript_reused");
+    } else {
+      const transcriptRead = await readTranscript(metadata);
+      transcript = mergeTranscriptResults(reusedTranscript ?? null, transcriptRead.transcript) ?? {
+        attempted: true,
+        used: false,
+        source: transcriptRead.transcript.source || null,
+        text: "",
+        reason: transcriptRead.transcript.reason || "retry_1_transcript_missing_rerun",
+      };
+      transcriptMs = transcriptRead.transcriptMs;
+      orchestration.transcriptReused = false;
+      pushDecision(orchestration, "transcript", true, "retry_1_transcript_missing_rerun");
+    }
+    pushDecision(orchestration, "ocr", true, "retry_1_frame_ocr");
+    const sequential = await processRetryFramesSequentially({
+      metadata,
+      transcript,
+      selectionMode: "anchors",
+      includeVisual: false,
+    });
+    screenshots = sequential.screenshots;
+    screenshotsDebug = sequential.screenshotsDebug;
+    ocr = mergeOcrResults(priorAttempt1?.ocr ?? null, sequential.ocr) ?? sequential.ocr;
+    ocrMs = sequential.ocrMs;
+    orchestration.ocrFrameCount = sequential.screenshots.length;
+    orchestration.visualFrameCount = 0;
+  } else {
+    const transcriptRead = await readTranscript(metadata);
+    transcript = transcriptRead.transcript;
+    transcriptMs = transcriptRead.transcriptMs;
+    const transcriptProbe = await probeLlmConfidence({
+      metadata,
+      mode: input.mode,
+      attemptNumber,
+      triggerType,
+      transcript,
+    });
+    pushDecision(
+      orchestration,
+      "transcript",
+      true,
+      `transcript_probe_${transcriptProbe.confidence}`,
+    );
+
+    if (transcriptProbe.accepted) {
+      pushDecision(orchestration, "ocr", false, "transcript_confidence_sufficient");
+      pushDecision(orchestration, "visualFallback", false, "initial_attempt_only");
+      finalizeTrace(orchestration, "transcript");
+      logTrace(orchestration);
+
+      const result = buildResult({
+        mode: input.mode,
+        metadata,
+        metadataFailureReason,
+        metadataMs,
+        transcript,
+        transcriptMs,
+        ocr: { attempted: false, used: false, text: "", reason: "skipped_after_transcript" },
+        ocrMs: 0,
+        visualFallback,
+        visualFallbackMs: 0,
+        screenshotsDebug: null,
+        screenshots: [],
+        cacheKey,
+        totalStartedAt,
+        attemptNumber,
+        triggerType,
+        orchestration,
+        priorAttemptHypotheses,
+      });
+      if (traceEnabled) {
+        console.info("[extraction-debug]", result.debug);
+      }
+      if (!debugEnabled && !isLowSignalInstagramResult(result)) {
+        extractionCache.set(cacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
+        extractionCache.set(sharedCacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
+      }
+      const agg = recordSla("extraction.total", result.sla?.totalMs ?? result.perf?.totalMs ?? 0);
+      if (Number(process.env.EXTRACTION_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.EXTRACTION_SLA_LOG_EVERY) === 0) {
+        console.info("[sla][extraction.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
+      }
+      return result;
+    }
+
+    const sequential = await processRetryFramesSequentially({
+      metadata,
+      transcript,
+      selectionMode: "anchors",
+      includeVisual: false,
+    });
+    screenshots = sequential.screenshots;
+    screenshotsDebug = sequential.screenshotsDebug;
+    pushDecision(orchestration, "ocr", true, "attempt_1_frame_ocr_after_transcript_probe");
+    ocr = sequential.ocr;
+    ocrMs = sequential.ocrMs;
+    orchestration.ocrFrameCount = sequential.screenshots.length;
+    orchestration.visualFrameCount = 0;
+  }
+
+  if (attemptNumber >= 3) {
+    pushDecision(orchestration, "visualFallback", true, visualFallbackPolicy.decisionReason);
+    finalizeTrace(orchestration, visualFallback.selectedCandidate ? "visualFallback" : "manual_review");
+  } else {
+    pushDecision(orchestration, "visualFallback", false, visualFallbackPolicy.decisionReason);
+    finalizeTrace(orchestration, hasMeaningfulOcr(ocr) ? "ocr" : "manual_review");
+  }
+
+  logTrace(orchestration);
+
+  const result = buildResult({
+    mode: input.mode,
+    metadata,
+    metadataFailureReason,
+    metadataMs,
+    transcript,
+    transcriptMs,
+    ocr,
+    ocrMs,
+    visualFallback,
+    visualFallbackMs,
+    screenshotsDebug,
+    screenshots,
+    cacheKey,
+    totalStartedAt,
+    attemptNumber,
+    triggerType,
+    orchestration,
+    priorAttemptHypotheses,
+  });
+
+  if (traceEnabled) {
+    console.info("[extraction-debug]", result.debug);
+  }
   if (!debugEnabled && !isLowSignalInstagramResult(result)) {
     extractionCache.set(cacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
+    extractionCache.set(sharedCacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
   }
   const agg = recordSla("extraction.total", result.sla?.totalMs ?? result.perf?.totalMs ?? 0);
   if (Number(process.env.EXTRACTION_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.EXTRACTION_SLA_LOG_EVERY) === 0) {

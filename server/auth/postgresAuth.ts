@@ -102,6 +102,15 @@ export type ReelAnalyticsAttemptCompletion = {
   failureReason?: string | null;
 };
 
+export type ReelAnalyticsAttemptArtifactsInput = {
+  attemptId?: string | null;
+  runId?: string | null;
+  attemptNumber?: number | null;
+  extractionResult?: unknown;
+  intelligenceResult?: unknown;
+  hypothesisSummary?: unknown;
+};
+
 export type ReelAnalyticsEventInput = {
   clientRunId: string;
   userId?: string | null;
@@ -275,6 +284,9 @@ export async function ensureAuthSchema() {
       intelligence_status text,
       validation_error_count integer,
       failure_reason text,
+      extraction_result_json jsonb,
+      intelligence_result_json jsonb,
+      hypothesis_json jsonb,
       created_at timestamptz not null default now(),
       started_at timestamptz not null default now(),
       completed_at timestamptz,
@@ -284,6 +296,16 @@ export async function ensureAuthSchema() {
 
   await pool.query(`
     create index if not exists idx_reel_analytics_attempts_run_attempt on reel_analytics_attempts(run_id, attempt_number desc);
+  `);
+
+  await pool.query(`
+    alter table if exists reel_analytics_attempts add column if not exists extraction_result_json jsonb;
+  `);
+  await pool.query(`
+    alter table if exists reel_analytics_attempts add column if not exists intelligence_result_json jsonb;
+  `);
+  await pool.query(`
+    alter table if exists reel_analytics_attempts add column if not exists hypothesis_json jsonb;
   `);
 
   await pool.query(`
@@ -823,6 +845,65 @@ export async function finalizeReelAnalyticsAttempt(input: ReelAnalyticsAttemptCo
       input.intelligenceStatus ?? null,
       input.validationErrorCount ?? null,
       input.failureReason ?? null,
+    ],
+  );
+}
+
+export async function persistReelAnalyticsAttemptArtifacts(input: ReelAnalyticsAttemptArtifactsInput) {
+  const hasExtractionResult = Object.prototype.hasOwnProperty.call(input, "extractionResult");
+  const hasIntelligenceResult = Object.prototype.hasOwnProperty.call(input, "intelligenceResult");
+  const hasHypothesisSummary = Object.prototype.hasOwnProperty.call(input, "hypothesisSummary");
+  const extractionResult = hasExtractionResult ? JSON.stringify(input.extractionResult ?? null) : null;
+  const intelligenceResult = hasIntelligenceResult ? JSON.stringify(input.intelligenceResult ?? null) : null;
+  const hypothesisSummary = hasHypothesisSummary ? JSON.stringify(input.hypothesisSummary ?? null) : null;
+
+  if (input.attemptId) {
+    await pool.query(
+      `
+        update reel_analytics_attempts
+        set
+          extraction_result_json = case when $2 then $3::jsonb else extraction_result_json end,
+          intelligence_result_json = case when $4 then $5::jsonb else intelligence_result_json end,
+          hypothesis_json = case when $6 then $7::jsonb else hypothesis_json end,
+          updated_at = now()
+        where id = $1
+      `,
+      [
+        input.attemptId,
+        hasExtractionResult,
+        extractionResult,
+        hasIntelligenceResult,
+        intelligenceResult,
+        hasHypothesisSummary,
+        hypothesisSummary,
+      ],
+    );
+    return;
+  }
+
+  const runId = String(input.runId || "").trim();
+  const attemptNumber = Number(input.attemptNumber) || 0;
+  if (!runId || !attemptNumber) return;
+
+  await pool.query(
+    `
+      update reel_analytics_attempts
+      set
+        extraction_result_json = case when $3 then $4::jsonb else extraction_result_json end,
+        intelligence_result_json = case when $5 then $6::jsonb else intelligence_result_json end,
+        hypothesis_json = case when $7 then $8::jsonb else hypothesis_json end,
+        updated_at = now()
+      where run_id = $1 and attempt_number = $2
+    `,
+    [
+      runId,
+      attemptNumber,
+      hasExtractionResult,
+      extractionResult,
+      hasIntelligenceResult,
+      intelligenceResult,
+      hasHypothesisSummary,
+      hypothesisSummary,
     ],
   );
 }

@@ -1,4 +1,5 @@
 import type { ExtractionResult } from "../extraction/types";
+import type { IntelligenceRequest } from "./types";
 
 const MAX_COMBINED = 5000;
 
@@ -8,7 +9,28 @@ function trimText(input: string | null | undefined, max: number): string {
   return clean.slice(0, max);
 }
 
-export function buildSystemPrompt(): string {
+export function buildSystemPrompt(input?: { attemptNumber?: number | null }): string {
+  const attemptNumber = Number(input?.attemptNumber) || 1;
+  const retryInstructions =
+    attemptNumber >= 3
+      ? `
+17. This is the final retry / Attempt 3.
+18. Use all accumulated evidence together: description, transcript, OCR from prior attempts, current OCR, visual fallback, and prior hypotheses.
+19. Treat prior hypotheses only as candidates to verify or reject, never as ground truth.
+20. Prefer visually or search-verified place evidence over vague transcript-only guesses.
+21. If visual evidence conflicts with a prior guess, choose the better-supported result and make the evidence clear in evidenceText.
+22. Prefer needs_review over inventing a specific place.
+23. If still uncertain, return a final manual-review style low-confidence result rather than guessing.`
+      : attemptNumber === 2
+        ? `
+17. This is Retry 1 / Attempt 2.
+18. Reuse previous evidence as context.
+19. Treat the previous result as a hypothesis, not final truth.
+20. Use new OCR text to repair missing or weak fields when possible.
+21. Do not invent details if OCR adds no useful clue.
+22. Return medium or high confidence only when description, transcript, and OCR support the entity.`
+        : "";
+
   return `You are Wandreel's strict structured extraction engine.
 
 Goal:
@@ -67,17 +89,28 @@ Hard rules:
     - eat vibes: Trending, Visited, Date-night, Budget, Street-style, Iconic, Veg-only, Cafe
     - do vibes: Trending, Visited, Weekend, Outdoor, Adventure, Family, Comedy, Workshop, Free, Hidden gem
     - stay vibes: Saved, Visited, Budget, Premium, Couple-friendly, Workation, Pool, Dorm, Family
-    - see vibes: Trending, Visited, Heritage, Nature, Photo spots, Hidden gem, Spiritual, Iconic, Free`;
+    - see vibes: Trending, Visited, Heritage, Nature, Photo spots, Hidden gem, Spiritual, Iconic, Free${retryInstructions}`;
 }
 
-export function buildUserPrompt(source: ExtractionResult): string {
+export function buildUserPrompt(source: ExtractionResult, analytics?: IntelligenceRequest["analytics"]): string {
   const metadata = source.metadata;
   const combinedText = source.combinedTextClean || source.combinedTextRaw || "";
   const visualFallback = source.visualFallback;
+  const attemptNumber = Number(analytics?.attemptNumber ?? source.attemptInfo?.attemptNumber ?? 1) || 1;
+  const triggerType = analytics?.triggerType || source.attemptInfo?.triggerType || "initial";
 
   const payload = {
     url: metadata.canonicalUrl || metadata.sourceUrl,
     platform: metadata.platform,
+    attemptContext: {
+      attemptNumber,
+      triggerType,
+      stageRoute: (source.debug as any)?.orchestration?.route || null,
+      acceptedAfter: (source.debug as any)?.orchestration?.acceptedAfter || null,
+      stageDecisions: Array.isArray((source.debug as any)?.orchestration?.decisions)
+        ? (source.debug as any).orchestration.decisions
+        : [],
+    },
     combinedTextClean: trimText(combinedText, MAX_COMBINED),
     extractionMode: source.mode,
     quality: {
@@ -132,6 +165,11 @@ export function buildUserPrompt(source: ExtractionResult): string {
           })),
         }
       : null,
+    priorAttemptHypotheses: attemptNumber >= 2
+      ? Array.isArray((source.debug as any)?.priorAttemptHypotheses)
+        ? (source.debug as any).priorAttemptHypotheses
+        : []
+      : [],
   };
 
   return `Process this extracted combined text for Wandreel. Return valid JSON only.\n\nInput:\n${JSON.stringify(payload, null, 2)}`;

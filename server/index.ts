@@ -23,6 +23,7 @@ import {
   listSavedPlaces,
   markReelAnalyticsEntityOutcome,
   recordReelAnalyticsEvent,
+  persistReelAnalyticsAttemptArtifacts,
   revokeSession,
   upsertReelAnalyticsEntities,
   upsertGoogleVerifiedUser,
@@ -31,6 +32,8 @@ import {
   verifyEmailOtp,
 } from "./auth/postgresAuth";
 import { featureFlags } from "./featureFlags";
+import { saveAttemptHypothesisSummary } from "./attemptHypothesisStore";
+import { buildAttemptHypothesisSummary } from "./intelligence/hypothesisSummary";
 
 const app = express();
 const clientOrigin = process.env.CLIENT_ORIGIN || "http://localhost:5173";
@@ -278,6 +281,7 @@ app.post("/api/metadata/extract", async (req, res) => {
     const url = String(req.body?.url || "").trim();
     const modeRaw = String(req.body?.mode || "quick").trim().toLowerCase();
     const mode: ExtractionMode = modeRaw === "deep" ? "deep" : "quick";
+    const analyticsPayload = req.body?.analytics && typeof req.body.analytics === "object" ? req.body.analytics : null;
     const debugRaw = String(req.body?.debug ?? req.query?.debug ?? "").trim().toLowerCase();
     const debug =
       debugRaw === "1" ||
@@ -290,7 +294,24 @@ app.post("/api/metadata/extract", async (req, res) => {
       return res.status(400).json({ ok: false, error: "url is required" });
     }
 
-    const result = await runExtractionPipeline({ url, mode, debug });
+    const result = await runExtractionPipeline({
+      url,
+      mode,
+      debug,
+      attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
+      triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
+    });
+    const attemptRecord = await createAnalyticsAttemptFromRequest(req, result);
+    if (attemptRecord?.attemptId) {
+      try {
+        await persistReelAnalyticsAttemptArtifacts({
+          attemptId: attemptRecord.attemptId,
+          extractionResult: result,
+        });
+      } catch (artifactError) {
+        console.error("persist extraction attempt artifacts failed", artifactError);
+      }
+    }
     if (featureFlags.extractionV2) {
       return res.json({ ok: true, ...result });
     }
@@ -583,7 +604,32 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
     }
 
     const attemptRecord = await createAnalyticsAttemptFromRequest(req, source);
-    const result = await runIntelligencePipeline({ source });
+    const analyticsPayload = req.body?.analytics && typeof req.body.analytics === "object" ? req.body.analytics : null;
+    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+    const result = await runIntelligencePipeline({
+      source,
+      analytics: {
+        attemptId: attemptRecord?.attemptId ?? null,
+        runId: attemptRecord?.runId ?? null,
+        clientRunId: analyticsPayload?.clientRunId ? String(analyticsPayload.clientRunId) : null,
+        attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
+        triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
+        anonymousId: analyticsPayload?.anonymousId ? String(analyticsPayload.anonymousId) : null,
+        userId: authUser?.userId ?? null,
+      },
+    });
+    const attemptNumber = Number(analyticsPayload?.attemptNumber) || 1;
+    const hypothesisSummary = buildAttemptHypothesisSummary({
+      source,
+      result,
+      attemptNumber,
+    });
+    saveAttemptHypothesisSummary({
+      mode: source.mode === "deep" ? "deep" : "quick",
+      url: source.canonicalUrl || source.metadata?.canonicalUrl || source.metadata?.sourceUrl || source.source,
+      attemptNumber,
+      summary: hypothesisSummary,
+    });
     if (attemptRecord?.attemptId) {
       try {
         await finalizeReelAnalyticsAttempt({
@@ -602,6 +648,15 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
         });
       } catch (attemptFinalizeError) {
         console.error("finalize analytics attempt failed", attemptFinalizeError);
+      }
+      try {
+        await persistReelAnalyticsAttemptArtifacts({
+          attemptId: attemptRecord.attemptId,
+          intelligenceResult: result,
+          hypothesisSummary,
+        });
+      } catch (artifactError) {
+        console.error("persist intelligence attempt artifacts failed", artifactError);
       }
     }
     if (attemptRecord?.runId) {

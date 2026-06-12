@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type { ExtractionResult } from "../../extraction/types";
+import type { IntelligenceRequest } from "../types";
 import { buildSystemPrompt, buildUserPrompt } from "../prompts";
 
 export type OpenAiExtractionResult = {
@@ -10,7 +11,7 @@ export type OpenAiExtractionResult = {
   providerMeta: {
     model: string;
     fallbackUsed?: boolean;
-    taskType?: "default" | "complex_extraction";
+    taskType?: "default" | "complex_extraction" | "retry_refined" | "retry_final";
   };
   usage: {
     inputTokens: number | null;
@@ -81,7 +82,8 @@ async function runStructuredRequest(input: {
   client: OpenAI;
   model: string;
   source: ExtractionResult;
-  taskType: "default" | "complex_extraction";
+  analytics?: IntelligenceRequest["analytics"];
+  taskType: "default" | "complex_extraction" | "retry_refined" | "retry_final";
   fallbackUsed: boolean;
   fallbackReason: string | null;
 }): Promise<OpenAiExtractionResult & { parsed: unknown }> {
@@ -96,8 +98,8 @@ async function runStructuredRequest(input: {
   const response = await input.client.responses.create({
     model: input.model,
     input: [
-      { role: "system", content: [{ type: "input_text", text: buildSystemPrompt() }] },
-      { role: "user", content: [{ type: "input_text", text: buildUserPrompt(input.source) }] },
+      { role: "system", content: [{ type: "input_text", text: buildSystemPrompt({ attemptNumber: input.analytics?.attemptNumber }) }] },
+      { role: "user", content: [{ type: "input_text", text: buildUserPrompt(input.source, input.analytics) }] },
     ],
     text: {
       format: {
@@ -129,19 +131,53 @@ async function runStructuredRequest(input: {
   };
 }
 
-export async function callOpenAiStructuredExtraction(source: ExtractionResult): Promise<OpenAiExtractionResult> {
+export async function callOpenAiStructuredExtraction(
+  source: ExtractionResult,
+  analytics?: IntelligenceRequest["analytics"],
+): Promise<OpenAiExtractionResult> {
   const client = getClient();
   const defaultModel = process.env.OPENAI_MODEL || process.env.INTELLIGENCE_MODEL || "gpt-5-nano";
+  const complexModel = String(process.env.EXTRACTION_COMPLEX_MODEL || "").trim();
+  const finalRetryModel =
+    String(process.env.EXTRACTION_VISUAL_SEARCH_MODEL || "").trim() ||
+    complexModel ||
+    defaultModel;
+  const attemptNumber = Number(analytics?.attemptNumber ?? source.attemptInfo?.attemptNumber ?? 1) || 1;
+
+  if (attemptNumber >= 3) {
+    return runStructuredRequest({
+      client,
+      model: finalRetryModel,
+      source,
+      analytics,
+      taskType: "retry_final",
+      fallbackUsed: finalRetryModel !== defaultModel,
+      fallbackReason: "final_retry_strict_prompt",
+    });
+  }
+
+  if (attemptNumber === 2) {
+    return runStructuredRequest({
+      client,
+      model: complexModel || defaultModel,
+      source,
+      analytics,
+      taskType: "retry_refined",
+      fallbackUsed: Boolean(complexModel && complexModel !== defaultModel),
+      fallbackReason: "retry_refined_prompt",
+    });
+  }
+
   const firstPass = await runStructuredRequest({
     client,
     model: defaultModel,
     source,
+    analytics,
     taskType: "default",
     fallbackUsed: false,
     fallbackReason: null,
   });
 
-  const complexModel = String(process.env.EXTRACTION_COMPLEX_MODEL || "").trim();
   if (!complexModel || complexModel === defaultModel || !shouldUseComplexFallback(source, firstPass.parsed)) {
     return firstPass;
   }
@@ -150,6 +186,7 @@ export async function callOpenAiStructuredExtraction(source: ExtractionResult): 
     client,
     model: complexModel,
     source,
+    analytics,
     taskType: "complex_extraction",
     fallbackUsed: true,
     fallbackReason: "low_confidence_or_no_strong_entity",

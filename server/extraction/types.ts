@@ -1,6 +1,7 @@
 export type SourcePlatform = "youtube" | "instagram" | "web";
 
 export type ExtractionMode = "quick" | "deep";
+export type ExtractionTriggerType = "initial" | "retry";
 
 export const EXTRACTION_STAGE_KEYS = ["basicMetadata", "caption", "transcript", "ocr", "visualFallback"] as const;
 export type ExtractionStageKey = (typeof EXTRACTION_STAGE_KEYS)[number];
@@ -123,6 +124,10 @@ export type ExtractionResult = {
   transcript: TranscriptResult | null;
   ocr: OcrResult | null;
   visualFallback?: VisualFallbackResult | null;
+  attemptInfo?: {
+    attemptNumber: number;
+    triggerType: ExtractionTriggerType;
+  };
   source: string;
   platform: SourcePlatform;
   canonicalUrl: string;

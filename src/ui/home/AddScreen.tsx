@@ -29,7 +29,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787
 const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
 const IS_DEV = import.meta.env.DEV;
 const ADD_INTELLIGENCE_TIMEOUT_MS = 120000;
-const MAX_PREVIEW_RETRIES = 3;
+const MAX_PREVIEW_RETRIES = 2;
 const ADD_ANALYTICS_ANONYMOUS_ID_KEY = "wr_add_analytics_anonymous_id_v1";
 const LEGACY_ADD_STORAGE_KEYS = [
   "wandreel_add_url",
@@ -711,7 +711,16 @@ export function AddScreen() {
       const extractionResponse = await fetch(`${API_BASE_URL}/api/metadata/extract`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url: normalizedSourceUrl, mode: "deep" }),
+        body: JSON.stringify({
+          url: normalizedSourceUrl,
+          mode: "deep",
+          analytics: {
+            clientRunId: String(runId),
+            anonymousId: getAnalyticsAnonymousId(),
+            attemptNumber: retryCount + 1,
+            triggerType: options?.isRetry ? "retry" : "initial",
+          },
+        }),
       });
       const extraction = (await extractionResponse.json()) as ExtractionApiResponse;
       if (!extractionResponse.ok || !extraction?.ok) throw new Error("extraction_failed");

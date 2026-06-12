@@ -1,5 +1,19 @@
 import type { ExtractedMetadata, ScreenshotAsset } from "./types";
-import { runPythonJsonScript } from "./pythonRunner";
+import { runPythonJsonScriptWithArgs } from "./pythonRunner";
+import fs from "node:fs/promises";
+
+export type ScreenshotSelectionMode = "anchors" | "scene_edges";
+export type FrameManifestItem = {
+  label: string;
+  timestampSec: number | null;
+  mimeType: string;
+  sizeBytes: number | null;
+  sourcePath: string | null;
+  originalWidth?: number | null;
+  originalHeight?: number | null;
+  resizedWidth?: number | null;
+  resizedHeight?: number | null;
+};
 
 function toDataUrl(mimeType: string, dataBase64: string): string {
   return `data:${mimeType};base64,${dataBase64}`;
@@ -23,7 +37,10 @@ function summarizeScreenshots(screenshots: ScreenshotAsset[]) {
   }));
 }
 
-export async function selectSourceScreenshotsDetailed(metadata: ExtractedMetadata): Promise<{
+export async function selectSourceScreenshotsDetailed(
+  metadata: ExtractedMetadata,
+  selectionMode: ScreenshotSelectionMode = "anchors",
+): Promise<{
   screenshots: ScreenshotAsset[];
   debug: Record<string, unknown>;
 }> {
@@ -34,10 +51,11 @@ export async function selectSourceScreenshotsDetailed(metadata: ExtractedMetadat
   };
 
   if (metadata.platform === "youtube" || metadata.platform === "instagram") {
-    const parsed = await runPythonJsonScript("fetch_video_frames.py", metadata.canonicalUrl, 180000);
+    const parsed = await runPythonJsonScriptWithArgs("fetch_video_frames.py", [metadata.canonicalUrl, selectionMode], 180000);
     const frames = Array.isArray(parsed?.frames) ? parsed.frames : [];
     frameDebug = {
       didRun: true,
+      selectionMode,
       ok: Boolean(parsed?.ok),
       error: parsed?.error || parsed?.errorCode || parsed?.status || null,
       count: typeof parsed?.count === "number" ? parsed.count : frames.length,
@@ -52,7 +70,8 @@ export async function selectSourceScreenshotsDetailed(metadata: ExtractedMetadat
       runtime: parsed?.debug?.runtime || null,
       rawError: parsed?.stderr || null,
     };
-    for (const frame of frames.slice(0, 4)) {
+    const maxVideoFrames = selectionMode === "scene_edges" ? 7 : 4;
+    for (const frame of frames.slice(0, maxVideoFrames)) {
       const mimeType = typeof frame?.mimeType === "string" && frame.mimeType.trim() ? frame.mimeType.trim() : "image/jpeg";
       const dataBase64 = typeof frame?.dataBase64 === "string" ? frame.dataBase64.trim() : "";
       if (!dataBase64) continue;
@@ -102,4 +121,77 @@ export async function selectSourceScreenshotsDetailed(metadata: ExtractedMetadat
 
 export async function selectSourceScreenshots(metadata: ExtractedMetadata): Promise<ScreenshotAsset[]> {
   return (await selectSourceScreenshotsDetailed(metadata)).screenshots;
+}
+
+export async function createFrameManifest(
+  metadata: ExtractedMetadata,
+  selectionMode: ScreenshotSelectionMode,
+): Promise<{
+  frames: FrameManifestItem[];
+  tempDir: string | null;
+  debug: Record<string, unknown>;
+}> {
+  if (metadata.platform !== "youtube" && metadata.platform !== "instagram") {
+    return {
+      frames: [],
+      tempDir: null,
+      debug: {
+        didRun: false,
+        selectionMode,
+        reason: "unsupported_platform",
+      },
+    };
+  }
+
+  const parsed = await runPythonJsonScriptWithArgs("fetch_video_frames.py", [metadata.canonicalUrl, selectionMode, "manifest"], 180000);
+  const frames = Array.isArray(parsed?.frames)
+    ? parsed.frames.map((frame: any) => ({
+        label: typeof frame?.label === "string" ? frame.label : "video_frame",
+        timestampSec: typeof frame?.timestampSec === "number" ? frame.timestampSec : null,
+        mimeType: typeof frame?.mimeType === "string" ? frame.mimeType : "image/jpeg",
+        sizeBytes: typeof frame?.sizeBytes === "number" ? frame.sizeBytes : null,
+        sourcePath: typeof frame?.sourcePath === "string" ? frame.sourcePath : null,
+        originalWidth: typeof frame?.originalWidth === "number" ? frame.originalWidth : null,
+        originalHeight: typeof frame?.originalHeight === "number" ? frame.originalHeight : null,
+        resizedWidth: typeof frame?.resizedWidth === "number" ? frame.resizedWidth : null,
+        resizedHeight: typeof frame?.resizedHeight === "number" ? frame.resizedHeight : null,
+      }))
+    : [];
+
+  return {
+    frames,
+    tempDir: typeof parsed?.debug?.frameExtraction?.tempDir === "string" ? parsed.debug.frameExtraction.tempDir : null,
+    debug: {
+      didRun: true,
+      selectionMode,
+      ok: Boolean(parsed?.ok),
+      error: parsed?.error || parsed?.errorCode || parsed?.status || null,
+      count: typeof parsed?.count === "number" ? parsed.count : frames.length,
+      durationSeconds: typeof parsed?.durationSeconds === "number" ? parsed.durationSeconds : null,
+      mediaUrlAvailable: Boolean(parsed?.debug?.media?.mediaUrlAvailable),
+      ffmpegAvailable: Boolean(parsed?.debug?.runtime?.resolvedFfmpegPath),
+      imageioFfmpegAvailable: Boolean(parsed?.debug?.runtime?.imageioFfmpeg?.ok),
+      ffmpegLocation: parsed?.ffmpegLocation || parsed?.debug?.runtime?.resolvedFfmpegPath || null,
+      timestamps: frames.map((frame: FrameManifestItem) => frame.timestampSec),
+      frameFilePaths: frames.map((frame: FrameManifestItem) => frame.sourcePath),
+      frameFileSizes: frames.map((frame: FrameManifestItem) => frame.sizeBytes),
+      runtime: parsed?.debug?.runtime || null,
+      rawError: parsed?.stderr || null,
+      tempDir: typeof parsed?.debug?.frameExtraction?.tempDir === "string" ? parsed.debug.frameExtraction.tempDir : null,
+    },
+  };
+}
+
+export async function loadScreenshotAssetFromManifest(frame: FrameManifestItem): Promise<ScreenshotAsset | null> {
+  if (!frame.sourcePath) return null;
+  const raw = await fs.readFile(frame.sourcePath);
+  const encoded = raw.toString("base64");
+  return {
+    url: `data:${frame.mimeType || "image/jpeg"};base64,${encoded}`,
+    origin: "video_frame",
+    label: frame.label || "video_frame",
+    timestampSec: frame.timestampSec ?? null,
+    sizeBytes: frame.sizeBytes ?? raw.byteLength,
+    sourcePath: frame.sourcePath,
+  };
 }

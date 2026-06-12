@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { assessVerificationCandidate, classifyQueryShape, isSemanticMismatch } from "../visualFallback";
+import { assessVerificationCandidate, classifyQueryShape, isSemanticMismatch, runVisualFallback, shouldTriggerVisualFallback } from "../visualFallback";
+import { getAttemptVisualFallbackPolicy } from "../pipeline";
 
 test("generic OCR sentence must not verify Digha Sonpur Setu", () => {
   const assessment = assessVerificationCandidate({
@@ -95,4 +96,83 @@ test("waterfall scene with unrelated bridge result is semantically downgraded", 
     ),
     true,
   );
+});
+
+test("attempt visual fallback policy keeps attempt 1 and retry 1 skipped", () => {
+  assert.deepEqual(getAttemptVisualFallbackPolicy(1), {
+    includeVisual: false,
+    decisionReason: "initial_attempt_only",
+  });
+  assert.deepEqual(getAttemptVisualFallbackPolicy(2), {
+    includeVisual: false,
+    decisionReason: "retry_1_skips_visual_fallback",
+  });
+});
+
+test("attempt 3 visual fallback policy enables final-attempt visual verification", () => {
+  assert.deepEqual(getAttemptVisualFallbackPolicy(3), {
+    includeVisual: true,
+    decisionReason: "retry_2_visual_default_final_attempt",
+  });
+  assert.equal(
+    shouldTriggerVisualFallback({
+      metadata: {
+        sourceUrl: "https://example.com/reel",
+        canonicalUrl: "https://example.com/reel",
+        platform: "instagram",
+        title: "Weekend cave drive",
+        description: "Bangalore weather plus weekend drives and places like this make the city worth it. Please keep it clean.",
+        siteName: "Instagram",
+        imageUrl: "https://example.com/cover.jpg",
+        fetchedAtIso: new Date().toISOString(),
+        provider: "instagram_script",
+      },
+      transcript: { attempted: true, used: false, source: null, text: "", reason: "timeout" },
+      ocr: {
+        attempted: true,
+        used: true,
+        text: "This man-made cave temple near Bangalore feels unreal inside\n1hr drive from Whitefield",
+        reason: null,
+      },
+      forceTrigger: true,
+    }),
+    true,
+  );
+});
+
+test("attempt 3 forced visual fallback does not stop on generic OCR when a frame is available", async () => {
+  const result = await runVisualFallback({
+    metadata: {
+      sourceUrl: "https://example.com/reel",
+      canonicalUrl: "https://example.com/reel",
+      platform: "instagram",
+      title: "Weekend cave drive",
+      description: "Bangalore weather plus weekend drives and places like this make the city worth it. Please keep it clean.",
+      siteName: "Instagram",
+      imageUrl: "https://example.com/cover.jpg",
+      fetchedAtIso: new Date().toISOString(),
+      provider: "instagram_script",
+    },
+    transcript: { attempted: true, used: false, source: null, text: "", reason: "timeout" },
+    ocr: {
+      attempted: true,
+      used: true,
+      text: "This man-made cave temple near Bangalore feels unreal inside\n1hr drive from Whitefield",
+      reason: null,
+    },
+    screenshots: [
+      {
+        url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9pS1m7QAAAAASUVORK5CYII=",
+        origin: "video_frame",
+        label: "frame_1",
+        timestampSec: 3.16,
+      },
+    ],
+    forceTrigger: true,
+    forceTriggerReason: "retry_2_visual_default_final_attempt",
+  });
+
+  assert.equal(result.attempted, true);
+  assert.equal(result.triggered, true);
+  assert.notEqual(result.reason, "sufficient_upstream_signal");
 });
