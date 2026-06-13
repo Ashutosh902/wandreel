@@ -2,6 +2,7 @@ import importlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 from typing import Any
 
@@ -171,7 +172,24 @@ def _module_check(module_name: str) -> dict[str, Any]:
         return {"ok": False, "error": str(err)}
 
 
+def _read_command_version(command: list[str]) -> dict[str, Any]:
+    try:
+        completed = subprocess.run(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            check=True,
+        )
+        output = (completed.stdout or completed.stderr or "").strip()
+        first_line = output.splitlines()[0].strip() if output else ""
+        return {"ok": True, "version": first_line or None}
+    except Exception as err:
+        return {"ok": False, "error": str(err)}
+
+
 def build_runtime_diagnostics(script_name: str, sys_path_additions: list[str]) -> dict[str, Any]:
+    resolved_ffmpeg_executable = get_ffmpeg_executable()
     return {
         "script": script_name,
         "pythonExecutable": sys.executable,
@@ -179,9 +197,11 @@ def build_runtime_diagnostics(script_name: str, sys_path_additions: list[str]) -
         "sysPathAdditions": sys_path_additions,
         "instaloader": _module_check("instaloader"),
         "ytDlp": _module_check("yt_dlp"),
+        "ytDlpVersion": _read_command_version([sys.executable, "-m", "yt_dlp", "--version"]),
         "imageioFfmpeg": _module_check("imageio_ffmpeg"),
-        "resolvedFfmpegExecutable": get_ffmpeg_executable(),
+        "resolvedFfmpegExecutable": resolved_ffmpeg_executable,
         "resolvedFfmpegPath": get_ffmpeg_location(),
+        "ffmpegVersion": _read_command_version([resolved_ffmpeg_executable, "-version"]) if resolved_ffmpeg_executable else {"ok": False, "error": "ffmpeg_not_found"},
     }
 
 

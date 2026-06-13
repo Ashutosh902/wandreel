@@ -27,6 +27,14 @@ const PROFILE_REQUIREMENTS: Record<RuntimeProfile, string> = {
   whisper: "requirements.whisper.txt",
 };
 
+const PROFILE_MODULE_CHECKS: Record<RuntimeProfile, string[]> = {
+  instagram: ["instaloader"],
+  youtube: ["yt_dlp", "youtube_transcript_api"],
+  media: ["yt_dlp", "imageio_ffmpeg"],
+  ocr: ["yt_dlp", "imageio_ffmpeg", "instaloader", "PIL", "pytesseract"],
+  whisper: ["yt_dlp", "imageio_ffmpeg", "faster_whisper"],
+};
+
 const bootstrapPromises = new Map<string, Promise<boolean>>();
 
 function parseJsonFromPythonStdout(raw: string): any | null {
@@ -60,12 +68,27 @@ function getRuntimePydepsPath(): string {
   return process.env.LAYER1_PYDEPS_PATH?.trim() || process.env.LAYER1_RUNTIME_PYDEPS_DIR?.trim() || DEFAULT_RUNTIME_PYDEPS_DIR;
 }
 
+export function getConfiguredRuntimePydepsPath(): string {
+  return getRuntimePydepsPath();
+}
+
 function buildPythonEnv(pydepsPath: string) {
   return {
     ...process.env,
     PYTHONUNBUFFERED: "1",
     LAYER1_PYDEPS_PATH: pydepsPath,
   };
+}
+
+function shortPreview(value: string | undefined, maxLines = 4): string | undefined {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return undefined;
+  return trimmed
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(0, maxLines)
+    .join("\n");
 }
 
 async function executePythonScript(scriptPath: string, args: string[], timeoutMs: number, pydepsPath: string): Promise<any | null> {
@@ -93,10 +116,22 @@ async function executePythonScript(scriptPath: string, args: string[], timeoutMs
       "stderr" in lastError && typeof (lastError as { stderr?: unknown }).stderr === "string"
         ? String((lastError as { stderr?: unknown }).stderr || "").trim()
         : "";
+    const exitCode =
+      "code" in lastError && (typeof (lastError as { code?: unknown }).code === "number" || typeof (lastError as { code?: unknown }).code === "string")
+        ? (lastError as { code?: number | string }).code ?? null
+        : null;
+    console.warn("[python-script-failed]", {
+      scriptPath,
+      exitCode,
+      stderrShortPreview: shortPreview(stderr),
+      error: String((lastError as { message?: unknown }).message || "python_runtime_failed"),
+    });
     return {
       ok: false,
       error: String((lastError as { message?: unknown }).message || "python_runtime_failed"),
+      exitCode,
       stderr: stderr || undefined,
+      stderrShortPreview: shortPreview(stderr),
     };
   }
   return null;
@@ -120,6 +155,10 @@ function shouldBootstrapRuntime(scriptName: string, result: any | null): result 
 }
 
 async function ensureRuntimeProfileInstalled(profile: RuntimeProfile, pydepsPath: string): Promise<boolean> {
+  if (await isRuntimeProfileAvailable(profile, pydepsPath)) {
+    return true;
+  }
+
   const requirementFile = path.resolve(import.meta.dirname, "requirements", PROFILE_REQUIREMENTS[profile]);
   const cacheKey = `${profile}:${pydepsPath}`;
   const existing = bootstrapPromises.get(cacheKey);
@@ -160,6 +199,50 @@ async function ensureRuntimeProfileInstalled(profile: RuntimeProfile, pydepsPath
   const ok = await promise;
   if (!ok) bootstrapPromises.delete(cacheKey);
   return ok;
+}
+
+async function isRuntimeProfileAvailable(profile: RuntimeProfile, pydepsPath: string): Promise<boolean> {
+  const modules = PROFILE_MODULE_CHECKS[profile] || [];
+  if (!modules.length) return false;
+
+  const probeScript = [
+    "import importlib.util, json, sys",
+    `sys.path.insert(0, r'''${pydepsPath.replace(/'/g, "''")}''')`,
+    `modules = ${JSON.stringify(modules)}`,
+    "missing = [name for name in modules if importlib.util.find_spec(name) is None]",
+    "print(json.dumps({'ok': len(missing) == 0, 'missing': missing}))",
+  ].join("; ");
+
+  const commands = ["python", "py"];
+  for (const cmd of commands) {
+    try {
+      const args = cmd === "py" ? ["-3", "-c", probeScript] : ["-c", probeScript];
+      const { stdout } = await execFileAsync(cmd, args, {
+        timeout: 15000,
+        env: buildPythonEnv(pydepsPath),
+        maxBuffer: 2 * 1024 * 1024,
+      });
+      const parsed = JSON.parse(String(stdout || "").trim() || "{}") as { ok?: boolean };
+      if (parsed.ok) return true;
+    } catch {
+      continue;
+    }
+  }
+
+  return false;
+}
+
+export async function ensurePythonRuntimeProfiles(
+  profiles: RuntimeProfile[],
+  pydepsPath = getRuntimePydepsPath(),
+): Promise<Array<{ profile: RuntimeProfile; installed: boolean }>> {
+  const uniqueProfiles = Array.from(new Set(profiles));
+  const results: Array<{ profile: RuntimeProfile; installed: boolean }> = [];
+  for (const profile of uniqueProfiles) {
+    const installed = await ensureRuntimeProfileInstalled(profile, pydepsPath);
+    results.push({ profile, installed });
+  }
+  return results;
 }
 
 export async function runPythonJsonScript(scriptName: string, url: string, timeoutMs = 45000): Promise<any | null> {

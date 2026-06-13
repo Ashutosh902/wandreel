@@ -65,13 +65,19 @@ These commands fail fast when env, DNS, HTTP reachability, or CORS checks are no
 Production extraction for both YouTube and Instagram depends on Python-side media helpers that are not provided by a plain Node host.
 
 - `server/extraction/pythonRunner.ts` now bootstraps Python packages on demand into a writable runtime directory.
+- `npm run start:render` now prewarms the `instagram` and `media` runtime profiles during API startup, then logs a single extraction runtime health record before the server begins accepting traffic.
 - Bootstrap is script-specific so YouTube and Instagram only install the packages they need:
   - Instagram metadata: `instaloader`, `requests`
   - YouTube metadata/transcript: `yt-dlp`, `youtube-transcript-api`
   - Shared frame extraction: `yt-dlp`, `imageio-ffmpeg`
   - Whisper paths: `faster-whisper` on top of shared media packages
   - OCR fallback: shared media + Instagram helpers + Pillow/pytesseract
-- `imageio-ffmpeg` is used as the production FFmpeg fallback when system FFmpeg is not present.
+- `imageio-ffmpeg` is used as the production FFmpeg fallback when system FFmpeg is not present. Startup creates a temporary `ffmpeg` shim on `PATH` so `ffmpeg -version` succeeds even when the executable originates from the Python package rather than the base image.
+
+Recommended Render backend commands:
+
+- Build Command: `npm ci`
+- Start Command: `npm run start:render`
 
 Recommended Render backend env:
 
@@ -90,6 +96,12 @@ Validation steps after deploy:
 - `POST /api/metadata/extract` with a YouTube URL and confirm `platform: "youtube"` plus non-empty transcript or frame-debug runtime info.
 - `POST /api/metadata/extract` with an Instagram URL and confirm `videoFrameCount > 0` in debug output when the reel is frame-extractable.
 - `python server/extraction/scripts/check_runtime_health.py` or `npm run extract:runtime:check` on the host to verify `instaloader`, `yt_dlp`, and `imageio_ffmpeg` resolve correctly.
+- Check Render logs for `[extraction-runtime-startup]` and confirm:
+  - `ytDlpAvailable: true`
+  - `ytDlpVersion` is populated
+  - `ffmpegAvailable: true`
+  - `ffmpegVersion` is populated
+  - `ffmpegCommandAvailable: true`
 
 ## Non-goals (for this phase)
 
