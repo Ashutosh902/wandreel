@@ -491,8 +491,18 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
   }, 12000);
 
   const sendProgress = (payload: ExtractionProgressEvent) => {
-    console.info(`[sse] progress callback received ${payload.stage}`, { label: "metadata_extract_stream" });
-    writeProgressEvent(payload.stage, payload);
+    queueMicrotask(() => {
+      try {
+        console.info(`[sse] progress callback received ${payload.stage}`, { label: "metadata_extract_stream" });
+        writeProgressEvent(payload.stage, payload);
+      } catch (progressError) {
+        console.error("[sse] progress callback forward failed", {
+          label: "metadata_extract_stream",
+          stage: payload.stage,
+          error: progressError instanceof Error ? progressError.message : String(progressError),
+        });
+      }
+    });
   };
 
   try {
@@ -513,17 +523,6 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
       triggerType,
       onProgress: sendProgress,
     });
-    const attemptRecord = await createAnalyticsAttemptFromRequest(req, result);
-    if (attemptRecord?.attemptId) {
-      try {
-        await persistReelAnalyticsAttemptArtifacts({
-          attemptId: attemptRecord.attemptId,
-          extractionResult: result,
-        });
-      } catch (artifactError) {
-        console.error("persist extraction attempt artifacts failed", artifactError);
-      }
-    }
     for (const event of inferStreamProgressFromResult(result)) {
       if (seenStages.has(event.stage)) continue;
       writeProgressEvent(event.stage, {
@@ -544,6 +543,19 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
       result: { ok: true, ...result },
     });
     sse.end();
+    void (async () => {
+      const attemptRecord = await createAnalyticsAttemptFromRequest(req, result);
+      if (attemptRecord?.attemptId) {
+        try {
+          await persistReelAnalyticsAttemptArtifacts({
+            attemptId: attemptRecord.attemptId,
+            extractionResult: result,
+          });
+        } catch (artifactError) {
+          console.error("persist extraction attempt artifacts failed", artifactError);
+        }
+      }
+    })();
   } catch (error) {
     clearHeartbeat();
     const message = error instanceof Error ? error.message : "extraction failed";
