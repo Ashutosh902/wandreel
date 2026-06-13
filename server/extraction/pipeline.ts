@@ -19,7 +19,7 @@ import type {
   TranscriptResult,
   VisualFallbackResult,
 } from "./types";
-import { canonicalizeUrl } from "./url";
+import { canonicalizeUrl, detectSourcePlatform } from "./url";
 import { recordSla } from "../metrics/slaTracker";
 import { getAttemptHypothesisSummary } from "../attemptHypothesisStore";
 import fs from "node:fs/promises";
@@ -57,6 +57,14 @@ type LlmConfidenceProbe = {
   confidence: "high" | "medium" | "low";
   status: string | null;
   entityCount: number;
+};
+
+type ProbeFailureContext = {
+  stage: "description" | "transcript";
+  mode: ExtractionMode;
+  attemptNumber: number;
+  triggerType: ExtractionTriggerType;
+  metadata: ExtractionResult["metadata"];
 };
 
 type AttemptVisualFallbackPolicy = {
@@ -252,6 +260,48 @@ async function probeLlmConfidence(input: {
   };
 }
 
+function isOpenAiConnectionProbeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /connection error/i.test(message);
+}
+
+function buildProbeFailureReason(context: ProbeFailureContext, error: unknown): string {
+  if (isOpenAiConnectionProbeError(error)) {
+    return `${context.stage}_probe_failed_openai_connection`;
+  }
+  return `${context.stage}_probe_failed`;
+}
+
+async function safeProbeLlmConfidence(
+  input: {
+    metadata: ExtractionResult["metadata"];
+    mode: ExtractionMode;
+    attemptNumber: number;
+    triggerType: ExtractionTriggerType;
+    transcript?: TranscriptResult | null;
+    ocr?: OcrResult | null;
+  },
+  context: ProbeFailureContext,
+): Promise<{ probe: LlmConfidenceProbe | null; failureReason: string | null }> {
+  try {
+    const probe = await probeLlmConfidence(input);
+    return { probe, failureReason: null };
+  } catch (error) {
+    const failureReason = buildProbeFailureReason(context, error);
+    console.error("[extraction-probe-failed]", {
+      stage: context.stage,
+      reason: failureReason,
+      error: error instanceof Error ? error.message : String(error || "unknown_error"),
+      url: context.metadata.canonicalUrl || context.metadata.sourceUrl,
+      platform: context.metadata.platform,
+      mode: context.mode,
+      attemptNumber: context.attemptNumber,
+      triggerType: context.triggerType,
+    });
+    return { probe: null, failureReason };
+  }
+}
+
 function buildExtractionDebug(input: {
   metadata: ExtractionResult["metadata"];
   metadataFailureReason: string | null;
@@ -263,12 +313,16 @@ function buildExtractionDebug(input: {
   priorAttemptHypotheses?: unknown[] | null;
 }): Record<string, unknown> {
   const selectedCandidate = input.visualFallback?.selectedCandidate || null;
+  const platformDetectionResult = detectSourcePlatform(input.metadata.canonicalUrl);
+  const instagramUrlDetectionResult = input.metadata.canonicalUrl.toLowerCase().includes("instagram.com");
   return {
     orchestration: input.orchestration || null,
     mediaIngestion: {
       platform: input.metadata.platform,
       canonicalUrl: input.metadata.canonicalUrl,
       metadataProvider: input.metadata.provider,
+      platformDetectionResult,
+      instagramUrlDetectionResult,
       mediaUrlAvailable: Boolean((input.screenshotsDebug?.mediaIngestion as any)?.mediaUrlAvailable),
       thumbnailImageUrlAvailable: Boolean(input.metadata.imageUrl),
       metadataFailureReason: input.metadataFailureReason,
@@ -332,33 +386,26 @@ function buildExtractionDebug(input: {
 async function readMetadata(inputUrl: string) {
   let metadataFailureReason: string | null = null;
   const metadataStartedAt = nowMs();
+  const canonicalUrl = canonicalizeUrl(inputUrl);
+  const detectedPlatform = detectSourcePlatform(canonicalUrl);
+  const fallbackMetadata = {
+    sourceUrl: inputUrl,
+    canonicalUrl,
+    platform: detectedPlatform,
+    title: "Untitled",
+    description: "",
+    siteName: null,
+    imageUrl: null,
+    fetchedAtIso: new Date().toISOString(),
+    provider: "fallback" as const,
+  };
   const metadata = await withBudget(
     extractMetadata(inputUrl),
     getNumberEnv("EXTRACTION_METADATA_BUDGET_MS", DEFAULT_METADATA_BUDGET_MS),
-    () => ({
-      sourceUrl: inputUrl,
-      canonicalUrl: canonicalizeUrl(inputUrl),
-      platform: "web" as const,
-      title: "Untitled",
-      description: "",
-      siteName: null,
-      imageUrl: null,
-      fetchedAtIso: new Date().toISOString(),
-      provider: "html" as const,
-    }),
+    () => fallbackMetadata,
   ).catch((error: unknown) => {
     metadataFailureReason = error instanceof Error ? error.message : "metadata_failed";
-    return {
-      sourceUrl: inputUrl,
-      canonicalUrl: canonicalizeUrl(inputUrl),
-      platform: "web" as const,
-      title: "Untitled",
-      description: "",
-      siteName: null,
-      imageUrl: null,
-      fetchedAtIso: new Date().toISOString(),
-      provider: "html" as const,
-    };
+    return fallbackMetadata;
   });
   return { metadata, metadataFailureReason, metadataMs: nowMs() - metadataStartedAt };
 }
@@ -914,13 +961,25 @@ export async function runExtractionPipeline(input: {
 
   const descriptionWeak = isWeakDescription(metadata);
   let descriptionProbe: LlmConfidenceProbe | null = null;
+  let descriptionProbeFailureReason: string | null = null;
   if (attemptNumber === 1 && !descriptionWeak) {
-    descriptionProbe = await probeLlmConfidence({
-      metadata,
-      mode: input.mode,
-      attemptNumber,
-      triggerType,
-    });
+    const descriptionProbeResult = await safeProbeLlmConfidence(
+      {
+        metadata,
+        mode: input.mode,
+        attemptNumber,
+        triggerType,
+      },
+      {
+        stage: "description",
+        metadata,
+        mode: input.mode,
+        attemptNumber,
+        triggerType,
+      },
+    );
+    descriptionProbe = descriptionProbeResult.probe;
+    descriptionProbeFailureReason = descriptionProbeResult.failureReason;
   }
   const shouldRunTranscript = attemptNumber >= 2 || descriptionWeak;
   let transcript: TranscriptResult = {
@@ -994,11 +1053,12 @@ export async function runExtractionPipeline(input: {
   pushDecision(
     orchestration,
     "description",
-    true,
+    !descriptionProbeFailureReason,
     attemptNumber === 1
-      ? descriptionWeak
+      ? descriptionProbeFailureReason ||
+        (descriptionWeak
         ? "missing_or_weak_description"
-        : `description_llm_${descriptionProbe?.confidence || "low"}`
+        : `description_llm_${descriptionProbe?.confidence || "low"}`)
       : "retry_forced_reanalysis",
   );
 
@@ -1134,21 +1194,32 @@ export async function runExtractionPipeline(input: {
     const transcriptRead = await readTranscript(metadata);
     transcript = transcriptRead.transcript;
     transcriptMs = transcriptRead.transcriptMs;
-    const transcriptProbe = await probeLlmConfidence({
-      metadata,
-      mode: input.mode,
-      attemptNumber,
-      triggerType,
-      transcript,
-    });
+    const transcriptProbeResult = await safeProbeLlmConfidence(
+      {
+        metadata,
+        mode: input.mode,
+        attemptNumber,
+        triggerType,
+        transcript,
+      },
+      {
+        stage: "transcript",
+        metadata,
+        mode: input.mode,
+        attemptNumber,
+        triggerType,
+      },
+    );
+    const transcriptProbe = transcriptProbeResult.probe;
+    const transcriptProbeFailureReason = transcriptProbeResult.failureReason;
     pushDecision(
       orchestration,
       "transcript",
-      true,
-      `transcript_probe_${transcriptProbe.confidence}`,
+      !transcriptProbeFailureReason,
+      transcriptProbeFailureReason || `transcript_probe_${transcriptProbe?.confidence || "low"}`,
     );
 
-    if (transcriptProbe.accepted) {
+    if (transcriptProbe?.accepted) {
       pushDecision(orchestration, "ocr", false, "transcript_confidence_sufficient");
       pushDecision(orchestration, "visualFallback", false, "initial_attempt_only");
       finalizeTrace(orchestration, "transcript");

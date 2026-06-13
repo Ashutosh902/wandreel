@@ -2,6 +2,27 @@ import type { ExtractedMetadata } from "./types";
 import { runPythonJsonScript } from "./pythonRunner";
 import { assertSafeHost, canonicalizeUrl, detectSourcePlatform } from "./url";
 
+function isInstagramUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname.toLowerCase().includes("instagram.com");
+  } catch {
+    return false;
+  }
+}
+
+function formatErrorReason(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  return String(error || "unknown_error");
+}
+
+function logMetadataDiagnostics(event: string, details: Record<string, unknown>) {
+  console.info("[metadata-extraction]", {
+    event,
+    ...details,
+  });
+}
+
 function pickMeta(html: string, key: string, attr: "property" | "name" = "property"): string {
   const escapedKey = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const re = new RegExp(`<meta[^>]*${attr}=["']${escapedKey}["'][^>]*content=["']([^"']*)["'][^>]*>`, "i");
@@ -105,31 +126,69 @@ export async function extractMetadata(sourceUrl: string): Promise<ExtractedMetad
   const canonicalUrl = canonicalizeUrl(sourceUrl);
   assertSafeHost(canonicalUrl);
   const platform = detectSourcePlatform(canonicalUrl);
+  const instagramUrlDetectionResult = isInstagramUrl(canonicalUrl);
+  const failureReasons: string[] = [];
+
+  logMetadataDiagnostics("start", {
+    canonicalUrl,
+    platformDetectionResult: platform,
+    instagramUrlDetectionResult,
+  });
 
   if (platform === "instagram") {
     const rememberedHighQuality = lastHighQualityInstagramMetadataByCanonicalUrl.get(canonicalUrl);
+    let scriptMetaRetry: ExtractedMetadata | null = null;
     try {
       const scriptMeta = await extractViaPlatformScript("instagram", canonicalUrl, sourceUrl);
       if (!isLowSignalInstagramMetadata(scriptMeta)) {
         lastHighQualityInstagramMetadataByCanonicalUrl.set(canonicalUrl, cloneMetadata(scriptMeta));
+        logMetadataDiagnostics("success", {
+          canonicalUrl,
+          platformDetectionResult: platform,
+          instagramUrlDetectionResult,
+          metadataProvider: scriptMeta.provider,
+          metadataFailureReason: null,
+        });
         return scriptMeta;
       }
 
       // Retry script once for transient Instagram responses.
-      const scriptMetaRetry = await extractViaPlatformScript("instagram", canonicalUrl, sourceUrl);
+      scriptMetaRetry = await extractViaPlatformScript("instagram", canonicalUrl, sourceUrl);
       if (!isLowSignalInstagramMetadata(scriptMetaRetry)) {
         lastHighQualityInstagramMetadataByCanonicalUrl.set(canonicalUrl, cloneMetadata(scriptMetaRetry));
+        logMetadataDiagnostics("success", {
+          canonicalUrl,
+          platformDetectionResult: platform,
+          instagramUrlDetectionResult,
+          metadataProvider: scriptMetaRetry.provider,
+          metadataFailureReason: null,
+        });
         return scriptMetaRetry;
       }
 
       const htmlMeta = await extractViaHtml(canonicalUrl, sourceUrl);
       if (!isLowSignalInstagramMetadata(htmlMeta)) {
         lastHighQualityInstagramMetadataByCanonicalUrl.set(canonicalUrl, cloneMetadata(htmlMeta));
+        logMetadataDiagnostics("success", {
+          canonicalUrl,
+          platformDetectionResult: platform,
+          instagramUrlDetectionResult,
+          metadataProvider: htmlMeta.provider,
+          metadataFailureReason: null,
+        });
         return htmlMeta;
       }
 
       // Prevent generic Instagram metadata from replacing previously good extraction.
       if (rememberedHighQuality) {
+        logMetadataDiagnostics("success", {
+          canonicalUrl,
+          platformDetectionResult: platform,
+          instagramUrlDetectionResult,
+          metadataProvider: rememberedHighQuality.provider,
+          metadataFailureReason: null,
+          reusedRememberedMetadata: true,
+        });
         return {
           ...cloneMetadata(rememberedHighQuality),
           sourceUrl,
@@ -137,22 +196,82 @@ export async function extractMetadata(sourceUrl: string): Promise<ExtractedMetad
         };
       }
 
+      logMetadataDiagnostics("success", {
+        canonicalUrl,
+        platformDetectionResult: platform,
+        instagramUrlDetectionResult,
+        metadataProvider: scriptMetaRetry.provider,
+        metadataFailureReason: "instagram_low_signal_metadata",
+      });
       return scriptMetaRetry;
-    } catch {
-      // Fallback handled below.
+    } catch (error) {
+      const metadataFailureReason = formatErrorReason(error);
+      failureReasons.push(`instagram_provider:${metadataFailureReason}`);
+      logMetadataDiagnostics("provider_failed", {
+        canonicalUrl,
+        platformDetectionResult: platform,
+        instagramUrlDetectionResult,
+        metadataProvider: "instagram_script",
+        metadataFailureReason,
+      });
     }
   }
 
   if (platform === "youtube") {
     try {
-      return await Promise.any([
+      const metadata = await Promise.any([
         extractViaPlatformScript("youtube", canonicalUrl, sourceUrl),
         extractViaHtml(canonicalUrl, sourceUrl),
       ]);
-    } catch {
-      // Fallback handled below.
+      logMetadataDiagnostics("success", {
+        canonicalUrl,
+        platformDetectionResult: platform,
+        instagramUrlDetectionResult,
+        metadataProvider: metadata.provider,
+        metadataFailureReason: null,
+      });
+      return metadata;
+    } catch (error) {
+      const metadataFailureReason = formatErrorReason(error);
+      failureReasons.push(`youtube_provider:${metadataFailureReason}`);
+      logMetadataDiagnostics("provider_failed", {
+        canonicalUrl,
+        platformDetectionResult: platform,
+        instagramUrlDetectionResult,
+        metadataProvider: "youtube_script_or_html",
+        metadataFailureReason,
+      });
     }
   }
 
-  return extractViaHtml(canonicalUrl, sourceUrl);
+  try {
+    const metadata = await extractViaHtml(canonicalUrl, sourceUrl);
+    logMetadataDiagnostics("success", {
+      canonicalUrl,
+      platformDetectionResult: platform,
+      instagramUrlDetectionResult,
+      metadataProvider: metadata.provider,
+      metadataFailureReason: null,
+    });
+    return metadata;
+  } catch (error) {
+    const metadataFailureReason = formatErrorReason(error);
+    failureReasons.push(`html_fallback:${metadataFailureReason}`);
+    logMetadataDiagnostics("failed", {
+      canonicalUrl,
+      platformDetectionResult: platform,
+      instagramUrlDetectionResult,
+      metadataProvider: "html",
+      metadataFailureReason,
+    });
+    throw new Error(
+      [
+        `metadata_extraction_failed`,
+        `canonicalUrl=${canonicalUrl}`,
+        `platformDetectionResult=${platform}`,
+        `instagramUrlDetectionResult=${instagramUrlDetectionResult}`,
+        ...failureReasons,
+      ].join(" | "),
+    );
+  }
 }

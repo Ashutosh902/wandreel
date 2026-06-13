@@ -2,6 +2,14 @@ import type { ExtractedMetadata, ScreenshotAsset } from "./types";
 import { runPythonJsonScriptWithArgs } from "./pythonRunner";
 import fs from "node:fs/promises";
 
+function isInstagramUrl(url: string): boolean {
+  try {
+    return new URL(url).hostname.toLowerCase().includes("instagram.com");
+  } catch {
+    return false;
+  }
+}
+
 export type ScreenshotSelectionMode = "anchors" | "scene_edges";
 export type FrameManifestItem = {
   label: string;
@@ -57,10 +65,18 @@ export async function selectSourceScreenshotsDetailed(
       didRun: true,
       selectionMode,
       ok: Boolean(parsed?.ok),
+      reason:
+        parsed?.debug?.frameExtraction?.reason ||
+        parsed?.error ||
+        parsed?.errorCode ||
+        parsed?.status ||
+        (frames.length ? "frames_extracted" : "no_frames_returned"),
       error: parsed?.error || parsed?.errorCode || parsed?.status || null,
       count: typeof parsed?.count === "number" ? parsed.count : frames.length,
       durationSeconds: typeof parsed?.durationSeconds === "number" ? parsed.durationSeconds : null,
       mediaUrlAvailable: Boolean(parsed?.debug?.media?.mediaUrlAvailable),
+      ytDlpExitCode: parsed?.debug?.ytDlp?.exitCode ?? null,
+      ytDlpStderrShortPreview: parsed?.debug?.ytDlp?.stderrShortPreview ?? null,
       ffmpegAvailable: Boolean(parsed?.debug?.runtime?.resolvedFfmpegPath),
       imageioFfmpegAvailable: Boolean(parsed?.debug?.runtime?.imageioFfmpeg?.ok),
       ffmpegLocation: parsed?.ffmpegLocation || parsed?.debug?.runtime?.resolvedFfmpegPath || null,
@@ -105,6 +121,8 @@ export async function selectSourceScreenshotsDetailed(
         platform: metadata.platform,
         canonicalUrl: metadata.canonicalUrl,
         metadataProvider: metadata.provider,
+        platformDetectionResult: metadata.platform,
+        instagramUrlDetectionResult: isInstagramUrl(metadata.canonicalUrl),
         mediaUrlAvailable: Boolean((frameDebug as any).mediaUrlAvailable),
         thumbnailImageUrlAvailable: Boolean(imageUrl),
       },
@@ -165,10 +183,18 @@ export async function createFrameManifest(
       didRun: true,
       selectionMode,
       ok: Boolean(parsed?.ok),
+      reason:
+        parsed?.debug?.frameExtraction?.reason ||
+        parsed?.error ||
+        parsed?.errorCode ||
+        parsed?.status ||
+        (frames.length ? "frames_extracted" : "no_frames_returned"),
       error: parsed?.error || parsed?.errorCode || parsed?.status || null,
       count: typeof parsed?.count === "number" ? parsed.count : frames.length,
       durationSeconds: typeof parsed?.durationSeconds === "number" ? parsed.durationSeconds : null,
       mediaUrlAvailable: Boolean(parsed?.debug?.media?.mediaUrlAvailable),
+      ytDlpExitCode: parsed?.debug?.ytDlp?.exitCode ?? null,
+      ytDlpStderrShortPreview: parsed?.debug?.ytDlp?.stderrShortPreview ?? null,
       ffmpegAvailable: Boolean(parsed?.debug?.runtime?.resolvedFfmpegPath),
       imageioFfmpegAvailable: Boolean(parsed?.debug?.runtime?.imageioFfmpeg?.ok),
       ffmpegLocation: parsed?.ffmpegLocation || parsed?.debug?.runtime?.resolvedFfmpegPath || null,

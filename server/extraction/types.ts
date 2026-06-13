@@ -24,7 +24,7 @@ export type ExtractedMetadata = {
   siteName: string | null;
   imageUrl: string | null;
   fetchedAtIso: string;
-  provider: "html" | "youtube_script" | "instagram_script";
+  provider: "html" | "youtube_script" | "instagram_script" | "fallback";
 };
 
 export type TranscriptResult = {

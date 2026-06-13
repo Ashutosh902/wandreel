@@ -17,6 +17,31 @@ from runtime_support import (
 )
 
 
+def short_preview(lines: list[str], max_lines: int = 4, max_chars: int = 600) -> str | None:
+    cleaned = [str(line).strip() for line in lines if str(line).strip()]
+    if not cleaned:
+        return None
+    preview = "\n".join(cleaned[:max_lines])
+    return preview[:max_chars]
+
+
+class YtDlpLogger:
+    def __init__(self) -> None:
+        self.messages: list[str] = []
+
+    def debug(self, msg: str) -> None:
+        if msg:
+            self.messages.append(str(msg))
+
+    def warning(self, msg: str) -> None:
+        if msg:
+            self.messages.append(f"WARNING: {msg}")
+
+    def error(self, msg: str) -> None:
+        if msg:
+            self.messages.append(f"ERROR: {msg}")
+
+
 def sanitize_media_id(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]", "", value or "")[:80]
 
@@ -176,14 +201,21 @@ def main() -> int:
         "outtmpl": out_tmpl,
         "ffmpeg_location": ffmpeg_exe,
     }
+    yt_dlp_logger = YtDlpLogger()
+    ydl_opts["logger"] = yt_dlp_logger
 
     video_path = ""
     extracted_paths: list[str] = []
     frame_debug: list[dict] = []
     media_debug: dict = {"mediaUrlAvailable": False, "durationSeconds": None}
+    yt_dlp_debug: dict = {"exitCode": None, "stderrShortPreview": None}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(source_url, download=True)
+        yt_dlp_debug = {
+            "exitCode": 0,
+            "stderrShortPreview": short_preview(yt_dlp_logger.messages),
+        }
         duration = float(info.get("duration") or 0)
         media_debug = {
             "mediaUrlAvailable": bool(info.get("url") or info.get("requested_downloads")),
@@ -204,7 +236,12 @@ def main() -> int:
                         "ok": False,
                         "error": "DURATION_TOO_LONG",
                         "duration_seconds": duration,
-                        "debug": {"runtime": runtime_debug, "media": media_debug},
+                        "debug": {
+                            "runtime": runtime_debug,
+                            "media": media_debug,
+                            "ytDlp": yt_dlp_debug,
+                            "frameExtraction": {"reason": "duration_too_long"},
+                        },
                     }
                 )
             )
@@ -222,7 +259,13 @@ def main() -> int:
                     {
                         "ok": False,
                         "error": "VIDEO_NOT_FOUND",
-                        "debug": {"runtime": runtime_debug, "media": media_debug, "tempDir": temp_dir},
+                        "debug": {
+                            "runtime": runtime_debug,
+                            "media": media_debug,
+                            "ytDlp": yt_dlp_debug,
+                            "tempDir": temp_dir,
+                            "frameExtraction": {"reason": "video_not_found", "tempDir": temp_dir},
+                        },
                     }
                 )
             )
@@ -298,7 +341,9 @@ def main() -> int:
                     "debug": {
                         "runtime": runtime_debug,
                         "media": media_debug,
+                        "ytDlp": yt_dlp_debug,
                         "frameExtraction": {
+                            "reason": "frames_extracted",
                             "videoPath": video_path,
                             "videoSizeBytes": os.path.getsize(video_path) if video_path and os.path.exists(video_path) else None,
                             "frameFilePaths": [item["path"] for item in frame_debug],
@@ -315,6 +360,10 @@ def main() -> int:
         )
         return 0
     except Exception as err:
+        yt_dlp_debug = {
+            "exitCode": yt_dlp_debug.get("exitCode") if isinstance(yt_dlp_debug, dict) and yt_dlp_debug.get("exitCode") is not None else 1,
+            "stderrShortPreview": short_preview(yt_dlp_logger.messages + [str(err)]),
+        }
         print(
             json.dumps(
                 {
@@ -323,7 +372,9 @@ def main() -> int:
                     "debug": {
                         "runtime": runtime_debug,
                         "media": media_debug,
+                        "ytDlp": yt_dlp_debug,
                         "frameExtraction": {
+                            "reason": "frame_extraction_failed",
                             "videoPath": video_path or None,
                             "frameFilePaths": [item["path"] for item in frame_debug],
                             "frameFileSizes": [item["sizeBytes"] for item in frame_debug],

@@ -277,19 +277,20 @@ app.get("/api/location/resolve-place", async (req, res) => {
 });
 
 app.post("/api/metadata/extract", async (req, res) => {
+  const url = String(req.body?.url || "").trim();
+  const modeRaw = String(req.body?.mode || "quick").trim().toLowerCase();
+  const mode: ExtractionMode = modeRaw === "deep" ? "deep" : "quick";
+  const analyticsPayload = req.body?.analytics && typeof req.body.analytics === "object" ? req.body.analytics : null;
+  const debugRaw = String(req.body?.debug ?? req.query?.debug ?? "").trim().toLowerCase();
+  const debug =
+    debugRaw === "1" ||
+    debugRaw === "true" ||
+    debugRaw === "yes" ||
+    /[?&](debug|fresh)=frame-debug/i.test(url) ||
+    /[?&]fresh=[^&]*frame-debug/i.test(url);
+  const attemptNumber = Number(analyticsPayload?.attemptNumber) || 1;
+  const triggerType = analyticsPayload?.triggerType === "retry" ? "retry" : "initial";
   try {
-    const url = String(req.body?.url || "").trim();
-    const modeRaw = String(req.body?.mode || "quick").trim().toLowerCase();
-    const mode: ExtractionMode = modeRaw === "deep" ? "deep" : "quick";
-    const analyticsPayload = req.body?.analytics && typeof req.body.analytics === "object" ? req.body.analytics : null;
-    const debugRaw = String(req.body?.debug ?? req.query?.debug ?? "").trim().toLowerCase();
-    const debug =
-      debugRaw === "1" ||
-      debugRaw === "true" ||
-      debugRaw === "yes" ||
-      /[?&](debug|fresh)=frame-debug/i.test(url) ||
-      /[?&]fresh=[^&]*frame-debug/i.test(url);
-
     if (!url) {
       return res.status(400).json({ ok: false, error: "url is required" });
     }
@@ -298,8 +299,8 @@ app.post("/api/metadata/extract", async (req, res) => {
       url,
       mode,
       debug,
-      attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
-      triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
+      attemptNumber,
+      triggerType,
     });
     const attemptRecord = await createAnalyticsAttemptFromRequest(req, result);
     if (attemptRecord?.attemptId) {
@@ -319,7 +320,28 @@ app.post("/api/metadata/extract", async (req, res) => {
     return res.json({ ok: true, ...legacy });
   } catch (error) {
     const message = error instanceof Error ? error.message : "extraction failed";
-    return res.status(500).json({ ok: false, error: message });
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    const stackPreview =
+      debug || process.env.NODE_ENV !== "production"
+        ? String(error instanceof Error ? error.stack || "" : "")
+            .split(/\r?\n/)
+            .slice(0, 5)
+        : undefined;
+    const diagnostics = {
+      error: message,
+      errorName,
+      stackPreview,
+      url,
+      mode,
+      attemptNumber,
+      triggerType,
+      debug,
+    };
+    console.error("[metadata-extract-error]", diagnostics);
+    return res.status(500).json({
+      ok: false,
+      ...diagnostics,
+    });
   }
 });
 

@@ -1,6 +1,14 @@
 import type { ExtractedMetadata, TranscriptResult } from "./types";
 import { runPythonJsonScript } from "./pythonRunner";
 
+function isInstagramUrl(url: string): boolean {
+  try {
+    return new URL(url).hostname.toLowerCase().includes("instagram.com");
+  } catch {
+    return false;
+  }
+}
+
 function coerceTranscriptReason(result: any, fallback: string): string {
   const stderr = typeof result?.stderr === "string" ? result.stderr.trim() : "";
   if (typeof result?.error === "string" && /Command failed:/i.test(result.error)) {
@@ -15,6 +23,13 @@ function coerceTranscriptReason(result: any, fallback: string): string {
 
 export async function enrichWithTranscript(metadata: ExtractedMetadata): Promise<TranscriptResult> {
   if (metadata.platform !== "youtube" && metadata.platform !== "instagram") {
+    console.info("[transcript-extraction]", {
+      event: "unsupported_platform",
+      canonicalUrl: metadata.canonicalUrl,
+      platformDetectionResult: metadata.platform,
+      instagramUrlDetectionResult: isInstagramUrl(metadata.canonicalUrl),
+      metadataProvider: metadata.provider,
+    });
     return { attempted: false, used: false, source: null, text: "", reason: "unsupported_platform" };
   }
 
