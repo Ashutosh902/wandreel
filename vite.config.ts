@@ -12,7 +12,9 @@ export default defineConfig({
     registerType: 'autoUpdate',
     includeAssets: ['favicon.svg'],
     injectManifest: {
-      globPatterns: ['**/*.{js,css,html,svg,png,webmanifest}'],
+      // Avoid precaching the HTML shell so clients always revalidate index.html
+      // and pick up the latest hashed asset references after deploys.
+      globPatterns: ['**/*.{js,css,svg,png,webmanifest}'],
       maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
     },
     manifest: {
