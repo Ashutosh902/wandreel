@@ -1,6 +1,6 @@
 import "dotenv/config";
 import express from "express";
-import { extractionJobStore, runExtractionPipeline, type ExtractionMode, type ExtractionProgressEvent } from "./extraction";
+import { extractionJobStore, runExtractionPipeline, type ExtractionMode } from "./extraction";
 import { intelligenceJobStore, runIntelligencePipeline, type IntelligenceMode } from "./intelligence";
 import { buildDraftIntelligenceOutput } from "./intelligence/draft";
 import { phoneOtpStore } from "./auth/phoneOtpStore";
@@ -490,23 +490,14 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
     });
   }, 12000);
 
-  const sendProgress = (payload: ExtractionProgressEvent) => {
-    queueMicrotask(() => {
-      try {
-        console.info(`[sse] progress callback received ${payload.stage}`, { label: "metadata_extract_stream" });
-        writeProgressEvent(payload.stage, payload);
-      } catch (progressError) {
-        console.error("[sse] progress callback forward failed", {
-          label: "metadata_extract_stream",
-          stage: payload.stage,
-          error: progressError instanceof Error ? progressError.message : String(progressError),
-        });
-      }
-    });
-  };
-
   try {
     console.info("[sse] before runExtractionPipeline", { label: "metadata_extract_stream", url, mode, attemptNumber, triggerType });
+    writeProgressEvent("started", {
+      stage: "started",
+      message: "Extraction started.",
+      elapsedMs: getElapsedMs(startedAt),
+      attemptNumber,
+    });
     if (!seenStages.has("metadata_started")) {
       writeProgressEvent("metadata_started", {
         stage: "metadata_started",
@@ -521,7 +512,6 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
       debug,
       attemptNumber,
       triggerType,
-      onProgress: sendProgress,
     });
     for (const event of inferStreamProgressFromResult(result)) {
       if (seenStages.has(event.stage)) continue;
