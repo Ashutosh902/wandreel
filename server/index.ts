@@ -161,6 +161,37 @@ function inferStreamProgressFromResult(result: any) {
   return events;
 }
 
+async function executeMetadataExtraction(
+  req: express.Request,
+  input: {
+    url: string;
+    mode: ExtractionMode;
+    debug: boolean;
+    attemptNumber: number;
+    triggerType: "initial" | "retry";
+  },
+) {
+  const result = await runExtractionPipeline({
+    url: input.url,
+    mode: input.mode,
+    debug: input.debug,
+    attemptNumber: input.attemptNumber,
+    triggerType: input.triggerType,
+  });
+  const attemptRecord = await createAnalyticsAttemptFromRequest(req, result);
+  if (attemptRecord?.attemptId) {
+    try {
+      await persistReelAnalyticsAttemptArtifacts({
+        attemptId: attemptRecord.attemptId,
+        extractionResult: result,
+      });
+    } catch (artifactError) {
+      console.error("persist extraction attempt artifacts failed", artifactError);
+    }
+  }
+  return result;
+}
+
 function parseCookies(headerValue: string | undefined) {
   const out: Record<string, string> = {};
   for (const piece of String(headerValue || "").split(";")) {
@@ -395,24 +426,13 @@ app.post("/api/metadata/extract", async (req, res) => {
       return res.status(400).json({ ok: false, error: "url is required" });
     }
 
-    const result = await runExtractionPipeline({
+    const result = await executeMetadataExtraction(req, {
       url,
       mode,
       debug,
       attemptNumber,
       triggerType,
     });
-    const attemptRecord = await createAnalyticsAttemptFromRequest(req, result);
-    if (attemptRecord?.attemptId) {
-      try {
-        await persistReelAnalyticsAttemptArtifacts({
-          attemptId: attemptRecord.attemptId,
-          extractionResult: result,
-        });
-      } catch (artifactError) {
-        console.error("persist extraction attempt artifacts failed", artifactError);
-      }
-    }
     if (featureFlags.extractionV2) {
       return res.json({ ok: true, ...result });
     }
@@ -442,6 +462,118 @@ app.post("/api/metadata/extract", async (req, res) => {
       ok: false,
       ...diagnostics,
     });
+  }
+});
+
+app.post("/api/metadata/extract/stream-test", async (req, res) => {
+  const { url, mode, debug, attemptNumber, triggerType } = parseExtractionRequest(req);
+  if (!url) {
+    return res.status(400).json({ ok: false, error: "url is required" });
+  }
+
+  const startedAt = Date.now();
+  const sse = setupSse(res, req, "metadata_extract_stream_test");
+  console.info("[sse] client connected", { label: "metadata_extract_stream_test", url, mode, attemptNumber, triggerType });
+
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
+    if (sse.closed) {
+      if (heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+      return;
+    }
+    sse.writeEvent("heartbeat", {
+      stage: "heartbeat",
+      message: "Still working...",
+      elapsedMs: getElapsedMs(startedAt),
+      attemptNumber,
+    });
+  }, 12000);
+
+  sse.writeEvent("connected", {
+    stage: "connected",
+    message: "Starting analysis...",
+    elapsedMs: 0,
+    attemptNumber,
+  });
+  sse.writeEvent("started", {
+    stage: "started",
+    message: "Running known-good extraction path.",
+    elapsedMs: getElapsedMs(startedAt),
+    attemptNumber,
+  });
+
+  try {
+    const result = await executeMetadataExtraction(req, {
+      url,
+      mode,
+      debug,
+      attemptNumber,
+      triggerType,
+    });
+
+    for (const event of inferStreamProgressFromResult(result)) {
+      if (sse.closed) return;
+      sse.writeEvent(event.stage, {
+        stage: event.stage,
+        message: event.message,
+        elapsedMs: typeof event.elapsedMs === "number" ? event.elapsedMs : getElapsedMs(startedAt),
+        attemptNumber,
+      });
+    }
+
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+
+    if (sse.closed) return;
+    sse.writeEvent("completed", {
+      stage: "completed",
+      message: "Extraction completed.",
+      elapsedMs: result.debug?.timings && typeof (result.debug as any).timings.extractionTotalMs === "number"
+        ? (result.debug as any).timings.extractionTotalMs
+        : result.sla?.totalMs ?? result.perf?.totalMs ?? getElapsedMs(startedAt),
+      attemptNumber,
+      result: { ok: true, ...result },
+    });
+    sse.end();
+  } catch (error) {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
+    const message = error instanceof Error ? error.message : "extraction failed";
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    const stackPreview =
+      debug || process.env.NODE_ENV !== "production"
+        ? String(error instanceof Error ? error.stack || "" : "")
+            .split(/\r?\n/)
+            .slice(0, 5)
+        : undefined;
+    const diagnostics = {
+      error: message,
+      errorName,
+      stackPreview,
+      url,
+      mode,
+      attemptNumber,
+      triggerType,
+      debug,
+    };
+    console.error("[sse] error", { label: "metadata_extract_stream_test", diagnostics });
+    console.error("[metadata-extract-error]", diagnostics);
+    if (!sse.closed) {
+      sse.writeEvent("failed", {
+        stage: "failed",
+        message,
+        elapsedMs: getElapsedMs(startedAt),
+        attemptNumber,
+        error: diagnostics,
+      });
+      sse.end();
+    }
   }
 });
 
