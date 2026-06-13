@@ -76,6 +76,50 @@ function parseExtractionRequest(req: express.Request) {
   };
 }
 
+function getElapsedMs(startedAt: number): number {
+  return Math.max(0, Date.now() - startedAt);
+}
+
+function setupSse(res: express.Response, req: express.Request, label: string) {
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  let closed = false;
+  req.on("close", () => {
+    closed = true;
+    console.info(`[sse] client closed`, { label });
+  });
+
+  const flushResponse = () => {
+    const flush = (res as express.Response & { flush?: () => void }).flush;
+    if (typeof flush === "function") {
+      flush.call(res);
+    }
+  };
+
+  const writeEvent = (event: string, payload: Record<string, unknown>) => {
+    if (closed) return;
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    flushResponse();
+    console.info(`[sse] wrote event ${event}`, { label, stage: payload.stage ?? null });
+  };
+
+  return {
+    get closed() {
+      return closed;
+    },
+    writeEvent,
+    end() {
+      if (closed) return;
+      res.end();
+    },
+  };
+}
+
 function parseCookies(headerValue: string | undefined) {
   const out: Record<string, string> = {};
   for (const piece of String(headerValue || "").split(";")) {
@@ -366,25 +410,40 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
     return res.status(400).json({ ok: false, error: "url is required" });
   }
 
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache, no-transform");
-  res.setHeader("Connection", "keep-alive");
-  res.setHeader("X-Accel-Buffering", "no");
-  res.flushHeaders?.();
+  const startedAt = Date.now();
+  const sse = setupSse(res, req, "metadata_extract_stream");
+  console.info("[sse] client connected", { label: "metadata_extract_stream", url, mode, attemptNumber, triggerType });
 
-  let closed = false;
-  req.on("close", () => {
-    closed = true;
-  });
-
-  const sendEvent = (event: string, payload: Record<string, unknown>) => {
-    if (closed) return;
-    res.write(`event: ${event}\n`);
-    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  const clearHeartbeat = () => {
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+      heartbeatTimer = null;
+    }
   };
 
+  sse.writeEvent("started", {
+    stage: "started",
+    message: "Starting analysis...",
+    elapsedMs: 0,
+    attemptNumber,
+  });
+
+  heartbeatTimer = setInterval(() => {
+    if (sse.closed) {
+      clearHeartbeat();
+      return;
+    }
+    sse.writeEvent("heartbeat", {
+      stage: "heartbeat",
+      message: "Still working...",
+      elapsedMs: getElapsedMs(startedAt),
+      attemptNumber,
+    });
+  }, 12000);
+
   const sendProgress = (payload: ExtractionProgressEvent) => {
-    sendEvent(payload.stage, payload);
+    sse.writeEvent(payload.stage, payload);
   };
 
   try {
@@ -407,7 +466,8 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
         console.error("persist extraction attempt artifacts failed", artifactError);
       }
     }
-    sendEvent("completed", {
+    clearHeartbeat();
+    sse.writeEvent("completed", {
       stage: "completed",
       message: "Extraction completed.",
       elapsedMs: result.debug?.timings && typeof (result.debug as any).timings.extractionTotalMs === "number"
@@ -416,10 +476,9 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
       attemptNumber,
       result: { ok: true, ...result },
     });
-    if (!closed) {
-      res.end();
-    }
+    sse.end();
   } catch (error) {
+    clearHeartbeat();
     const message = error instanceof Error ? error.message : "extraction failed";
     const errorName = error instanceof Error ? error.name : "UnknownError";
     const stackPreview =
@@ -438,18 +497,49 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
       triggerType,
       debug,
     };
+    console.error("[sse] error", { label: "metadata_extract_stream", diagnostics });
     console.error("[metadata-extract-error]", diagnostics);
-    sendEvent("failed", {
+    sse.writeEvent("failed", {
       stage: "failed",
       message,
-      elapsedMs: 0,
+      elapsedMs: getElapsedMs(startedAt),
       attemptNumber,
       error: diagnostics,
     });
-    if (!closed) {
-      res.end();
-    }
+    sse.end();
   }
+});
+
+app.get("/api/debug/sse", async (req, res) => {
+  const startedAt = Date.now();
+  const sse = setupSse(res, req, "debug_sse");
+  console.info("[sse] client connected", { label: "debug_sse" });
+  sse.writeEvent("started", {
+    stage: "started",
+    message: "Starting debug stream...",
+    elapsedMs: 0,
+    attemptNumber: 1,
+  });
+
+  for (let index = 1; index <= 5; index += 1) {
+    if (sse.closed) return;
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    sse.writeEvent("tick", {
+      stage: "heartbeat",
+      message: `Tick ${index}`,
+      elapsedMs: getElapsedMs(startedAt),
+      attemptNumber: 1,
+    });
+  }
+
+  if (sse.closed) return;
+  sse.writeEvent("completed", {
+    stage: "completed",
+    message: "Debug stream completed.",
+    elapsedMs: getElapsedMs(startedAt),
+    attemptNumber: 1,
+  });
+  sse.end();
 });
 
 app.post("/api/metadata/extract/deep-async", async (req, res) => {
