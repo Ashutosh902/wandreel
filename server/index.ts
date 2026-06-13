@@ -120,6 +120,47 @@ function setupSse(res: express.Response, req: express.Request, label: string) {
   };
 }
 
+function inferStreamProgressFromResult(result: any) {
+  const events: Array<{ stage: string; message: string; elapsedMs?: number }> = [];
+  const timings = result?.debug?.timings || {};
+  const orchestration = result?.debug?.orchestration || {};
+  const fastPath = result?.debug?.fastPathIntelligence || {};
+
+  events.push({ stage: "metadata_done", message: "Metadata fetched.", elapsedMs: Number(timings.metadataMs) || undefined });
+
+  if (fastPath.tinyFastExtractorUsed) {
+    events.push({ stage: "tiny_extractor_started", message: "Running tiny caption extractor." });
+    events.push({
+      stage: "tiny_extractor_done",
+      message: fastPath.tinyFastExtractorAccepted ? "Tiny caption extractor finished." : "Tiny caption extractor was inconclusive.",
+      elapsedMs: Number(fastPath.tinyFastExtractorMs) || undefined,
+    });
+  }
+
+  if (orchestration.acceptedAfter === "description") {
+    events.push({ stage: "accepted_description", message: "Accepted after caption evidence." });
+  }
+
+  if (result?.transcript?.attempted) {
+    events.push({ stage: "transcript_started", message: "Reading transcript clues." });
+    events.push({ stage: "transcript_done", message: "Transcript step finished." });
+  }
+  if (result?.debug?.frameExtraction?.didRun) {
+    events.push({ stage: "frame_extraction_started", message: "Checking video frames." });
+    events.push({ stage: "frame_extraction_done", message: "Frame check finished." });
+  }
+  if (result?.ocr?.attempted) {
+    events.push({ stage: "ocr_started", message: "Reading on-screen text." });
+    events.push({ stage: "ocr_done", message: "On-screen text step finished." });
+  }
+  if (result?.visualFallback?.attempted) {
+    events.push({ stage: "visual_started", message: "Trying visual match." });
+    events.push({ stage: "visual_done", message: "Visual match finished." });
+  }
+
+  return events;
+}
+
 function parseCookies(headerValue: string | undefined) {
   const out: Record<string, string> = {};
   for (const piece of String(headerValue || "").split(";")) {
@@ -413,6 +454,7 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
   const startedAt = Date.now();
   const sse = setupSse(res, req, "metadata_extract_stream");
   console.info("[sse] client connected", { label: "metadata_extract_stream", url, mode, attemptNumber, triggerType });
+  const seenStages = new Set<string>();
 
   let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   const clearHeartbeat = () => {
@@ -422,8 +464,14 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
     }
   };
 
-  sse.writeEvent("started", {
-    stage: "started",
+  const writeProgressEvent = (event: string, payload: Record<string, unknown>) => {
+    const stage = typeof payload.stage === "string" ? payload.stage : event;
+    seenStages.add(stage);
+    sse.writeEvent(event, payload);
+  };
+
+  writeProgressEvent("connected", {
+    stage: "connected",
     message: "Starting analysis...",
     elapsedMs: 0,
     attemptNumber,
@@ -434,7 +482,7 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
       clearHeartbeat();
       return;
     }
-    sse.writeEvent("heartbeat", {
+    writeProgressEvent("heartbeat", {
       stage: "heartbeat",
       message: "Still working...",
       elapsedMs: getElapsedMs(startedAt),
@@ -443,10 +491,20 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
   }, 12000);
 
   const sendProgress = (payload: ExtractionProgressEvent) => {
-    sse.writeEvent(payload.stage, payload);
+    console.info(`[sse] progress callback received ${payload.stage}`, { label: "metadata_extract_stream" });
+    writeProgressEvent(payload.stage, payload);
   };
 
   try {
+    console.info("[sse] before runExtractionPipeline", { label: "metadata_extract_stream", url, mode, attemptNumber, triggerType });
+    if (!seenStages.has("metadata_started")) {
+      writeProgressEvent("metadata_started", {
+        stage: "metadata_started",
+        message: "Fetching metadata.",
+        elapsedMs: getElapsedMs(startedAt),
+        attemptNumber,
+      });
+    }
     const result = await runExtractionPipeline({
       url,
       mode,
@@ -466,8 +524,17 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
         console.error("persist extraction attempt artifacts failed", artifactError);
       }
     }
+    for (const event of inferStreamProgressFromResult(result)) {
+      if (seenStages.has(event.stage)) continue;
+      writeProgressEvent(event.stage, {
+        stage: event.stage,
+        message: event.message,
+        elapsedMs: typeof event.elapsedMs === "number" ? event.elapsedMs : getElapsedMs(startedAt),
+        attemptNumber,
+      });
+    }
     clearHeartbeat();
-    sse.writeEvent("completed", {
+    writeProgressEvent("completed", {
       stage: "completed",
       message: "Extraction completed.",
       elapsedMs: result.debug?.timings && typeof (result.debug as any).timings.extractionTotalMs === "number"
@@ -499,7 +566,7 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
     };
     console.error("[sse] error", { label: "metadata_extract_stream", diagnostics });
     console.error("[metadata-extract-error]", diagnostics);
-    sse.writeEvent("failed", {
+    writeProgressEvent("failed", {
       stage: "failed",
       message,
       elapsedMs: getElapsedMs(startedAt),
@@ -514,6 +581,12 @@ app.get("/api/debug/sse", async (req, res) => {
   const startedAt = Date.now();
   const sse = setupSse(res, req, "debug_sse");
   console.info("[sse] client connected", { label: "debug_sse" });
+  sse.writeEvent("connected", {
+    stage: "connected",
+    message: "Debug stream connected.",
+    elapsedMs: 0,
+    attemptNumber: 1,
+  });
   sse.writeEvent("started", {
     stage: "started",
     message: "Starting debug stream...",

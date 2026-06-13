@@ -145,12 +145,21 @@ async function emitProgress(
   message: string,
 ) {
   if (!reporter) return;
-  await reporter({
-    stage,
-    message,
-    elapsedMs: nowMs() - totalStartedAt,
-    attemptNumber,
-  });
+  console.info(`[pipeline-progress] ${stage}`, { attemptNumber });
+  try {
+    await reporter({
+      stage,
+      message,
+      elapsedMs: nowMs() - totalStartedAt,
+      attemptNumber,
+    });
+  } catch (error) {
+    console.error("[pipeline-progress-callback-error]", {
+      stage,
+      attemptNumber,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function withBudget<T>(work: Promise<T>, budgetMs: number, fallback: () => T): Promise<T> {
