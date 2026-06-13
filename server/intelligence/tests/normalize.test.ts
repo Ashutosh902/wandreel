@@ -84,3 +84,55 @@ test("normalizer maps level2 vibe tags to allowed chip vocabulary", () => {
   assert.deepEqual(entity.level2.vibeTags.includes("random_unknown"), false);
   assert.deepEqual(entity.tags.includes("Street-style"), true);
 });
+
+test("normalizer attaches intent and maps old categories to new l1", () => {
+  const out = normalizeIntelligenceOutput({
+    source: { platform: "instagram", sourceType: "sightseeing_recommendation" },
+    entities: [
+      {
+        category: "see",
+        name: "Tumpak Sewu Waterfall",
+        entityType: "waterfall",
+        sourceEvidence: "Most stunning waterfall I have visited. Waterfall viewpoint.",
+        confidence: "high",
+        details: {
+          placeType: "waterfall",
+          experienceTag: "viewpoint",
+        },
+        intent: {
+          l1: "explore",
+          l2: "Waterfall",
+          l3: ["Waterfall viewpoint", "Bridge view", "Good view", "Too many words for a micro intent"],
+        },
+      },
+    ],
+  });
+
+  assert.equal(out.entities[0]?.intent?.l1, "explore");
+  assert.equal(out.entities[0]?.intent?.l2, "Waterfall");
+  assert.deepEqual(out.entities[0]?.intent?.l3, ["Waterfall viewpoint", "Bridge view"]);
+});
+
+test("normalizer repairs invalid l2 and removes saved visited from intent", () => {
+  const out = normalizeIntelligenceOutput({
+    source: { platform: "website", sourceType: "restaurant_recommendation" },
+    entities: [
+      {
+        category: "eat",
+        name: "Beige",
+        entityType: "cafe",
+        sourceEvidence: "Coffee spot in Marathahalli",
+        confidence: "medium",
+        intent: {
+          l1: "taste",
+          l2: "Saved",
+          l3: ["Saved", "Coffee spot", "Visited", "Marathahalli hangout"],
+        },
+      },
+    ],
+  });
+
+  assert.equal(out.entities[0]?.intent?.l1, "taste");
+  assert.equal(out.entities[0]?.intent?.l2, "Cafe");
+  assert.deepEqual(out.entities[0]?.intent?.l3, ["Coffee spot", "Marathahalli hangout"]);
+});

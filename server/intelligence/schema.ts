@@ -1,8 +1,13 @@
 import { z } from "zod";
-import { SOURCE_PLATFORMS, SOURCE_TYPES, SUPPORTED_CATEGORIES } from "./types";
+import { INTENT_L1_VALUES, SOURCE_PLATFORMS, SOURCE_TYPES, SUPPORTED_CATEGORIES } from "./types";
 
 const categorySchema = z.enum(SUPPORTED_CATEGORIES);
 const confidenceSchema = z.enum(["high", "medium", "low"]);
+const intentSchema = z.object({
+  l1: z.enum(INTENT_L1_VALUES),
+  l2: z.string().min(1),
+  l3: z.array(z.string().min(1)).max(3),
+});
 
 export const intelligenceOutputSchema = z.object({
   source: z.object({
@@ -49,6 +54,7 @@ export const intelligenceOutputSchema = z.object({
     confidence: confidenceSchema,
     googleMapsQuery: z.string().nullable(),
     evidenceText: z.string().nullable(),
+    intent: intentSchema.optional(),
   })),
   entities: z.array(z.object({
     category: categorySchema,
@@ -96,6 +102,7 @@ export const intelligenceOutputSchema = z.object({
     googleMapsQuery: z.string().nullable(),
     sourceEvidence: z.string().min(1),
     confidence: confidenceSchema,
+    intent: intentSchema.optional(),
   })),
   visibility: z.object({
     showIn: z.array(z.string()),

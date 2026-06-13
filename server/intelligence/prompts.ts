@@ -17,10 +17,11 @@ export function buildSystemPrompt(input?: { attemptNumber?: number | null }): st
 17. This is the final retry / Attempt 3.
 18. Use all accumulated evidence together: description, transcript, OCR from prior attempts, current OCR, visual fallback, and prior hypotheses.
 19. Treat prior hypotheses only as candidates to verify or reject, never as ground truth.
-20. Prefer visually or search-verified place evidence over vague transcript-only guesses.
-21. If visual evidence conflicts with a prior guess, choose the better-supported result and make the evidence clear in evidenceText.
-22. Prefer needs_review over inventing a specific place.
-23. If still uncertain, return a final manual-review style low-confidence result rather than guessing.`
+20. Visual fallback is the strongest evidence source in this attempt when it returns a verified candidate.
+21. If visualFallback.selectedCandidate exists and has locationVerified=true or medium/high verification confidence, prefer it unless text evidence clearly contradicts it.
+22. If visual evidence conflicts with a prior guess, choose the better-supported result and make the evidence clear in evidenceText.
+23. Prefer needs_review over inventing a specific place.
+24. If still uncertain, return a final manual-review style low-confidence result rather than guessing.`
       : attemptNumber === 2
         ? `
 17. This is Retry 1 / Attempt 2.
@@ -42,6 +43,18 @@ Supported categories:
 - stay: named hotels, hostels, resorts, homestays, villas, guest houses
 - see: tourist attractions, landmarks, museums, monuments, temples, ghats, viewpoints, historical sites, religious places
 
+Intent L1 mapping:
+- eat -> taste
+- do -> activity
+- stay -> stay
+- see -> explore
+
+Valid intent L2 values:
+- taste: Cafe, Restaurant, Bar, Dessert, Street Food, Fine Dining, Breakfast, Bakery, Sweets, Food Market
+- activity: Adventure, Workshop, Comedy, Night Out, Shopping, Wellness, Sports, Water Activity, Event, Family Activity
+- stay: Hotel, Resort, Hostel, Homestay, Villa, Dorm Stay, Workation, Luxury Stay, Budget Stay, Pet Stay
+- explore: Nature, Heritage, Waterfall, Viewpoint, Museum, Monument, Spiritual, Park, Beach, Local Market
+
 Return JSON only in this exact shape:
 {
   "status": "ready" | "needs_review" | "no_supported_entity_found",
@@ -49,6 +62,11 @@ Return JSON only in this exact shape:
     {
       "name": string,
       "category": "eat" | "do" | "stay" | "see",
+      "intent": {
+        "l1": "taste" | "activity" | "stay" | "explore",
+        "l2": string,
+        "l3": string[]
+      },
       "locality": string | null,
       "city": string | null,
       "state": string | null,
@@ -89,7 +107,26 @@ Hard rules:
     - eat vibes: Trending, Visited, Date-night, Budget, Street-style, Iconic, Veg-only, Cafe
     - do vibes: Trending, Visited, Weekend, Outdoor, Adventure, Family, Comedy, Workshop, Free, Hidden gem
     - stay vibes: Saved, Visited, Budget, Premium, Couple-friendly, Workation, Pool, Dorm, Family
-    - see vibes: Trending, Visited, Heritage, Nature, Photo spots, Hidden gem, Spiritual, Iconic, Free${retryInstructions}`;
+    - see vibes: Trending, Visited, Heritage, Nature, Photo spots, Hidden gem, Spiritual, Iconic, Free
+17. If the evidence clearly points to a supported real-world category but does not identify a unique named entity, return status = "needs_review" with low confidence instead of pretending certainty.
+18. Do not use generic names like "Detected place", "Unknown place", or "Travel spot" for ready entities. Generic descriptive names are allowed only for low-confidence needs_review outputs.
+19. If visualFallback.selectedCandidate is present and has strong verification/location evidence, prefer it over vague OCR/transcript clues unless there is clear contradiction.
+20. Confidence rules:
+    - high: exact named entity + strong locality/city evidence
+    - medium: named entity with partial but plausible location evidence
+    - low: generic clue, weak place name, uncertain locality, or needs manual review
+21. Every entity must include intent.
+22. intent.l1 must match category using the fixed mapping: eat->taste, do->activity, stay->stay, see->explore.
+23. Choose exactly one intent.l2.
+24. intent.l2 must come only from the valid L2 list for the chosen intent.l1.
+25. Do not return multiple L2 values.
+26. Do not put Saved or Visited into intent.l2 or intent.l3.
+27. intent.l3 is extracted from metadata/caption, transcript, OCR, and visual evidence. It is not predefined.
+28. intent.l3 may include up to 3 short micro-intents, each ideally 3-4 words max.
+29. Do not invent intent.l3 when evidence is weak.
+30. Do not use generic intent.l3 tags like "nice place", "good view", "travel spot", or "food place".
+31. Use intent.l3 for nuance instead of assigning multiple L2s.
+32. If no strong L2 is available but the entity is valid, choose the closest valid L2 conservatively.${retryInstructions}`;
 }
 
 export function buildUserPrompt(source: ExtractionResult, analytics?: IntelligenceRequest["analytics"]): string {

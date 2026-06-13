@@ -2,6 +2,8 @@ import type { ExtractionResult } from "../extraction/types";
 
 export const SUPPORTED_CATEGORIES = ["eat", "do", "stay", "see"] as const;
 export type SupportedCategory = (typeof SUPPORTED_CATEGORIES)[number];
+export const INTENT_L1_VALUES = ["taste", "activity", "stay", "explore"] as const;
+export type IntentL1 = (typeof INTENT_L1_VALUES)[number];
 
 export const SOURCE_PLATFORMS = ["youtube", "instagram", "google_maps", "website", "unknown"] as const;
 export type SourcePlatform = (typeof SOURCE_PLATFORMS)[number];
@@ -28,6 +30,11 @@ export type PlaceCollection = {
 };
 
 export type EntityConfidence = "high" | "medium" | "low";
+export type EntityIntent = {
+  l1: IntentL1;
+  l2: string;
+  l3: string[];
+};
 
 export type CategoryLevel2Metadata =
   | {
@@ -76,6 +83,7 @@ export type DiscoveryEntity = {
   googleMapsQuery: string | null;
   sourceEvidence: string;
   confidence: EntityConfidence;
+  intent?: EntityIntent;
 };
 
 export type StructuredEntity = {
@@ -95,6 +103,7 @@ export type StructuredEntity = {
   confidence: EntityConfidence;
   googleMapsQuery: string | null;
   evidenceText: string | null;
+  intent?: EntityIntent;
 };
 
 export type IntelligenceOutput = {

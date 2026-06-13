@@ -1,3 +1,6 @@
+import type { EntityIntent } from "./intent";
+import { resolveEntityIntent } from "./intent";
+
 export type DetectedCategory = "Taste" | "Activity" | "Stay" | "Explore";
 
 export type DetectedPlace = {
@@ -15,6 +18,7 @@ export type DetectedPlace = {
   videoUrl: string;
   confidence?: "high" | "medium" | "low" | null;
   evidenceText?: string | null;
+  intent?: EntityIntent | null;
   placeId?: string | null;
   lat?: number | null;
   lng?: number | null;
@@ -37,6 +41,7 @@ export type IntelligenceEntity = {
   lng?: number | null;
   confidence?: "high" | "medium" | "low";
   evidenceText?: string | null;
+  intent?: EntityIntent | null;
 };
 
 export type PendingDetectionJob = {
@@ -133,6 +138,7 @@ export function readPersistedAddDraft(): PersistedAddDraft | null {
                   videoUrl: item.videoUrl || item.sourceUrl || "",
                   confidence: null,
                   evidenceText: null,
+                  intent: null,
                   placeId: null,
                   lat: null,
                   lng: null,
@@ -239,6 +245,12 @@ export function mapEntitiesToPlaces(
         videoUrl: defaults.videoUrl,
         confidence: entity.confidence ?? null,
         evidenceText: entity.evidenceText ?? null,
+        intent: resolveEntityIntent({
+          category: mapped,
+          intent: entity.intent ?? null,
+          title: entity.name,
+          evidenceText: entity.evidenceText ?? null,
+        }),
         placeId: entity.placeId ?? null,
         lat: entity.lat ?? null,
         lng: entity.lng ?? null,

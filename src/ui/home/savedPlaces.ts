@@ -1,5 +1,7 @@
 import type { CategoryLabel } from "./home.data";
 import { CATEGORY_FEED_CACHE_KEY } from "./addFlowState";
+import type { EntityIntent } from "./intent";
+import { resolveEntityIntent } from "./intent";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 
@@ -12,10 +14,14 @@ export type SavedPlaceRecord = {
   metaPrimary: string;
   metaSecondary: string;
   locality: string;
+  city?: string | null;
+  state?: string | null;
+  country?: string | null;
   fullAddress: string;
   videoUrl: string;
   imageUrl: string;
   tags: string[];
+  intent?: EntityIntent | null;
   lat?: number | null;
   lng?: number | null;
   isGlobal?: boolean;
@@ -28,11 +34,19 @@ export type SavedPlaceApiItem = {
   placeId?: string;
   title?: string;
   category?: string | null;
+  metaPrimary?: string | null;
+  metaSecondary?: string | null;
   metadata?: {
+    metaPrimary?: string | null;
+    metaSecondary?: string | null;
     locality?: string | null;
+    city?: string | null;
+    state?: string | null;
+    country?: string | null;
     fullAddress?: string | null;
     videoUrl?: string | null;
     imageUrl?: string | null;
+    intent?: EntityIntent | null;
     lat?: number | null;
     lng?: number | null;
     isGlobal?: boolean | null;
@@ -180,10 +194,16 @@ export async function persistSavedPlace(place: SavedPlaceRecord) {
       title: place.title,
       category: place.category,
       metadata: {
+        metaPrimary: place.metaPrimary,
+        metaSecondary: place.metaSecondary,
         locality: place.locality,
+        city: place.city ?? null,
+        state: place.state ?? null,
+        country: place.country ?? null,
         fullAddress: place.fullAddress,
         videoUrl: place.videoUrl,
         imageUrl: place.imageUrl,
+        intent: place.intent ?? null,
         lat: place.lat ?? null,
         lng: place.lng ?? null,
         isGlobal: place.isGlobal === true,
@@ -235,6 +255,12 @@ export function mapSavedPlaceApiItem(item: SavedPlaceApiItem): SavedPlaceRecord 
   const fullAddress = String(item.metadata?.fullAddress || locality).trim() || locality;
   const imageUrl = String(item.metadata?.imageUrl || "").trim();
   const videoUrl = String(item.metadata?.videoUrl || "").trim();
+  const intent = resolveEntityIntent({
+    category,
+    intent: item.metadata?.intent ?? null,
+    title,
+    metaSecondary: String(item.metadata?.metaSecondary || item.metaSecondary || "").trim(),
+  });
 
   return {
     id: String(item.placeId || `${category}-${title}-${locality}`).toLowerCase().replace(/\s+/g, "-"),
@@ -242,13 +268,17 @@ export function mapSavedPlaceApiItem(item: SavedPlaceApiItem): SavedPlaceRecord 
     title,
     category,
     distanceKm: 0.1,
-    metaPrimary: category,
-    metaSecondary: "Saved",
+    metaPrimary: String(item.metadata?.metaPrimary || item.metaPrimary || intent.l2).trim() || intent.l2,
+    metaSecondary: String(item.metadata?.metaSecondary || item.metaSecondary || intent.l3[0] || "").trim(),
     locality,
+    city: typeof item.metadata?.city === "string" ? item.metadata.city : null,
+    state: typeof item.metadata?.state === "string" ? item.metadata.state : null,
+    country: typeof item.metadata?.country === "string" ? item.metadata.country : null,
     fullAddress,
     videoUrl,
     imageUrl,
     tags: ["Saved", "Visited"],
+    intent,
     lat: typeof item.metadata?.lat === "number" ? item.metadata.lat : null,
     lng: typeof item.metadata?.lng === "number" ? item.metadata.lng : null,
     isGlobal: item.metadata?.sharedVisibility === "global" || item.metadata?.isGlobal === true,
@@ -283,13 +313,22 @@ function normalizeSavedPlace(
     title,
     category,
     distanceKm: typeof item.distanceKm === "number" ? item.distanceKm : 0.1,
-    metaPrimary: String(item.metaPrimary || category),
-    metaSecondary: String(item.metaSecondary || "Saved"),
+    metaPrimary: String(item.metaPrimary || item.intent?.l2 || category),
+    metaSecondary: String(item.metaSecondary || item.intent?.l3?.[0] || ""),
     locality,
+    city: typeof item.city === "string" ? item.city : null,
+    state: typeof item.state === "string" ? item.state : null,
+    country: typeof item.country === "string" ? item.country : null,
     fullAddress: String(item.fullAddress || locality),
     videoUrl: String(item.videoUrl || ""),
     imageUrl: String(item.imageUrl || ""),
     tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === "string") : ["Saved"],
+    intent: resolveEntityIntent({
+      category,
+      intent: item.intent ?? null,
+      title,
+      metaSecondary: String(item.metaSecondary || ""),
+    }),
     lat: typeof item.lat === "number" ? item.lat : null,
     lng: typeof item.lng === "number" ? item.lng : null,
     isGlobal: item.sharedVisibility === "global" || item.isGlobal === true,

@@ -29,6 +29,7 @@ test("schema accepts strict valid output", () => {
       {
         name: "Gateway",
         category: "see",
+        intent: { l1: "explore", l2: "Monument", l3: ["Harbor view"] },
         locality: null,
         city: "Mumbai",
         state: "Maharashtra",
@@ -57,6 +58,7 @@ test("schema accepts strict valid output", () => {
           vibeTags: [],
           entryFeeSignal: null,
         },
+        intent: { l1: "explore", l2: "Monument", l3: ["Harbor view"] },
         googleMapsQuery: "Gateway Mumbai",
         sourceEvidence: "Gateway mention",
         confidence: "high",

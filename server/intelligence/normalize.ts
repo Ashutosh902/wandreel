@@ -1,4 +1,4 @@
-import type { CategoryLevel2Metadata, EntityConfidence, IntelligenceOutput, SupportedCategory } from "./types";
+import type { CategoryLevel2Metadata, EntityConfidence, EntityIntent, IntelligenceOutput, IntentL1, SupportedCategory } from "./types";
 
 const CATEGORY_ALIAS: Record<string, SupportedCategory> = {
   eat: "eat",
@@ -24,6 +24,38 @@ const CATEGORY_ALIAS: Record<string, SupportedCategory> = {
 };
 
 const ALL_CATEGORIES: SupportedCategory[] = ["eat", "do", "stay", "see"];
+export const CATEGORY_TO_INTENT_L1: Record<SupportedCategory, IntentL1> = {
+  eat: "taste",
+  do: "activity",
+  stay: "stay",
+  see: "explore",
+};
+export const INTENT_L2_OPTIONS: Record<IntentL1, string[]> = {
+  taste: ["Cafe", "Restaurant", "Bar", "Dessert", "Street Food", "Fine Dining", "Breakfast", "Bakery", "Sweets", "Food Market"],
+  activity: ["Adventure", "Workshop", "Comedy", "Night Out", "Shopping", "Wellness", "Sports", "Water Activity", "Event", "Family Activity"],
+  stay: ["Hotel", "Resort", "Hostel", "Homestay", "Villa", "Dorm Stay", "Workation", "Luxury Stay", "Budget Stay", "Pet Stay"],
+  explore: ["Nature", "Heritage", "Waterfall", "Viewpoint", "Museum", "Monument", "Spiritual", "Park", "Beach", "Local Market"],
+};
+export const INTENT_L2_DEFAULTS: Record<IntentL1, string> = {
+  taste: "Restaurant",
+  activity: "Event",
+  stay: "Hotel",
+  explore: "Nature",
+};
+export const GENERIC_INTENT_L3_BLOCKLIST = new Set([
+  "nice place",
+  "good place",
+  "good view",
+  "nice view",
+  "travel spot",
+  "food place",
+  "place",
+  "location",
+  "tourist place",
+  "viral place",
+  "saved",
+  "visited",
+]);
 
 const EAT_VIBE_MAP: Record<string, string> = {
   trending: "Trending",
@@ -107,6 +139,26 @@ function normalizeLabel(input: unknown): string | null {
   return value || null;
 }
 
+function normalizeLooseLabel(input: unknown): string {
+  return String(input || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function asIntentL1(input: unknown): IntentL1 | null {
+  const value = normalizeLooseLabel(input);
+  if (value === "taste" || value === "activity" || value === "stay" || value === "explore") return value;
+  return null;
+}
+
+function normalizeIntentL2(l1: IntentL1, input: unknown): string | null {
+  const normalized = normalizeLooseLabel(input);
+  if (!normalized) return null;
+  return INTENT_L2_OPTIONS[l1].find((option) => normalizeLooseLabel(option) === normalized) || null;
+}
+
 function buildMapsQuery(entity: {
   name: string;
   locality: string | null;
@@ -125,6 +177,118 @@ function isWeakFoodOnly(entityType: string, evidence: string): boolean {
 
 function sanitizeTags(input: unknown): string[] {
   return Array.isArray(input) ? input.map((v) => String(v || "").trim()).filter(Boolean) : [];
+}
+
+function sanitizeIntentL3(input: unknown): string[] {
+  if (!Array.isArray(input)) return [];
+  const out = new Set<string>();
+  for (const item of input) {
+    const label = String(item || "").replace(/\s+/g, " ").trim();
+    if (!label) continue;
+    const normalized = normalizeLooseLabel(label);
+    if (!normalized || GENERIC_INTENT_L3_BLOCKLIST.has(normalized)) continue;
+    if (normalized === "saved" || normalized === "visited") continue;
+    if (normalized.split(" ").length > 4) continue;
+    out.add(label);
+    if (out.size >= 3) break;
+  }
+  return Array.from(out);
+}
+
+function collectIntentInferenceText(entity: any, level2: CategoryLevel2Metadata): string {
+  const details = entity?.details && typeof entity.details === "object" ? entity.details : {};
+  let level2Values: Array<string | null> = [];
+  if (level2.category === "eat") {
+    level2Values = [level2.cuisineType, level2.mealType];
+  } else if (level2.category === "do") {
+    level2Values = [level2.activityType, level2.timeTag];
+  } else if (level2.category === "stay") {
+    level2Values = [level2.stayType, level2.useCase];
+  } else {
+    level2Values = [level2.placeType, level2.experienceTag];
+  }
+  return [
+    entity?.name,
+    entity?.entityType,
+    entity?.sourceEvidence,
+    entity?.evidenceText,
+    entity?.googleMapsQuery,
+    ...sanitizeTags(entity?.tags),
+    ...Object.values(details),
+    ...level2Values,
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" \n ")
+    .toLowerCase();
+}
+
+function inferIntentL2FromEvidence(l1: IntentL1, entity: any, level2: CategoryLevel2Metadata): string | null {
+  const text = collectIntentInferenceText(entity, level2);
+  if (!text) return null;
+
+  if (l1 === "taste") {
+    if (/\bcafe|café|coffee\b/.test(text)) return "Cafe";
+    if (/\bbar|pub|cocktail|drinks|rooftop drinks\b/.test(text)) return "Bar";
+    if (/\bdessert|gelato|ice cream|icecream|patisserie\b/.test(text)) return "Dessert";
+    if (/\bstreet food|street-style|street style|stall\b/.test(text)) return "Street Food";
+    if (/\bfine dining|tasting menu\b/.test(text)) return "Fine Dining";
+    if (/\bbreakfast|brunch\b/.test(text)) return "Breakfast";
+    if (/\bbakery|bakehouse\b/.test(text)) return "Bakery";
+    if (/\bsweets|mithai|sweet shop\b/.test(text)) return "Sweets";
+    if (/\bfood market|market\b/.test(text)) return "Food Market";
+    if (/\brestaurant|diner|eatery|kitchen|bistro|food\b/.test(text)) return "Restaurant";
+    return null;
+  }
+
+  if (l1 === "activity") {
+    if (/\badventure|zipline|trek|hike|climb|rafting\b/.test(text)) return "Adventure";
+    if (/\bworkshop|class|masterclass\b/.test(text)) return "Workshop";
+    if (/\bcomedy|standup|stand-up\b/.test(text)) return "Comedy";
+    if (/\bnight out|nightlife|club\b/.test(text)) return "Night Out";
+    if (/\bshopping|mall|bazaar\b/.test(text)) return "Shopping";
+    if (/\bwellness|spa|yoga|massage\b/.test(text)) return "Wellness";
+    if (/\bsports|cricket|football|badminton|arena|karting\b/.test(text)) return "Sports";
+    if (/\bwater activity|kayak|kayaking|boating|boat|paddle|jet ski\b/.test(text)) return "Water Activity";
+    if (/\bfamily activity|kids|children|family\b/.test(text)) return "Family Activity";
+    if (/\bevent|concert|festival|show\b/.test(text)) return "Event";
+    return null;
+  }
+
+  if (l1 === "stay") {
+    if (/\bresort\b/.test(text)) return "Resort";
+    if (/\bhostel\b/.test(text)) return "Hostel";
+    if (/\bhomestay|guest house\b/.test(text)) return "Homestay";
+    if (/\bvilla\b/.test(text)) return "Villa";
+    if (/\bdorm\b/.test(text)) return "Dorm Stay";
+    if (/\bworkation|workspace|remote work\b/.test(text)) return "Workation";
+    if (/\bluxury|premium\b/.test(text)) return "Luxury Stay";
+    if (/\bbudget|affordable\b/.test(text)) return "Budget Stay";
+    if (/\bpet friendly|pet stay\b/.test(text)) return "Pet Stay";
+    if (/\bhotel|stay|suite|room\b/.test(text)) return "Hotel";
+    return null;
+  }
+
+  if (/\bwaterfall|falls\b/.test(text)) return "Waterfall";
+  if (/\bviewpoint|view point|sunrise point|sunset point\b/.test(text)) return "Viewpoint";
+  if (/\bmuseum\b/.test(text)) return "Museum";
+  if (/\bmonument|memorial|statue\b/.test(text)) return "Monument";
+  if (/\bspiritual|temple|church|mosque|shrine\b/.test(text)) return "Spiritual";
+  if (/\bpark|garden\b/.test(text)) return "Park";
+  if (/\bbeach|shore\b/.test(text)) return "Beach";
+  if (/\blocal market|bazaar|market\b/.test(text)) return "Local Market";
+  if (/\bheritage|fort|palace|historic|history\b/.test(text)) return "Heritage";
+  if (/\bnature|lake|forest|trail|hill|hills|scenic|landmark\b/.test(text)) return "Nature";
+  return null;
+}
+
+export function normalizeEntityIntent(input: { entity: any; category: SupportedCategory; level2: CategoryLevel2Metadata }): EntityIntent {
+  const l1 = asIntentL1(input.entity?.intent?.l1) || CATEGORY_TO_INTENT_L1[input.category];
+  const validL2 = normalizeIntentL2(l1, input.entity?.intent?.l2);
+  const inferredL2 = inferIntentL2FromEvidence(l1, input.entity, input.level2);
+  const l2 = validL2 || inferredL2 || INTENT_L2_DEFAULTS[l1];
+  const l3 = sanitizeIntentL3(input.entity?.intent?.l3);
+  return { l1, l2, l3 };
 }
 
 function mapAllowedTags(input: string[], category: SupportedCategory): string[] {
@@ -236,6 +400,7 @@ export function normalizeIntelligenceOutput(raw: unknown): IntelligenceOutput {
       }
 
       const level2 = buildLevel2(category, entity);
+      const intent = normalizeEntityIntent({ entity, category, level2 });
       const out = {
         category,
         name,
@@ -250,6 +415,7 @@ export function normalizeIntelligenceOutput(raw: unknown): IntelligenceOutput {
         googleMapsQuery: normalizeLabel(entity?.googleMapsQuery),
         sourceEvidence,
         confidence: toConfidence(entity?.confidence),
+        intent,
       };
 
       if (!out.googleMapsQuery) {
@@ -333,6 +499,7 @@ export function normalizeIntelligenceOutput(raw: unknown): IntelligenceOutput {
     confidence: entity.confidence,
     googleMapsQuery: entity.googleMapsQuery,
     evidenceText: entity.sourceEvidence || null,
+    intent: entity.intent,
   }));
 
   return {

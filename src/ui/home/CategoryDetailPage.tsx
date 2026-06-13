@@ -11,36 +11,10 @@ import {
   upsertSavedPlace,
   type SavedPlaceRecord,
 } from "./savedPlaces";
+import { buildIntentSubtitle, INTENT_L2_OPTIONS, resolveEntityIntent } from "./intent";
 import { buildPlaceMapsUrl, sharePlaceExternally } from "./shareHelpers";
 
-type CategoryFilterChip =
-  | "All"
-  | "Trending"
-  | "Visited"
-  | "Date-night"
-  | "Budget"
-  | "Street-style"
-  | "Iconic"
-  | "Outdoor"
-  | "Adventure"
-  | "Weekend"
-  | "Family"
-  | "Hidden gem"
-  | "Saved"
-  | "Premium"
-  | "Couple-friendly"
-  | "Workation"
-  | "Pool"
-  | "Dorm"
-  | "Heritage"
-  | "Nature"
-  | "Photo spots"
-  | "Veg-only"
-  | "Cafe"
-  | "Comedy"
-  | "Workshop"
-  | "Free"
-  | "Spiritual";
+type CategoryFilterChip = string;
 
 type CategoryPlaceRow = SavedPlaceRecord;
 type CategorySortOption = "distance" | "alphabetical" | "recent";
@@ -221,7 +195,19 @@ export function CategoryDetailPage({
       removeSavedPlace(place);
       return;
     }
-    upsertSavedPlace({ ...place, category: nextCategory, metaPrimary: nextCategory });
+    const intent = resolveEntityIntent({
+      category: nextCategory,
+      intent: place.intent ?? null,
+      title: place.title,
+      metaSecondary: place.metaSecondary,
+    });
+    upsertSavedPlace({
+      ...place,
+      category: nextCategory,
+      metaPrimary: intent.l2,
+      metaSecondary: intent.l3[0] || "",
+      intent,
+    });
   };
 
   const saveCategoryEdit = () => {
@@ -238,8 +224,14 @@ export function CategoryDetailPage({
       title,
       locality,
       fullAddress,
-      metaPrimary: categoryEditCategory,
+      metaPrimary: editingCategoryPlace.metaPrimary,
       category: categoryEditCategory,
+      intent: resolveEntityIntent({
+        category: categoryEditCategory,
+        intent: editingCategoryPlace.intent ?? null,
+        title,
+        metaSecondary: editingCategoryPlace.metaSecondary,
+      }),
     };
     updateSavedFeedPlace(updated, categoryEditCategory, false);
     setActivePlace(updated);
@@ -308,16 +300,52 @@ export function CategoryDetailPage({
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const allChipLabel = `All ${distanceAwarePlaces.length}`;
+  const availableL2Chips = useMemo(() => {
+    const l1 = category === "Taste" ? "taste" : category === "Activity" ? "activity" : category === "Stay" ? "stay" : "explore";
+    const allowed = INTENT_L2_OPTIONS[l1];
+    const seen = new Set(
+      distanceAwarePlaces.map((place) =>
+        resolveEntityIntent({
+          category: place.category,
+          intent: place.intent ?? null,
+          title: place.title,
+          metaSecondary: place.metaSecondary,
+        }).l2,
+      ),
+    );
+    return allowed.filter((chip) => seen.has(chip));
+  }, [category, distanceAwarePlaces]);
+  const chips = useMemo(
+    () => [...config.chips, ...availableL2Chips],
+    [availableL2Chips, config.chips],
+  );
+  useEffect(() => {
+    if (!chips.includes(selectedChip)) {
+      setSelectedChip("All");
+    }
+  }, [chips, selectedChip]);
   const filteredPlaces = useMemo(
     () =>
       distanceAwarePlaces.filter((place) => {
-        const matchesChip = selectedChip === "All" || place.tags.includes(selectedChip);
+        const placeIntent = resolveEntityIntent({
+          category: place.category,
+          intent: place.intent ?? null,
+          title: place.title,
+          metaSecondary: place.metaSecondary,
+        });
+        const matchesChip =
+          selectedChip === "All" ||
+          (selectedChip === "Saved" && place.tags.includes("Saved")) ||
+          (selectedChip === "Visited" && place.tags.includes("Visited")) ||
+          placeIntent.l2 === selectedChip;
         const matchesSearch =
           normalizedQuery.length === 0 ||
           place.title.toLowerCase().includes(normalizedQuery) ||
           place.metaPrimary.toLowerCase().includes(normalizedQuery) ||
           place.metaSecondary.toLowerCase().includes(normalizedQuery) ||
-          place.locality.toLowerCase().includes(normalizedQuery);
+          place.locality.toLowerCase().includes(normalizedQuery) ||
+          placeIntent.l2.toLowerCase().includes(normalizedQuery) ||
+          String(placeIntent.l3[0] || "").toLowerCase().includes(normalizedQuery);
         return matchesChip && matchesSearch;
       }),
     [distanceAwarePlaces, normalizedQuery, selectedChip],
@@ -571,7 +599,7 @@ export function CategoryDetailPage({
         </div>
       </div>
         <div className="wr-taste-chip-row" aria-label={`${category} filters`}>
-          {config.chips.map((chip) => (
+          {chips.map((chip) => (
             <button
               key={chip}
               type="button"
@@ -627,12 +655,30 @@ export function CategoryDetailPage({
                 <p className="wr-taste-row-name">{place.title}</p>
                 <p className="wr-taste-row-distance">{place.distanceKm.toFixed(1)} km</p>
               </div>
-              <p className="wr-taste-row-category" style={{ color: CATEGORY_COLORS[place.category] }}>{place.category}</p>
-              <p className="wr-taste-row-line">
-                {place.metaSecondary && place.metaSecondary !== "Saved"
-                  ? `${place.metaSecondary} · ${place.locality}`
-                  : place.locality}
-              </p>
+              <p className="wr-taste-row-category" style={{ color: CATEGORY_COLORS[place.category] }}>{buildIntentSubtitle({
+                intent: resolveEntityIntent({
+                  category: place.category,
+                  intent: place.intent ?? null,
+                  title: place.title,
+                  metaSecondary: place.metaSecondary,
+                }),
+                fallbackSecondary: place.metaSecondary === "Saved" ? "" : place.metaSecondary,
+                locality: place.locality,
+                city: place.city ?? null,
+                category: place.category,
+              }).primary}</p>
+              <p className="wr-taste-row-line">{buildIntentSubtitle({
+                intent: resolveEntityIntent({
+                  category: place.category,
+                  intent: place.intent ?? null,
+                  title: place.title,
+                  metaSecondary: place.metaSecondary,
+                }),
+                fallbackSecondary: place.metaSecondary === "Saved" ? "" : place.metaSecondary,
+                locality: place.locality,
+                city: place.city ?? null,
+                category: place.category,
+              }).secondary}</p>
             </div>
           </article>
         ))}

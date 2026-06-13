@@ -1,10 +1,20 @@
 import { intelligenceOutputSchema, formatZodErrors } from "./schema";
 import type { DiscoveryEntity, IntelligenceOutput, IntelligencePipelineResult, IntelligenceRequest, StructuredEntity } from "./types";
-import { normalizeIntelligenceOutput } from "./normalize";
+import { normalizeEntityIntent, normalizeIntelligenceOutput } from "./normalize";
 import { callOpenAiStructuredExtraction } from "./providers/openai";
 import { recordSla } from "../metrics/slaTracker";
 import { resolveEntityLocality } from "./placeResolver";
 import type { ExtractionResult } from "../extraction/types";
+
+function buildDefaultLevel2(category: "eat" | "do" | "stay" | "see") {
+  return category === "eat"
+    ? { category: "eat" as const, cuisineType: null, mealType: null, dietaryTags: [], vibeTags: [], priceTier: null }
+    : category === "do"
+      ? { category: "do" as const, activityType: null, timeTag: null, audienceTags: [], vibeTags: [], priceTier: null }
+      : category === "stay"
+        ? { category: "stay" as const, stayType: null, useCase: null, amenities: [], locationTags: [], priceTier: null }
+        : { category: "see" as const, placeType: null, experienceTag: null, vibeTags: [], entryFeeSignal: null };
+}
 
 function adaptStructuredRaw(raw: unknown, req: IntelligenceRequest): unknown {
   if (!raw || typeof raw !== "object") return raw;
@@ -15,18 +25,11 @@ function adaptStructuredRaw(raw: unknown, req: IntelligenceRequest): unknown {
 
   const metadata = req.source.metadata;
   const entities = candidate.entities.map((entity: any) => {
-    const category = String(entity?.category || "").trim().toLowerCase();
+    const rawCategory = String(entity?.category || "").trim().toLowerCase();
+    const category = rawCategory === "eat" || rawCategory === "do" || rawCategory === "stay" ? rawCategory : "see";
     const baseDetails = entity?.address ? { address: String(entity.address) } : {};
-    const level2 =
-      category === "eat"
-        ? { category: "eat", cuisineType: null, mealType: null, dietaryTags: [], vibeTags: [], priceTier: null }
-        : category === "do"
-          ? { category: "do", activityType: null, timeTag: null, audienceTags: [], vibeTags: [], priceTier: null }
-          : category === "stay"
-            ? { category: "stay", stayType: null, useCase: null, amenities: [], locationTags: [], priceTier: null }
-            : { category: "see", placeType: null, experienceTag: null, vibeTags: [], entryFeeSignal: null };
-
-    return {
+    const level2 = buildDefaultLevel2(category);
+    const adaptedEntity = {
       category,
       name: String(entity?.name || "").trim(),
       entityType: "place",
@@ -40,6 +43,12 @@ function adaptStructuredRaw(raw: unknown, req: IntelligenceRequest): unknown {
       googleMapsQuery: entity?.googleMapsQuery ?? null,
       sourceEvidence: entity?.evidenceText ?? "Derived from combined extraction text",
       confidence: entity?.confidence ?? "low",
+      intent: entity?.intent,
+    };
+
+    return {
+      ...adaptedEntity,
+      intent: normalizeEntityIntent({ entity: adaptedEntity, category, level2 }),
     };
   });
 
@@ -131,6 +140,20 @@ function inferScenicVisualEntity(source: ExtractionResult): { entity: DiscoveryE
       evidenceText: evidenceParts.join(" | ") || "Visual landmark candidate inferred from reel frames.",
     };
     const vibeTags = structured.category === "see" ? ["Photo spots"] : [];
+    const level2 =
+      structured.category === "eat"
+        ? { category: "eat" as const, cuisineType: null, mealType: null, dietaryTags: [], vibeTags: [], priceTier: null }
+        : structured.category === "do"
+          ? { category: "do" as const, activityType: null, timeTag: null, audienceTags: [], vibeTags: [], priceTier: null }
+          : structured.category === "stay"
+            ? { category: "stay" as const, stayType: null, useCase: null, amenities: [], locationTags: [], priceTier: null }
+            : {
+                category: "see" as const,
+                placeType: "landmark",
+                experienceTag: "nature_view",
+                vibeTags,
+                entryFeeSignal: null,
+              };
     const entity: DiscoveryEntity = {
       category: structured.category,
       name: structured.name,
@@ -147,24 +170,14 @@ function inferScenicVisualEntity(source: ExtractionResult): { entity: DiscoveryE
         locationVerified: selectedCandidate.locationVerified ?? false,
         needsReview: true,
       },
-      level2:
-        structured.category === "eat"
-          ? { category: "eat", cuisineType: null, mealType: null, dietaryTags: [], vibeTags: [], priceTier: null }
-          : structured.category === "do"
-            ? { category: "do", activityType: null, timeTag: null, audienceTags: [], vibeTags: [], priceTier: null }
-            : structured.category === "stay"
-              ? { category: "stay", stayType: null, useCase: null, amenities: [], locationTags: [], priceTier: null }
-              : {
-                  category: "see",
-                  placeType: "landmark",
-                  experienceTag: "nature_view",
-                  vibeTags,
-                  entryFeeSignal: null,
-                },
+      level2,
       googleMapsQuery,
       sourceEvidence: structured.evidenceText || "Visual landmark candidate inferred from reel frames.",
       confidence,
     };
+    const intent = normalizeEntityIntent({ entity, category: entity.category, level2 });
+    structured.intent = intent;
+    entity.intent = intent;
     return { entity, structured };
   }
 
@@ -236,6 +249,7 @@ function inferScenicVisualEntity(source: ExtractionResult): { entity: DiscoveryE
     sourceEvidence: evidenceText,
     confidence: "low",
   };
+  entity.intent = normalizeEntityIntent({ entity, category: entity.category, level2: entity.level2 });
 
   const structured: StructuredEntity = {
     name,
@@ -248,6 +262,7 @@ function inferScenicVisualEntity(source: ExtractionResult): { entity: DiscoveryE
     confidence: "low",
     googleMapsQuery,
     evidenceText,
+    intent: entity.intent,
   };
 
   return { entity, structured };

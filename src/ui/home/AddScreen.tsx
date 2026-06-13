@@ -18,6 +18,7 @@ import {
   type IntelligenceEntity,
   type PendingDetectionJob,
 } from "./addFlowState";
+import { resolveEntityIntent } from "./intent";
 import { upsertSavedPlace } from "./savedPlaces";
 import {
   SHARED_INTENT_RECEIVED_EVENT,
@@ -524,6 +525,7 @@ export function AddScreen() {
       videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || linkInput.trim(),
       confidence: null,
       evidenceText: null,
+      intent: null,
       placeId: null,
       lat: null,
       lng: null,
@@ -566,19 +568,29 @@ export function AddScreen() {
   ];
 
   const publishSavedToCategoryFeed = (place: DetectedPlace) => {
+    const intent = resolveEntityIntent({
+      category: place.category,
+      intent: place.intent ?? null,
+      title: place.name,
+      evidenceText: place.evidenceText ?? null,
+    });
     upsertSavedPlace({
       id: `${place.category}-${place.placeId || place.id}`.toLowerCase(),
       placeId: place.placeId || place.id,
       title: place.name,
       category: place.category,
       distanceKm: 0.1,
-      metaPrimary: place.category,
-      metaSecondary: "Saved",
+      metaPrimary: intent.l2,
+      metaSecondary: intent.l3[0] || "",
       locality: place.locality,
+      city: place.city ?? null,
+      state: place.state ?? null,
+      country: place.country ?? null,
       fullAddress: place.fullAddress,
       videoUrl: place.videoUrl,
       imageUrl: place.imageUrl,
       tags: ["Saved", "Visited"],
+      intent,
       lat: place.lat ?? null,
       lng: place.lng ?? null,
       createdAtMs: Date.now(),
@@ -667,6 +679,7 @@ export function AddScreen() {
         videoUrl: normalizedSourceUrl,
         confidence: null,
         evidenceText: null,
+        intent: null,
         placeId: null,
         lat: null,
         lng: null,
@@ -1034,6 +1047,12 @@ export function AddScreen() {
       return;
     }
     try {
+      const intent = resolveEntityIntent({
+        category: place.category,
+        intent: place.intent ?? null,
+        title: place.name,
+        evidenceText: place.evidenceText ?? null,
+      });
       const response = await fetch(`${API_BASE_URL}/api/saved-places`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1050,6 +1069,9 @@ export function AddScreen() {
             videoUrl: place.videoUrl,
             confidence: place.confidence ?? null,
             evidenceText: place.evidenceText ?? null,
+            intent,
+            metaPrimary: intent.l2,
+            metaSecondary: intent.l3[0] || "",
             lat: place.lat ?? null,
             lng: place.lng ?? null,
             city: place.city ?? null,

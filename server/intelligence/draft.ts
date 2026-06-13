@@ -104,6 +104,14 @@ export function buildDraftIntelligenceOutput(source: ExtractionResult): Intellig
     .map((s) => s.trim())
     .find((s) => /road|city|nagar|karnataka|bihar|india|mangalore|patna/i.test(s)) || null;
   const locality = localityCandidate && localityCandidate.length <= 60 ? localityCandidate : null;
+  const intent =
+    category === "eat"
+      ? { l1: "taste" as const, l2: /cafe|café|coffee/i.test(joinedText) ? "Cafe" : "Restaurant", l3: [] }
+      : category === "do"
+        ? { l1: "activity" as const, l2: "Event", l3: [] }
+        : category === "stay"
+          ? { l1: "stay" as const, l2: /hostel/i.test(joinedText) ? "Hostel" : "Hotel", l3: [] }
+          : { l1: "explore" as const, l2: /waterfall|falls/i.test(joinedText) ? "Waterfall" : "Nature", l3: [] };
 
   return {
     source: {
@@ -138,6 +146,7 @@ export function buildDraftIntelligenceOutput(source: ExtractionResult): Intellig
         confidence: "low",
         googleMapsQuery: [name, locality].filter(Boolean).join(" ").trim() || name,
         evidenceText: "Draft heuristic inference from extracted metadata",
+        intent,
       },
     ],
     entities: [
@@ -162,6 +171,7 @@ export function buildDraftIntelligenceOutput(source: ExtractionResult): Intellig
         googleMapsQuery: [name, locality].filter(Boolean).join(" ").trim() || name,
         sourceEvidence: "Draft heuristic inference from extracted metadata",
         confidence: "low",
+        intent,
       },
     ],
     visibility: {
