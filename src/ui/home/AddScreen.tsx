@@ -32,6 +32,7 @@ const IS_DEV = import.meta.env.DEV;
 const ADD_INTELLIGENCE_TIMEOUT_MS = 120000;
 const MAX_PREVIEW_RETRIES = 2;
 const ADD_ANALYTICS_ANONYMOUS_ID_KEY = "wr_add_analytics_anonymous_id_v1";
+const STREAM_USEFUL_EVENT_TIMEOUT_MS = 4000;
 const LEGACY_ADD_STORAGE_KEYS = [
   "wandreel_add_url",
   "lastAnalyzedLink",
@@ -106,6 +107,10 @@ const STREAM_STAGE_COPY: Record<string, string> = {
   completed: "Almost there...",
   failed: "Almost there...",
 };
+
+function isUsefulStreamStage(stage: string): boolean {
+  return !["connected", "started", "metadata_started", "heartbeat"].includes(stage);
+}
 
 export function AddScreen() {
   const { isOffline, showToast, searchLocations } = useUx();
@@ -703,6 +708,20 @@ export function AddScreen() {
   }): Promise<ExtractionApiResponse> => {
     const controller = new AbortController();
     streamAbortRef.current = controller;
+    let usefulEventReceived = false;
+    let stalled = false;
+    let usefulEventTimer: number | null = window.setTimeout(() => {
+      stalled = true;
+      controller.abort();
+    }, STREAM_USEFUL_EVENT_TIMEOUT_MS);
+
+    const clearUsefulEventTimer = () => {
+      if (usefulEventTimer !== null) {
+        window.clearTimeout(usefulEventTimer);
+        usefulEventTimer = null;
+      }
+    };
+
     const response = await fetch(`${API_BASE_URL}/api/metadata/extract/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -745,34 +764,56 @@ export function AddScreen() {
         if (!dataLines.length) continue;
         const payload = JSON.parse(dataLines.join("\n")) as ExtractionStreamEvent;
         if (analyzeRunRef.current !== input.runId) {
+          clearUsefulEventTimer();
           controller.abort();
           return;
         }
         syncAnalysisProgressFromEvent(payload);
+        if (isUsefulStreamStage(payload.stage)) {
+          usefulEventReceived = true;
+          clearUsefulEventTimer();
+        }
         if (eventName === "completed" || payload.stage === "completed") {
+          clearUsefulEventTimer();
           finalResult = payload.result || null;
         }
         if (eventName === "failed" || payload.stage === "failed") {
+          clearUsefulEventTimer();
           throw new Error(payload.error?.error || "stream_failed");
         }
       }
     };
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      processChunk(decoder.decode(value, { stream: true }));
-      if (finalResult) {
-        break;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        processChunk(decoder.decode(value, { stream: true }));
+        if (finalResult) {
+          break;
+        }
+      }
+    } catch (error) {
+      if (stalled) {
+        throw new Error("stream_stalled");
+      }
+      throw error;
+    } finally {
+      clearUsefulEventTimer();
+      void reader.cancel().catch(() => undefined);
+      if (streamAbortRef.current === controller) {
+        streamAbortRef.current = null;
       }
     }
 
     if (!finalResult && buffer.trim()) {
       processChunk(`${buffer}\n\n`);
     }
-    streamAbortRef.current = null;
     const resolvedResult = finalResult as ExtractionApiResponse | null;
     if (!resolvedResult || !resolvedResult.ok) {
+      if (!usefulEventReceived) {
+        throw new Error("stream_incomplete_no_useful_event");
+      }
       throw new Error("stream_incomplete");
     }
     return resolvedResult;
