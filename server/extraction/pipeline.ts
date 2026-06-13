@@ -25,6 +25,33 @@ import { recordSla } from "../metrics/slaTracker";
 import { getAttemptHypothesisSummary } from "../attemptHypothesisStore";
 import fs from "node:fs/promises";
 
+export type ExtractionProgressStage =
+  | "started"
+  | "metadata_started"
+  | "metadata_done"
+  | "tiny_extractor_started"
+  | "tiny_extractor_done"
+  | "accepted_description"
+  | "transcript_started"
+  | "transcript_done"
+  | "frame_extraction_started"
+  | "frame_extraction_done"
+  | "ocr_started"
+  | "ocr_done"
+  | "visual_started"
+  | "visual_done"
+  | "completed"
+  | "failed";
+
+export type ExtractionProgressEvent = {
+  stage: ExtractionProgressStage;
+  message: string;
+  elapsedMs: number;
+  attemptNumber: number;
+};
+
+type ExtractionProgressReporter = (event: ExtractionProgressEvent) => void | Promise<void>;
+
 type CacheEntry = {
   expiresAt: number;
   result: ExtractionResult;
@@ -108,6 +135,22 @@ function getNumberEnv(name: string, fallback: number): number {
 
 function nowMs(): number {
   return Date.now();
+}
+
+async function emitProgress(
+  reporter: ExtractionProgressReporter | undefined,
+  totalStartedAt: number,
+  attemptNumber: number,
+  stage: ExtractionProgressStage,
+  message: string,
+) {
+  if (!reporter) return;
+  await reporter({
+    stage,
+    message,
+    elapsedMs: nowMs() - totalStartedAt,
+    attemptNumber,
+  });
 }
 
 async function withBudget<T>(work: Promise<T>, budgetMs: number, fallback: () => T): Promise<T> {
@@ -1097,6 +1140,7 @@ export async function runExtractionPipeline(input: {
   debug?: boolean;
   attemptNumber?: number;
   triggerType?: ExtractionTriggerType;
+  onProgress?: ExtractionProgressReporter;
 }): Promise<ExtractionResult> {
   const debugEnabled = Boolean(input.debug);
   const traceEnabled = isTraceEnabled(debugEnabled);
@@ -1147,10 +1191,13 @@ export async function runExtractionPipeline(input: {
   }
 
   const totalStartedAt = nowMs();
+  await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "started", "Extraction started.");
+  await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "metadata_started", "Fetching metadata.");
   const { metadata, metadataFailureReason, metadataMs, metadataFetchMs, commentsMs } = await readMetadata(input.url, {
     mode: input.mode,
     attemptNumber,
   });
+  await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "metadata_done", "Metadata fetched.");
 
   if (input.mode === "quick") {
     const orchestration = createTrace({
@@ -1220,6 +1267,7 @@ export async function runExtractionPipeline(input: {
     if (traceEnabled) {
       console.info("[extraction-debug]", quickResult.debug);
     }
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "completed", "Extraction completed.");
     if (!debugEnabled && !isLowSignalInstagramResult(quickResult)) {
       extractionCache.set(cacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(quickResult) });
     }
@@ -1250,6 +1298,7 @@ export async function runExtractionPipeline(input: {
   let transcriptProbeMs = 0;
   let llmCallsBeforeResponse = 0;
   if (attemptNumber === 1 && !descriptionWeak) {
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "tiny_extractor_started", "Running tiny caption extractor.");
     const descriptionProbeResult = await safeRunTinyFastExtractor(
       {
         metadata,
@@ -1287,6 +1336,7 @@ export async function runExtractionPipeline(input: {
           : descriptionProbe?.entityCount === 0
             ? "tiny_extractor_no_entities"
             : `tiny_extractor_${descriptionProbe?.confidence || "low"}`);
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "tiny_extractor_done", "Tiny caption extractor finished.");
   }
   const shouldRunTranscript = attemptNumber >= 2 || descriptionWeak;
   let transcript: TranscriptResult = {
@@ -1366,6 +1416,8 @@ export async function runExtractionPipeline(input: {
     if (traceEnabled) {
       console.info("[extraction-debug]", result.debug);
     }
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "accepted_description", "Accepted after caption evidence.");
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "completed", "Extraction completed.");
     console.info(
       `[attempt-1-sla] acceptedAfter=description fastExtractorMs=${descriptionProbeMs} duplicateLlmSkipped=true llmCalls=${llmCallsBeforeResponse} metadataMs=${metadataMs} commentsMs=${commentsMs} totalMs=${result.sla?.totalMs ?? result.perf?.totalMs ?? 0}`,
     );
@@ -1451,6 +1503,7 @@ export async function runExtractionPipeline(input: {
       orchestration.transcriptReused = true;
       pushDecision(orchestration, "transcript", false, "retry_2_transcript_reused");
     } else {
+      await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_started", "Reading transcript clues.");
       const transcriptRead = await readTranscript(metadata);
       transcript = mergeTranscriptResults(inheritedTranscript, transcriptRead.transcript) ?? {
         attempted: true,
@@ -1460,10 +1513,16 @@ export async function runExtractionPipeline(input: {
         reason: transcriptRead.transcript.reason || "retry_2_transcript_missing_rerun",
       };
       transcriptMs = transcriptRead.transcriptMs;
+      await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_done", "Transcript step finished.");
       orchestration.transcriptReused = false;
       pushDecision(orchestration, "transcript", true, "retry_2_transcript_missing_rerun");
     }
     pushDecision(orchestration, "ocr", true, "retry_2_frame_ocr");
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "frame_extraction_started", "Checking video frames.");
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "ocr_started", "Reading on-screen text.");
+    if (visualFallbackPolicy.includeVisual) {
+      await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "visual_started", "Trying visual match.");
+    }
     const sequential = await processRetryFramesSequentially({
       metadata,
       transcript,
@@ -1483,6 +1542,11 @@ export async function runExtractionPipeline(input: {
     visualFallback = sequential.visualFallback;
     visualFallbackMs = sequential.visualFallbackMs;
     visualFallbackOnlyMs = sequential.visualFallbackOnlyMs;
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "frame_extraction_done", "Frame check finished.");
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "ocr_done", "On-screen text step finished.");
+    if (visualFallbackPolicy.includeVisual) {
+      await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "visual_done", "Visual match finished.");
+    }
     orchestration.ocrFrameCount = sequential.screenshots.length;
     orchestration.visualFrameCount = sequential.screenshots.length;
   } else if (attemptNumber === 2) {
@@ -1501,6 +1565,7 @@ export async function runExtractionPipeline(input: {
       orchestration.transcriptReused = true;
       pushDecision(orchestration, "transcript", false, "retry_1_transcript_reused");
     } else {
+      await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_started", "Reading transcript clues.");
       const transcriptRead = await readTranscript(metadata);
       transcript = mergeTranscriptResults(reusedTranscript ?? null, transcriptRead.transcript) ?? {
         attempted: true,
@@ -1510,10 +1575,13 @@ export async function runExtractionPipeline(input: {
         reason: transcriptRead.transcript.reason || "retry_1_transcript_missing_rerun",
       };
       transcriptMs = transcriptRead.transcriptMs;
+      await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_done", "Transcript step finished.");
       orchestration.transcriptReused = false;
       pushDecision(orchestration, "transcript", true, "retry_1_transcript_missing_rerun");
     }
     pushDecision(orchestration, "ocr", true, "retry_1_frame_ocr");
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "frame_extraction_started", "Checking video frames.");
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "ocr_started", "Reading on-screen text.");
     const sequential = await processRetryFramesSequentially({
       metadata,
       transcript,
@@ -1526,12 +1594,16 @@ export async function runExtractionPipeline(input: {
     ocrMs = sequential.ocrMs;
     frameExtractionMs = sequential.frameExtractionMs;
     ocrOnlyMs = sequential.ocrOnlyMs;
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "frame_extraction_done", "Frame check finished.");
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "ocr_done", "On-screen text step finished.");
     orchestration.ocrFrameCount = sequential.screenshots.length;
     orchestration.visualFrameCount = 0;
   } else {
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_started", "Reading transcript clues.");
     const transcriptRead = await readTranscript(metadata);
     transcript = transcriptRead.transcript;
     transcriptMs = transcriptRead.transcriptMs;
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_done", "Transcript step finished.");
     const transcriptProbeResult = await safeProbeLlmConfidence(
       {
         metadata,
@@ -1608,6 +1680,7 @@ export async function runExtractionPipeline(input: {
       if (traceEnabled) {
         console.info("[extraction-debug]", result.debug);
       }
+      await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "completed", "Extraction completed.");
       if (!debugEnabled && !isLowSignalInstagramResult(result)) {
         extractionCache.set(cacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
         extractionCache.set(sharedCacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
@@ -1619,6 +1692,8 @@ export async function runExtractionPipeline(input: {
       return result;
     }
 
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "frame_extraction_started", "Checking video frames.");
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "ocr_started", "Reading on-screen text.");
     const sequential = await processRetryFramesSequentially({
       metadata,
       transcript,
@@ -1632,6 +1707,8 @@ export async function runExtractionPipeline(input: {
     ocrMs = sequential.ocrMs;
     frameExtractionMs = sequential.frameExtractionMs;
     ocrOnlyMs = sequential.ocrOnlyMs;
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "frame_extraction_done", "Frame check finished.");
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "ocr_done", "On-screen text step finished.");
     orchestration.ocrFrameCount = sequential.screenshots.length;
     orchestration.visualFrameCount = 0;
   }
@@ -1690,6 +1767,7 @@ export async function runExtractionPipeline(input: {
   if (traceEnabled) {
     console.info("[extraction-debug]", result.debug);
   }
+  await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "completed", "Extraction completed.");
   if (!debugEnabled && !isLowSignalInstagramResult(result)) {
     extractionCache.set(cacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
     extractionCache.set(sharedCacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });

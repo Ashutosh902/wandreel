@@ -52,6 +52,15 @@ type ExtractionApiResponse = {
   };
 };
 
+type ExtractionStreamEvent = {
+  stage: string;
+  message: string;
+  elapsedMs: number;
+  attemptNumber: number;
+  result?: ExtractionApiResponse;
+  error?: { error?: string };
+};
+
 type IntelligenceApiResponse = {
   ok: boolean;
   jobId?: string;
@@ -79,6 +88,24 @@ type PreviewCard =
     };
 
 const chipOrder: Array<"Auto-detect" | DetectedCategory> = ["Auto-detect", "Taste", "Activity", "Stay", "Explore"];
+const STREAM_STAGE_COPY: Record<string, string> = {
+  started: "Reading the link...",
+  metadata_started: "Reading the link...",
+  metadata_done: "Found the caption...",
+  tiny_extractor_started: "Creating your card...",
+  tiny_extractor_done: "Almost there...",
+  accepted_description: "Found a strong match...",
+  transcript_started: "Listening for place clues...",
+  transcript_done: "Almost there...",
+  frame_extraction_started: "Checking video frames...",
+  frame_extraction_done: "Almost there...",
+  ocr_started: "Reading on-screen text...",
+  ocr_done: "Almost there...",
+  visual_started: "Trying our best match...",
+  visual_done: "Almost there...",
+  completed: "Almost there...",
+  failed: "Almost there...",
+};
 
 export function AddScreen() {
   const { isOffline, showToast, searchLocations } = useUx();
@@ -104,7 +131,12 @@ export function AddScreen() {
   const [queuedSharedLink, setQueuedSharedLink] = useState<string | null>(null);
   const [removingPlaceId, setRemovingPlaceId] = useState<string | null>(null);
   const [autoSelectFirstSuggestion, setAutoSelectFirstSuggestion] = useState(true);
+  const [analysisStageCopy, setAnalysisStageCopy] = useState("Analyzing link...");
+  const [analysisElapsedSeconds, setAnalysisElapsedSeconds] = useState(0);
   const analyzeRunRef = useRef(0);
+  const analysisTimerRef = useRef<number | null>(null);
+  const analysisStartedAtRef = useRef<number | null>(null);
+  const streamAbortRef = useRef<AbortController | null>(null);
   const locationDebounceTimerRef = useRef<number | null>(null);
   const detectedPlacesRef = useRef<DetectedPlace[]>([]);
   const pendingJobsRef = useRef<PendingDetectionJob[]>([]);
@@ -188,8 +220,17 @@ export function AddScreen() {
 
   const resetAddFlowState = (options?: { clearPersisted?: boolean }) => {
     analyzeRunRef.current = Date.now();
+    if (analysisTimerRef.current) {
+      window.clearInterval(analysisTimerRef.current);
+      analysisTimerRef.current = null;
+    }
+    streamAbortRef.current?.abort();
+    streamAbortRef.current = null;
+    analysisStartedAtRef.current = null;
     setLinkInput("");
     setIsAnalyzing(false);
+    setAnalysisStageCopy("Analyzing link...");
+    setAnalysisElapsedSeconds(0);
     setHasAnalyzed(false);
     setSelectedDetectedCategory("Auto-detect");
     setDetectedPlaces([]);
@@ -216,6 +257,35 @@ export function AddScreen() {
     }
   };
 
+  const startAnalysisProgress = (message = "Reading the link...") => {
+    if (analysisTimerRef.current) {
+      window.clearInterval(analysisTimerRef.current);
+    }
+    analysisStartedAtRef.current = Date.now();
+    setAnalysisStageCopy(message);
+    setAnalysisElapsedSeconds(0);
+    analysisTimerRef.current = window.setInterval(() => {
+      const startedAt = analysisStartedAtRef.current;
+      if (!startedAt) return;
+      setAnalysisElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    }, 1000);
+  };
+
+  const stopAnalysisProgress = () => {
+    if (analysisTimerRef.current) {
+      window.clearInterval(analysisTimerRef.current);
+      analysisTimerRef.current = null;
+    }
+    analysisStartedAtRef.current = null;
+  };
+
+  const syncAnalysisProgressFromEvent = (event: ExtractionStreamEvent) => {
+    setAnalysisStageCopy(STREAM_STAGE_COPY[event.stage] || "Analyzing link...");
+    if (typeof event.elapsedMs === "number") {
+      setAnalysisElapsedSeconds(Math.max(0, Math.floor(event.elapsedMs / 1000)));
+    }
+  };
+
   useEffect(() => {
     detectedPlacesRef.current = detectedPlaces;
   }, [detectedPlaces]);
@@ -223,6 +293,11 @@ export function AddScreen() {
   useEffect(() => {
     pendingJobsRef.current = pendingJobs;
   }, [pendingJobs]);
+
+  useEffect(() => () => {
+    stopAnalysisProgress();
+    streamAbortRef.current?.abort();
+  }, []);
 
   useEffect(() => {
     if (!saveMessage) return;
@@ -620,6 +695,89 @@ export function AddScreen() {
     }, 260);
   };
 
+  const extractWithStreaming = async (input: {
+    runId: number;
+    normalizedSourceUrl: string;
+    retryCount: number;
+    isRetry: boolean;
+  }): Promise<ExtractionApiResponse> => {
+    const controller = new AbortController();
+    streamAbortRef.current = controller;
+    const response = await fetch(`${API_BASE_URL}/api/metadata/extract/stream`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        url: input.normalizedSourceUrl,
+        mode: "deep",
+        analytics: {
+          clientRunId: String(input.runId),
+          anonymousId: getAnalyticsAnonymousId(),
+          attemptNumber: input.retryCount + 1,
+          triggerType: input.isRetry ? "retry" : "initial",
+        },
+      }),
+      signal: controller.signal,
+    });
+
+    if (!response.ok || !response.body || !String(response.headers.get("content-type") || "").includes("text/event-stream")) {
+      throw new Error("stream_unavailable");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalResult: ExtractionApiResponse | null = null;
+
+    const processChunk = (chunk: string) => {
+      const blocks = chunk.split("\n\n");
+      buffer = blocks.pop() || "";
+      for (const block of blocks) {
+        const lines = block.split(/\r?\n/);
+        let eventName = "message";
+        const dataLines: string[] = [];
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            eventName = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            dataLines.push(line.slice(5).trim());
+          }
+        }
+        if (!dataLines.length) continue;
+        const payload = JSON.parse(dataLines.join("\n")) as ExtractionStreamEvent;
+        if (analyzeRunRef.current !== input.runId) {
+          controller.abort();
+          return;
+        }
+        syncAnalysisProgressFromEvent(payload);
+        if (eventName === "completed" || payload.stage === "completed") {
+          finalResult = payload.result || null;
+        }
+        if (eventName === "failed" || payload.stage === "failed") {
+          throw new Error(payload.error?.error || "stream_failed");
+        }
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      processChunk(decoder.decode(value, { stream: true }));
+      if (finalResult) {
+        break;
+      }
+    }
+
+    if (!finalResult && buffer.trim()) {
+      processChunk(`${buffer}\n\n`);
+    }
+    streamAbortRef.current = null;
+    const resolvedResult = finalResult as ExtractionApiResponse | null;
+    if (!resolvedResult || !resolvedResult.ok) {
+      throw new Error("stream_incomplete");
+    }
+    return resolvedResult;
+  };
+
   const runAnalysis = async (sourceUrl: string, options?: { runId?: number; isRetry?: boolean }) => {
     if (isAnalyzing) return;
     if (isOffline) {
@@ -697,6 +855,7 @@ export function AddScreen() {
     analyzeRunRef.current = runId;
     window.dispatchEvent(new CustomEvent(ADD_PROCESSING_STARTED_EVENT));
     setIsAnalyzing(true);
+    startAnalysisProgress("Reading the link...");
     setSaveMessage("");
     setSelectedDetectedCategory("Auto-detect");
     setActivePreviewKey(`pending-${runId}`);
@@ -721,24 +880,36 @@ export function AddScreen() {
     syncDraftState(nextDraftPlaces, nextDraftPendingJobs, normalizedSourceUrl);
 
     try {
-      const extractionResponse = await fetch(`${API_BASE_URL}/api/metadata/extract`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: normalizedSourceUrl,
-          mode: "deep",
-          analytics: {
-            clientRunId: String(runId),
-            anonymousId: getAnalyticsAnonymousId(),
-            attemptNumber: retryCount + 1,
-            triggerType: options?.isRetry ? "retry" : "initial",
-          },
-        }),
-      });
-      const extraction = (await extractionResponse.json()) as ExtractionApiResponse;
-      if (!extractionResponse.ok || !extraction?.ok) throw new Error("extraction_failed");
+      let extraction: ExtractionApiResponse;
+      try {
+        extraction = await extractWithStreaming({
+          runId,
+          normalizedSourceUrl,
+          retryCount,
+          isRetry: Boolean(options?.isRetry),
+        });
+      } catch {
+        setAnalysisStageCopy("Almost there...");
+        const extractionResponse = await fetch(`${API_BASE_URL}/api/metadata/extract`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            url: normalizedSourceUrl,
+            mode: "deep",
+            analytics: {
+              clientRunId: String(runId),
+              anonymousId: getAnalyticsAnonymousId(),
+              attemptNumber: retryCount + 1,
+              triggerType: options?.isRetry ? "retry" : "initial",
+            },
+          }),
+        });
+        extraction = (await extractionResponse.json()) as ExtractionApiResponse;
+        if (!extractionResponse.ok || !extraction?.ok) throw new Error("extraction_failed");
+      }
 
       if (analyzeRunRef.current !== runId) return;
+      stopAnalysisProgress();
 
       const draftPlace = toDraftPlace(extraction, runId, normalizedSourceUrl, retryCount);
       const extractionPendingJob: PendingDetectionJob = {
@@ -810,6 +981,9 @@ export function AddScreen() {
       setIsAnalyzing(false);
     } catch {
       if (analyzeRunRef.current !== runId) return;
+      stopAnalysisProgress();
+      streamAbortRef.current?.abort();
+      streamAbortRef.current = null;
       syncDraftState(
         replaceRunPlaces(detectedPlacesRef.current, runId, [fallbackPlace]),
         pendingJobsRef.current.filter((item) => item.runId !== runId),
@@ -1223,7 +1397,14 @@ export function AddScreen() {
         </label>
 
         <button type="button" className={`wr-add-analyze-btn ${isAnalyzing ? "is-loading" : ""}`} disabled={isAnalyzing || !linkInput.trim()} onClick={handleAnalyze}>
-          <span>{isAnalyzing ? "Turning scroll into stroll..." : "Analyze link"}</span>
+          {isAnalyzing ? (
+            <>
+              <span>{`Analyzing link... ${analysisElapsedSeconds}s`}</span>
+              <small>{analysisStageCopy}</small>
+            </>
+          ) : (
+            <span>Analyze link</span>
+          )}
           {isAnalyzing ? <span className="wr-add-stroll-loader" aria-hidden="true"><span /><span /><span /><span /></span> : null}
         </button>
       </article>

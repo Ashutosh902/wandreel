@@ -1,6 +1,6 @@
 import "dotenv/config";
 import express from "express";
-import { extractionJobStore, runExtractionPipeline, type ExtractionMode } from "./extraction";
+import { extractionJobStore, runExtractionPipeline, type ExtractionMode, type ExtractionProgressEvent } from "./extraction";
 import { intelligenceJobStore, runIntelligencePipeline, type IntelligenceMode } from "./intelligence";
 import { buildDraftIntelligenceOutput } from "./intelligence/draft";
 import { phoneOtpStore } from "./auth/phoneOtpStore";
@@ -49,6 +49,32 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: "1mb" }));
+
+function parseExtractionRequest(req: express.Request) {
+  const url = String(req.body?.url || "").trim();
+  const modeRaw = String(req.body?.mode || "quick").trim().toLowerCase();
+  const mode: ExtractionMode = modeRaw === "deep" ? "deep" : "quick";
+  const analyticsPayload = req.body?.analytics && typeof req.body.analytics === "object" ? req.body.analytics : null;
+  const debugRaw = String(req.body?.debug ?? req.query?.debug ?? "").trim().toLowerCase();
+  const debug =
+    debugRaw === "1" ||
+    debugRaw === "true" ||
+    debugRaw === "yes" ||
+    /[?&](debug|fresh)=frame-debug/i.test(url) ||
+    /[?&]fresh=[^&]*frame-debug/i.test(url);
+  const attemptNumber = Number(req.body?.attemptNumber ?? analyticsPayload?.attemptNumber) || 1;
+  const triggerType =
+    (req.body?.triggerType === "retry" || analyticsPayload?.triggerType === "retry") ? "retry" : "initial";
+
+  return {
+    url,
+    mode,
+    analyticsPayload,
+    debug,
+    attemptNumber,
+    triggerType: triggerType as "initial" | "retry",
+  };
+}
 
 function parseCookies(headerValue: string | undefined) {
   const out: Record<string, string> = {};
@@ -278,19 +304,7 @@ app.get("/api/location/resolve-place", async (req, res) => {
 });
 
 app.post("/api/metadata/extract", async (req, res) => {
-  const url = String(req.body?.url || "").trim();
-  const modeRaw = String(req.body?.mode || "quick").trim().toLowerCase();
-  const mode: ExtractionMode = modeRaw === "deep" ? "deep" : "quick";
-  const analyticsPayload = req.body?.analytics && typeof req.body.analytics === "object" ? req.body.analytics : null;
-  const debugRaw = String(req.body?.debug ?? req.query?.debug ?? "").trim().toLowerCase();
-  const debug =
-    debugRaw === "1" ||
-    debugRaw === "true" ||
-    debugRaw === "yes" ||
-    /[?&](debug|fresh)=frame-debug/i.test(url) ||
-    /[?&]fresh=[^&]*frame-debug/i.test(url);
-  const attemptNumber = Number(analyticsPayload?.attemptNumber) || 1;
-  const triggerType = analyticsPayload?.triggerType === "retry" ? "retry" : "initial";
+  const { url, mode, debug, attemptNumber, triggerType } = parseExtractionRequest(req);
   try {
     if (!url) {
       return res.status(400).json({ ok: false, error: "url is required" });
@@ -343,6 +357,98 @@ app.post("/api/metadata/extract", async (req, res) => {
       ok: false,
       ...diagnostics,
     });
+  }
+});
+
+app.post("/api/metadata/extract/stream", async (req, res) => {
+  const { url, mode, debug, attemptNumber, triggerType } = parseExtractionRequest(req);
+  if (!url) {
+    return res.status(400).json({ ok: false, error: "url is required" });
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache, no-transform");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  let closed = false;
+  req.on("close", () => {
+    closed = true;
+  });
+
+  const sendEvent = (event: string, payload: Record<string, unknown>) => {
+    if (closed) return;
+    res.write(`event: ${event}\n`);
+    res.write(`data: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  const sendProgress = (payload: ExtractionProgressEvent) => {
+    sendEvent(payload.stage, payload);
+  };
+
+  try {
+    const result = await runExtractionPipeline({
+      url,
+      mode,
+      debug,
+      attemptNumber,
+      triggerType,
+      onProgress: sendProgress,
+    });
+    const attemptRecord = await createAnalyticsAttemptFromRequest(req, result);
+    if (attemptRecord?.attemptId) {
+      try {
+        await persistReelAnalyticsAttemptArtifacts({
+          attemptId: attemptRecord.attemptId,
+          extractionResult: result,
+        });
+      } catch (artifactError) {
+        console.error("persist extraction attempt artifacts failed", artifactError);
+      }
+    }
+    sendEvent("completed", {
+      stage: "completed",
+      message: "Extraction completed.",
+      elapsedMs: result.debug?.timings && typeof (result.debug as any).timings.extractionTotalMs === "number"
+        ? (result.debug as any).timings.extractionTotalMs
+        : result.sla?.totalMs ?? result.perf?.totalMs ?? 0,
+      attemptNumber,
+      result: { ok: true, ...result },
+    });
+    if (!closed) {
+      res.end();
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "extraction failed";
+    const errorName = error instanceof Error ? error.name : "UnknownError";
+    const stackPreview =
+      debug || process.env.NODE_ENV !== "production"
+        ? String(error instanceof Error ? error.stack || "" : "")
+            .split(/\r?\n/)
+            .slice(0, 5)
+        : undefined;
+    const diagnostics = {
+      error: message,
+      errorName,
+      stackPreview,
+      url,
+      mode,
+      attemptNumber,
+      triggerType,
+      debug,
+    };
+    console.error("[metadata-extract-error]", diagnostics);
+    sendEvent("failed", {
+      stage: "failed",
+      message,
+      elapsedMs: 0,
+      attemptNumber,
+      error: diagnostics,
+    });
+    if (!closed) {
+      res.end();
+    }
   }
 });
 
