@@ -1,4 +1,4 @@
-import { extractMetadata } from "./metadata";
+import { extractInstagramCommentEvidence, extractMetadata } from "./metadata";
 import {
   createFrameManifest,
   loadScreenshotAssetFromManifest,
@@ -8,13 +8,14 @@ import {
 import { enrichWithTranscript } from "./transcript";
 import { runVisualFallback } from "./visualFallback";
 import { buildCombinedText } from "./combinedText";
-import { runIntelligencePipeline } from "../intelligence";
+import { runIntelligencePipeline, runTinyCaptionIntelligence } from "../intelligence";
 import { extractVisionOcrFromScreenshots } from "./visionOcr";
 import type {
   ExtractionMode,
   ExtractionResult,
   ExtractionTriggerType,
   OcrResult,
+  MetadataCommentEvidence,
   ScreenshotAsset,
   TranscriptResult,
   VisualFallbackResult,
@@ -59,6 +60,28 @@ type LlmConfidenceProbe = {
   entityCount: number;
 };
 
+type StructuredFastPathDecision = LlmConfidenceProbe & {
+  result: import("../intelligence/types").IntelligencePipelineResult;
+  model: string | null;
+};
+
+type ExtractionDebugTimings = {
+  metadataFetchMs: number;
+  metadataMs: number;
+  commentsMs: number;
+  descriptionFastExtractorMs: number;
+  descriptionProbeMs: number;
+  transcriptProbeMs: number;
+  transcriptMs: number;
+  frameExtractionMs: number;
+  ocrOnlyMs: number;
+  ocrMs: number;
+  visualFallbackOnlyMs: number;
+  visualFallbackMs: number;
+  extractionTotalMs: number;
+  llmCallsBeforeResponse: number;
+};
+
 type ProbeFailureContext = {
   stage: "description" | "transcript";
   mode: ExtractionMode;
@@ -76,6 +99,7 @@ const extractionCache = new Map<string, CacheEntry>();
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_METADATA_BUDGET_MS = 12000;
 const DEFAULT_TRANSCRIPT_BUDGET_MS = 60000;
+const DEFAULT_COMMENT_BUDGET_MS = 1500;
 
 function getNumberEnv(name: string, fallback: number): number {
   const raw = Number(process.env[name]);
@@ -96,6 +120,17 @@ async function withBudget<T>(work: Promise<T>, budgetMs: number, fallback: () =>
   });
   const result = await Promise.race([work, timeout]);
   return timedOut ? fallback() : result;
+}
+
+function buildCommentTimeoutEvidence(): MetadataCommentEvidence {
+  return {
+    attempted: true,
+    timedOut: true,
+    pinnedComment: null,
+    topComments: [],
+    provider: "instagram_script",
+    reason: "timeout",
+  };
 }
 
 function cloneResult(result: ExtractionResult): ExtractionResult {
@@ -197,14 +232,29 @@ function getBestEntityConfidence(source: {
   return "low";
 }
 
-async function probeLlmConfidence(input: {
+function isUsefulStructuredResult(result: import("../intelligence/types").IntelligencePipelineResult): LlmConfidenceProbe {
+  const confidence = getBestEntityConfidence(result);
+  const status = result.output?.status ?? null;
+  const entityCount = Array.isArray(result.output?.structuredEntities)
+    ? result.output.structuredEntities.length
+    : 0;
+
+  return {
+    accepted: (confidence === "high" || confidence === "medium") && status !== "no_supported_entity_found",
+    confidence,
+    status,
+    entityCount,
+  };
+}
+
+async function runStructuredFastPathDecision(input: {
   metadata: ExtractionResult["metadata"];
   mode: ExtractionMode;
   attemptNumber: number;
   triggerType: ExtractionTriggerType;
   transcript?: TranscriptResult | null;
   ocr?: OcrResult | null;
-}): Promise<LlmConfidenceProbe> {
+}): Promise<StructuredFastPathDecision> {
   const probeSource: ExtractionResult = {
     mode: input.mode,
     metadata: input.metadata,
@@ -245,18 +295,64 @@ async function probeLlmConfidence(input: {
       triggerType: input.triggerType,
     },
   });
+  return {
+    ...isUsefulStructuredResult(intelligence),
+    result: intelligence,
+    model: intelligence.providerMeta?.model || null,
+  };
+}
 
-  const confidence = getBestEntityConfidence(intelligence);
-  const status = intelligence.output?.status ?? null;
-  const entityCount = Array.isArray(intelligence.output?.structuredEntities)
-    ? intelligence.output.structuredEntities.length
-    : 0;
+async function runTinyCaptionFastPathDecision(input: {
+  metadata: ExtractionResult["metadata"];
+  mode: ExtractionMode;
+  attemptNumber: number;
+  triggerType: ExtractionTriggerType;
+}): Promise<StructuredFastPathDecision> {
+  const probeSource: ExtractionResult = {
+    mode: input.mode,
+    metadata: input.metadata,
+    transcript: { attempted: false, used: false, source: null, text: "", reason: "not_attempted" },
+    ocr: { attempted: false, used: false, text: "", reason: "not_attempted" },
+    visualFallback: {
+      attempted: false,
+      triggered: false,
+      reason: "not_attempted",
+      provider: "shared_visual_fallback",
+      confidence: "low",
+      needsReview: true,
+      screenshots: [],
+      textQueries: [],
+      visualQueries: [],
+      candidates: [],
+      selectedCandidate: null,
+      summaryText: "",
+    },
+    attemptInfo: {
+      attemptNumber: input.attemptNumber,
+      triggerType: input.triggerType,
+    },
+    source: input.metadata.sourceUrl,
+    platform: input.metadata.platform,
+    canonicalUrl: input.metadata.canonicalUrl,
+    ...buildCombinedText({
+      metadata: input.metadata,
+      transcript: null,
+      ocr: null,
+    }),
+  };
+
+  const intelligence = await runTinyCaptionIntelligence({
+    source: probeSource,
+    analytics: {
+      attemptNumber: input.attemptNumber,
+      triggerType: input.triggerType,
+    },
+  });
 
   return {
-    accepted: (confidence === "high" || confidence === "medium") && status !== "no_supported_entity_found",
-    confidence,
-    status,
-    entityCount,
+    ...isUsefulStructuredResult(intelligence),
+    result: intelligence,
+    model: intelligence.providerMeta?.model || null,
   };
 }
 
@@ -282,10 +378,11 @@ async function safeProbeLlmConfidence(
     ocr?: OcrResult | null;
   },
   context: ProbeFailureContext,
-): Promise<{ probe: LlmConfidenceProbe | null; failureReason: string | null }> {
+): Promise<{ probe: LlmConfidenceProbe | null; failureReason: string | null; probeMs: number }> {
+  const startedAt = nowMs();
   try {
-    const probe = await probeLlmConfidence(input);
-    return { probe, failureReason: null };
+    const probe = await runStructuredFastPathDecision(input);
+    return { probe, failureReason: null, probeMs: nowMs() - startedAt };
   } catch (error) {
     const failureReason = buildProbeFailureReason(context, error);
     console.error("[extraction-probe-failed]", {
@@ -298,7 +395,36 @@ async function safeProbeLlmConfidence(
       attemptNumber: context.attemptNumber,
       triggerType: context.triggerType,
     });
-    return { probe: null, failureReason };
+    return { probe: null, failureReason, probeMs: nowMs() - startedAt };
+  }
+}
+
+async function safeRunTinyFastExtractor(
+  input: {
+    metadata: ExtractionResult["metadata"];
+    mode: ExtractionMode;
+    attemptNumber: number;
+    triggerType: ExtractionTriggerType;
+  },
+  context: ProbeFailureContext,
+): Promise<{ probe: StructuredFastPathDecision | null; failureReason: string | null; probeMs: number }> {
+  const startedAt = nowMs();
+  try {
+    const probe = await runTinyCaptionFastPathDecision(input);
+    return { probe, failureReason: null, probeMs: nowMs() - startedAt };
+  } catch (error) {
+    const failureReason = buildProbeFailureReason(context, error);
+    console.error("[tiny-fast-extractor-failed]", {
+      stage: context.stage,
+      reason: failureReason,
+      error: error instanceof Error ? error.message : String(error || "unknown_error"),
+      url: context.metadata.canonicalUrl || context.metadata.sourceUrl,
+      platform: context.metadata.platform,
+      mode: context.mode,
+      attemptNumber: context.attemptNumber,
+      triggerType: context.triggerType,
+    });
+    return { probe: null, failureReason, probeMs: nowMs() - startedAt };
   }
 }
 
@@ -311,6 +437,19 @@ function buildExtractionDebug(input: {
   visualFallback: VisualFallbackResult | null;
   orchestration?: OrchestrationTrace;
   priorAttemptHypotheses?: unknown[] | null;
+  timings?: ExtractionDebugTimings;
+  fastPath?: {
+    attempted: boolean;
+    accepted: boolean;
+    duplicateDescriptionLlmSkipped: boolean;
+    result?: unknown;
+    tinyFastExtractorUsed?: boolean;
+    tinyFastExtractorMs?: number;
+    tinyFastExtractorAccepted?: boolean;
+    tinyFastExtractorRejectedReason?: string | null;
+    modelUsedForTinyExtractor?: string | null;
+    fullPromptSkipped?: boolean;
+  };
 }): Record<string, unknown> {
   const selectedCandidate = input.visualFallback?.selectedCandidate || null;
   const platformDetectionResult = detectSourcePlatform(input.metadata.canonicalUrl);
@@ -326,6 +465,16 @@ function buildExtractionDebug(input: {
       mediaUrlAvailable: Boolean((input.screenshotsDebug?.mediaIngestion as any)?.mediaUrlAvailable),
       thumbnailImageUrlAvailable: Boolean(input.metadata.imageUrl),
       metadataFailureReason: input.metadataFailureReason,
+    },
+    comments: {
+      attempted: Boolean(input.metadata.commentEvidence?.attempted),
+      timedOut: Boolean(input.metadata.commentEvidence?.timedOut),
+      provider: input.metadata.commentEvidence?.provider || null,
+      reason: input.metadata.commentEvidence?.reason || null,
+      pinnedCommentIncluded: Boolean(input.metadata.commentEvidence?.pinnedComment),
+      topCommentCount: Array.isArray(input.metadata.commentEvidence?.topComments)
+        ? input.metadata.commentEvidence?.topComments.length
+        : 0,
     },
     frameExtraction: input.screenshotsDebug?.frameExtraction || {
       didRun: false,
@@ -358,6 +507,14 @@ function buildExtractionDebug(input: {
       visualFrameCount: input.orchestration?.visualFrameCount ?? 0,
       route: input.orchestration?.route || null,
     },
+    timings: input.timings || null,
+    fastPathIntelligence: input.fastPath || null,
+    tinyFastExtractorUsed: Boolean(input.fastPath?.tinyFastExtractorUsed),
+    tinyFastExtractorMs: input.fastPath?.tinyFastExtractorMs ?? 0,
+    tinyFastExtractorAccepted: Boolean(input.fastPath?.tinyFastExtractorAccepted),
+    tinyFastExtractorRejectedReason: input.fastPath?.tinyFastExtractorRejectedReason ?? null,
+    modelUsedForTinyExtractor: input.fastPath?.modelUsedForTinyExtractor ?? null,
+    fullPromptSkipped: Boolean(input.fastPath?.fullPromptSkipped),
     finalOutput: {
       selectedCandidate,
       possibleMatches:
@@ -383,11 +540,34 @@ function buildExtractionDebug(input: {
   };
 }
 
-async function readMetadata(inputUrl: string) {
+async function readMetadata(inputUrl: string, options?: { mode?: ExtractionMode; attemptNumber?: number }) {
   let metadataFailureReason: string | null = null;
   const metadataStartedAt = nowMs();
   const canonicalUrl = canonicalizeUrl(inputUrl);
   const detectedPlatform = detectSourcePlatform(canonicalUrl);
+  const metadataFetchStartedAt = nowMs();
+  const commentsStartedAt = nowMs();
+  let commentsMs = 0;
+  const commentsPromise =
+    detectedPlatform === "instagram" &&
+    options?.mode === "deep" &&
+    Number(options?.attemptNumber || 1) === 1
+      ? withBudget(
+          extractInstagramCommentEvidence(inputUrl),
+          getNumberEnv("EXTRACTION_COMMENT_BUDGET_MS", DEFAULT_COMMENT_BUDGET_MS),
+          () => buildCommentTimeoutEvidence(),
+        ).catch(() => ({
+          attempted: true,
+          timedOut: false,
+          pinnedComment: null,
+          topComments: [],
+          provider: "instagram_script" as const,
+          reason: "comments_unavailable",
+        })).then((result) => {
+          commentsMs = nowMs() - commentsStartedAt;
+          return result;
+        })
+      : Promise.resolve<MetadataCommentEvidence | null>(null);
   const fallbackMetadata = {
     sourceUrl: inputUrl,
     canonicalUrl,
@@ -398,6 +578,14 @@ async function readMetadata(inputUrl: string) {
     imageUrl: null,
     fetchedAtIso: new Date().toISOString(),
     provider: "fallback" as const,
+    commentEvidence: {
+      attempted: false,
+      timedOut: false,
+      pinnedComment: null,
+      topComments: [],
+      provider: "fallback" as const,
+      reason: null,
+    },
   };
   const metadata = await withBudget(
     extractMetadata(inputUrl),
@@ -407,7 +595,27 @@ async function readMetadata(inputUrl: string) {
     metadataFailureReason = error instanceof Error ? error.message : "metadata_failed";
     return fallbackMetadata;
   });
-  return { metadata, metadataFailureReason, metadataMs: nowMs() - metadataStartedAt };
+  const metadataFetchMs = nowMs() - metadataFetchStartedAt;
+  const commentEvidence = await commentsPromise;
+  if (commentEvidence) {
+    metadata.commentEvidence = commentEvidence;
+  } else if (!metadata.commentEvidence) {
+    metadata.commentEvidence = {
+      attempted: false,
+      timedOut: false,
+      pinnedComment: null,
+      topComments: [],
+      provider: null,
+      reason: null,
+    };
+  }
+  return {
+    metadata,
+    metadataFailureReason,
+    metadataMs: nowMs() - metadataStartedAt,
+    metadataFetchMs,
+    commentsMs,
+  };
 }
 
 async function readTranscript(metadata: ExtractionResult["metadata"]): Promise<{ transcript: TranscriptResult; transcriptMs: number }> {
@@ -507,17 +715,24 @@ async function processRetryFramesSequentially(input: {
   screenshotsDebug: Record<string, unknown>;
   ocr: OcrResult;
   ocrMs: number;
+  frameExtractionMs: number;
+  ocrOnlyMs: number;
   visualFallback: VisualFallbackResult;
   visualFallbackMs: number;
+  visualFallbackOnlyMs: number;
 }> {
   const startedAt = nowMs();
+  const manifestStartedAt = nowMs();
   const manifest = await createFrameManifest(input.metadata, input.selectionMode);
+  const frameExtractionMs = nowMs() - manifestStartedAt;
   const screenshots: ScreenshotAsset[] = [];
   const ocrParts: string[] = [];
   let ocrReason: string | null = null;
   let bestVisual: VisualFallbackResult | null = null;
   const perFrameVisualDebug: unknown[] = [];
   const perFrameOcrDebug: Array<Record<string, unknown>> = [];
+  let ocrOnlyMs = 0;
+  let visualFallbackOnlyMs = 0;
 
   try {
     for (const frame of manifest.frames) {
@@ -531,6 +746,7 @@ async function processRetryFramesSequentially(input: {
       const ocrStartedAt = nowMs();
       const ocrResult = await extractVisionOcrFromScreenshots([screenshot]);
       const ocrDurationMs = nowMs() - ocrStartedAt;
+      ocrOnlyMs += ocrDurationMs;
       if (ocrResult.text.trim()) {
         ocrParts.push(ocrResult.text.trim());
       } else if (ocrResult.reason) {
@@ -557,6 +773,7 @@ async function processRetryFramesSequentially(input: {
           text: mergeOcrTexts(ocrParts),
           reason: ocrParts.length > 0 ? null : ocrReason || "vision_ocr_empty",
         };
+        const visualStartedAt = nowMs();
         const visualResult = await runVisualFallback({
           metadata: input.metadata,
           transcript: input.transcript,
@@ -565,6 +782,7 @@ async function processRetryFramesSequentially(input: {
           forceTrigger: Boolean(input.visualForceReason),
           forceTriggerReason: input.visualForceReason ?? null,
         });
+        visualFallbackOnlyMs += nowMs() - visualStartedAt;
         perFrameVisualDebug.push({
           frame: frame.label,
           timestampSec: frame.timestampSec ?? null,
@@ -647,8 +865,11 @@ async function processRetryFramesSequentially(input: {
     },
     ocr,
     ocrMs: totalMs,
+    frameExtractionMs,
+    ocrOnlyMs,
     visualFallback,
     visualFallbackMs: input.includeVisual ? totalMs : 0,
+    visualFallbackOnlyMs,
   };
 }
 
@@ -706,12 +927,20 @@ function buildResult(input: {
   metadata: ExtractionResult["metadata"];
   metadataFailureReason: string | null;
   metadataMs: number;
+  metadataFetchMs?: number;
+  commentsMs?: number;
+  llmCallsBeforeResponse?: number;
   transcript: TranscriptResult | null;
   transcriptMs: number;
+  descriptionProbeMs?: number;
+  transcriptProbeMs?: number;
   ocr: OcrResult | null;
   ocrMs: number;
+  frameExtractionMs?: number;
+  ocrOnlyMs?: number;
   visualFallback: VisualFallbackResult | null;
   visualFallbackMs: number;
+  visualFallbackOnlyMs?: number;
   screenshotsDebug: Record<string, unknown> | null;
   screenshots: ScreenshotAsset[];
   cacheKey: string;
@@ -720,6 +949,18 @@ function buildResult(input: {
   triggerType: ExtractionTriggerType;
   orchestration: OrchestrationTrace;
   priorAttemptHypotheses?: unknown[] | null;
+  fastPathIntelligence?: {
+    attempted: boolean;
+    accepted: boolean;
+    duplicateDescriptionLlmSkipped: boolean;
+    result?: unknown;
+    tinyFastExtractorUsed?: boolean;
+    tinyFastExtractorMs?: number;
+    tinyFastExtractorAccepted?: boolean;
+    tinyFastExtractorRejectedReason?: string | null;
+    modelUsedForTinyExtractor?: string | null;
+    fullPromptSkipped?: boolean;
+  };
 }): ExtractionResult {
   const captionText = String(input.metadata.description || "").trim();
   const combined = buildCombinedText({
@@ -829,6 +1070,23 @@ function buildResult(input: {
       visualFallback: input.visualFallback,
       orchestration: input.orchestration,
       priorAttemptHypotheses: input.priorAttemptHypotheses,
+      timings: {
+        metadataFetchMs: input.metadataFetchMs ?? input.metadataMs,
+        metadataMs: input.metadataMs,
+        commentsMs: input.commentsMs ?? 0,
+        descriptionFastExtractorMs: input.descriptionProbeMs ?? 0,
+        descriptionProbeMs: input.descriptionProbeMs ?? 0,
+        transcriptProbeMs: input.transcriptProbeMs ?? 0,
+        transcriptMs: input.transcriptMs,
+        frameExtractionMs: input.frameExtractionMs ?? 0,
+        ocrOnlyMs: input.ocrOnlyMs ?? 0,
+        ocrMs: input.ocrMs,
+        visualFallbackOnlyMs: input.visualFallbackOnlyMs ?? 0,
+        visualFallbackMs: input.visualFallbackMs,
+        extractionTotalMs: nowMs() - input.totalStartedAt,
+        llmCallsBeforeResponse: input.llmCallsBeforeResponse ?? 0,
+      },
+      fastPath: input.fastPathIntelligence,
     }),
   };
 }
@@ -889,7 +1147,10 @@ export async function runExtractionPipeline(input: {
   }
 
   const totalStartedAt = nowMs();
-  const { metadata, metadataFailureReason, metadataMs } = await readMetadata(input.url);
+  const { metadata, metadataFailureReason, metadataMs, metadataFetchMs, commentsMs } = await readMetadata(input.url, {
+    mode: input.mode,
+    attemptNumber,
+  });
 
   if (input.mode === "quick") {
     const orchestration = createTrace({
@@ -910,10 +1171,17 @@ export async function runExtractionPipeline(input: {
       metadata,
       metadataFailureReason,
       metadataMs,
+      metadataFetchMs,
+      commentsMs,
+      llmCallsBeforeResponse: 0,
       transcript: { attempted: false, used: false, source: null, text: "", reason: "quick_mode" },
       transcriptMs: 0,
+      descriptionProbeMs: 0,
+      transcriptProbeMs: 0,
       ocr: { attempted: false, used: false, text: "", reason: "quick_mode" },
       ocrMs: 0,
+      frameExtractionMs: 0,
+      ocrOnlyMs: 0,
       visualFallback: {
         attempted: false,
         triggered: false,
@@ -929,6 +1197,7 @@ export async function runExtractionPipeline(input: {
         summaryText: "",
       },
       visualFallbackMs: 0,
+      visualFallbackOnlyMs: 0,
       screenshotsDebug: null,
       screenshots: [],
       cacheKey,
@@ -936,6 +1205,17 @@ export async function runExtractionPipeline(input: {
       attemptNumber,
       triggerType,
       orchestration,
+      fastPathIntelligence: {
+        attempted: false,
+        accepted: false,
+        duplicateDescriptionLlmSkipped: false,
+        tinyFastExtractorUsed: false,
+        tinyFastExtractorMs: 0,
+        tinyFastExtractorAccepted: false,
+        tinyFastExtractorRejectedReason: null,
+        modelUsedForTinyExtractor: null,
+        fullPromptSkipped: false,
+      },
     });
     if (traceEnabled) {
       console.info("[extraction-debug]", quickResult.debug);
@@ -962,8 +1242,15 @@ export async function runExtractionPipeline(input: {
   const descriptionWeak = isWeakDescription(metadata);
   let descriptionProbe: LlmConfidenceProbe | null = null;
   let descriptionProbeFailureReason: string | null = null;
+  let descriptionFastResult: import("../intelligence/types").IntelligencePipelineResult | null = null;
+  let descriptionFastModel: string | null = null;
+  let descriptionProbeMs = 0;
+  let tinyFastExtractorAccepted = false;
+  let tinyFastExtractorRejectedReason: string | null = descriptionWeak ? "missing_or_weak_description" : null;
+  let transcriptProbeMs = 0;
+  let llmCallsBeforeResponse = 0;
   if (attemptNumber === 1 && !descriptionWeak) {
-    const descriptionProbeResult = await safeProbeLlmConfidence(
+    const descriptionProbeResult = await safeRunTinyFastExtractor(
       {
         metadata,
         mode: input.mode,
@@ -980,6 +1267,26 @@ export async function runExtractionPipeline(input: {
     );
     descriptionProbe = descriptionProbeResult.probe;
     descriptionProbeFailureReason = descriptionProbeResult.failureReason;
+    descriptionProbeMs = descriptionProbeResult.probeMs;
+    descriptionFastResult =
+      descriptionProbe && "result" in descriptionProbe
+        ? (descriptionProbe as StructuredFastPathDecision).result
+        : null;
+    descriptionFastModel =
+      descriptionProbe && "model" in descriptionProbe
+        ? (descriptionProbe as StructuredFastPathDecision).model
+        : null;
+    llmCallsBeforeResponse += descriptionProbeFailureReason ? 0 : 1;
+    tinyFastExtractorAccepted = Boolean(descriptionProbe?.accepted);
+    tinyFastExtractorRejectedReason =
+      descriptionProbeFailureReason ||
+      (descriptionProbe?.accepted
+        ? null
+        : descriptionProbe?.status === "no_supported_entity_found"
+          ? "tiny_extractor_no_supported_entity_found"
+          : descriptionProbe?.entityCount === 0
+            ? "tiny_extractor_no_entities"
+            : `tiny_extractor_${descriptionProbe?.confidence || "low"}`);
   }
   const shouldRunTranscript = attemptNumber >= 2 || descriptionWeak;
   let transcript: TranscriptResult = {
@@ -996,7 +1303,7 @@ export async function runExtractionPipeline(input: {
       orchestration,
       "description",
       true,
-      `accepted_description_llm_${descriptionProbe.confidence}`,
+      `accepted_description_tiny_${descriptionProbe.confidence}`,
     );
     pushDecision(orchestration, "transcript", false, "description_confidence_sufficient");
     pushDecision(orchestration, "ocr", false, "description_confidence_sufficient");
@@ -1009,10 +1316,17 @@ export async function runExtractionPipeline(input: {
       metadata,
       metadataFailureReason,
       metadataMs,
+      metadataFetchMs,
+      commentsMs,
+      llmCallsBeforeResponse,
       transcript,
       transcriptMs,
+      descriptionProbeMs,
+      transcriptProbeMs,
       ocr: { attempted: false, used: false, text: "", reason: "skipped_description_accepted" },
       ocrMs: 0,
+      frameExtractionMs: 0,
+      ocrOnlyMs: 0,
       visualFallback: {
         attempted: false,
         triggered: false,
@@ -1028,6 +1342,7 @@ export async function runExtractionPipeline(input: {
         summaryText: "",
       },
       visualFallbackMs: 0,
+      visualFallbackOnlyMs: 0,
       screenshotsDebug: null,
       screenshots: [],
       cacheKey,
@@ -1035,10 +1350,25 @@ export async function runExtractionPipeline(input: {
       attemptNumber,
       triggerType,
       orchestration,
+      fastPathIntelligence: {
+        attempted: true,
+        accepted: true,
+        duplicateDescriptionLlmSkipped: true,
+        result: descriptionFastResult,
+        tinyFastExtractorUsed: true,
+        tinyFastExtractorMs: descriptionProbeMs,
+        tinyFastExtractorAccepted: true,
+        tinyFastExtractorRejectedReason: null,
+        modelUsedForTinyExtractor: descriptionFastModel,
+        fullPromptSkipped: true,
+      },
     });
     if (traceEnabled) {
       console.info("[extraction-debug]", result.debug);
     }
+    console.info(
+      `[attempt-1-sla] acceptedAfter=description fastExtractorMs=${descriptionProbeMs} duplicateLlmSkipped=true llmCalls=${llmCallsBeforeResponse} metadataMs=${metadataMs} commentsMs=${commentsMs} totalMs=${result.sla?.totalMs ?? result.perf?.totalMs ?? 0}`,
+    );
     if (!debugEnabled && !isLowSignalInstagramResult(result)) {
       extractionCache.set(cacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
       extractionCache.set(sharedCacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
@@ -1058,7 +1388,7 @@ export async function runExtractionPipeline(input: {
       ? descriptionProbeFailureReason ||
         (descriptionWeak
         ? "missing_or_weak_description"
-        : `description_llm_${descriptionProbe?.confidence || "low"}`)
+        : `tiny_caption_${descriptionProbe?.confidence || "low"}`)
       : "retry_forced_reanalysis",
   );
 
@@ -1066,6 +1396,8 @@ export async function runExtractionPipeline(input: {
   let screenshotsDebug: Record<string, unknown> | null = null;
   let ocr: OcrResult = { attempted: false, used: false, text: "", reason: "not_attempted" };
   let ocrMs = 0;
+  let frameExtractionMs = 0;
+  let ocrOnlyMs = 0;
   let visualFallback: VisualFallbackResult = {
     attempted: false,
     triggered: false,
@@ -1081,6 +1413,7 @@ export async function runExtractionPipeline(input: {
     summaryText: "",
   };
   let visualFallbackMs = 0;
+  let visualFallbackOnlyMs = 0;
   const priorAttempt1 = attemptNumber >= 2
     ? getCachedAttemptResult({
         url: input.url,
@@ -1145,8 +1478,11 @@ export async function runExtractionPipeline(input: {
       sequential.ocr,
     ) ?? sequential.ocr;
     ocrMs = sequential.ocrMs;
+    frameExtractionMs = sequential.frameExtractionMs;
+    ocrOnlyMs = sequential.ocrOnlyMs;
     visualFallback = sequential.visualFallback;
     visualFallbackMs = sequential.visualFallbackMs;
+    visualFallbackOnlyMs = sequential.visualFallbackOnlyMs;
     orchestration.ocrFrameCount = sequential.screenshots.length;
     orchestration.visualFrameCount = sequential.screenshots.length;
   } else if (attemptNumber === 2) {
@@ -1188,6 +1524,8 @@ export async function runExtractionPipeline(input: {
     screenshotsDebug = sequential.screenshotsDebug;
     ocr = mergeOcrResults(priorAttempt1?.ocr ?? null, sequential.ocr) ?? sequential.ocr;
     ocrMs = sequential.ocrMs;
+    frameExtractionMs = sequential.frameExtractionMs;
+    ocrOnlyMs = sequential.ocrOnlyMs;
     orchestration.ocrFrameCount = sequential.screenshots.length;
     orchestration.visualFrameCount = 0;
   } else {
@@ -1212,6 +1550,8 @@ export async function runExtractionPipeline(input: {
     );
     const transcriptProbe = transcriptProbeResult.probe;
     const transcriptProbeFailureReason = transcriptProbeResult.failureReason;
+    transcriptProbeMs = transcriptProbeResult.probeMs;
+    llmCallsBeforeResponse += 1;
     pushDecision(
       orchestration,
       "transcript",
@@ -1226,17 +1566,25 @@ export async function runExtractionPipeline(input: {
       logTrace(orchestration);
 
       const result = buildResult({
-        mode: input.mode,
-        metadata,
-        metadataFailureReason,
-        metadataMs,
-        transcript,
-        transcriptMs,
-        ocr: { attempted: false, used: false, text: "", reason: "skipped_after_transcript" },
-        ocrMs: 0,
-        visualFallback,
-        visualFallbackMs: 0,
-        screenshotsDebug: null,
+      mode: input.mode,
+      metadata,
+      metadataFailureReason,
+      metadataMs,
+      metadataFetchMs,
+      commentsMs,
+      llmCallsBeforeResponse,
+      transcript,
+      transcriptMs,
+      descriptionProbeMs,
+      transcriptProbeMs,
+      ocr: { attempted: false, used: false, text: "", reason: "skipped_after_transcript" },
+      ocrMs: 0,
+      frameExtractionMs: 0,
+      ocrOnlyMs: 0,
+      visualFallback,
+      visualFallbackMs: 0,
+      visualFallbackOnlyMs: 0,
+      screenshotsDebug: null,
         screenshots: [],
         cacheKey,
         totalStartedAt,
@@ -1244,6 +1592,18 @@ export async function runExtractionPipeline(input: {
         triggerType,
         orchestration,
         priorAttemptHypotheses,
+        fastPathIntelligence: {
+          attempted: descriptionProbeMs > 0,
+          accepted: false,
+          duplicateDescriptionLlmSkipped: false,
+          result: descriptionFastResult,
+          tinyFastExtractorUsed: descriptionProbeMs > 0,
+          tinyFastExtractorMs: descriptionProbeMs,
+          tinyFastExtractorAccepted,
+          tinyFastExtractorRejectedReason,
+          modelUsedForTinyExtractor: descriptionFastModel,
+          fullPromptSkipped: false,
+        },
       });
       if (traceEnabled) {
         console.info("[extraction-debug]", result.debug);
@@ -1270,6 +1630,8 @@ export async function runExtractionPipeline(input: {
     pushDecision(orchestration, "ocr", true, "attempt_1_frame_ocr_after_transcript_probe");
     ocr = sequential.ocr;
     ocrMs = sequential.ocrMs;
+    frameExtractionMs = sequential.frameExtractionMs;
+    ocrOnlyMs = sequential.ocrOnlyMs;
     orchestration.ocrFrameCount = sequential.screenshots.length;
     orchestration.visualFrameCount = 0;
   }
@@ -1289,12 +1651,20 @@ export async function runExtractionPipeline(input: {
     metadata,
     metadataFailureReason,
     metadataMs,
+    metadataFetchMs,
+    commentsMs,
+    llmCallsBeforeResponse,
     transcript,
     transcriptMs,
+    descriptionProbeMs,
+    transcriptProbeMs,
     ocr,
     ocrMs,
+    frameExtractionMs,
+    ocrOnlyMs,
     visualFallback,
     visualFallbackMs,
+    visualFallbackOnlyMs,
     screenshotsDebug,
     screenshots,
     cacheKey,
@@ -1303,6 +1673,18 @@ export async function runExtractionPipeline(input: {
     triggerType,
     orchestration,
     priorAttemptHypotheses,
+    fastPathIntelligence: {
+      attempted: descriptionProbeMs > 0,
+      accepted: false,
+      duplicateDescriptionLlmSkipped: false,
+      result: descriptionFastResult,
+      tinyFastExtractorUsed: descriptionProbeMs > 0,
+      tinyFastExtractorMs: descriptionProbeMs,
+      tinyFastExtractorAccepted,
+      tinyFastExtractorRejectedReason,
+      modelUsedForTinyExtractor: descriptionFastModel,
+      fullPromptSkipped: false,
+    },
   });
 
   if (traceEnabled) {

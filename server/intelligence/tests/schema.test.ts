@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { intelligenceOutputSchema } from "../schema";
+import { intelligenceOutputSchema, tinyCaptionOutputSchema } from "../schema";
 
 test("schema rejects unsupported category", () => {
   const result = intelligenceOutputSchema.safeParse({
@@ -66,6 +66,29 @@ test("schema accepts strict valid output", () => {
     ],
     visibility: { showIn: ["see"], doNotShowIn: ["eat", "do", "stay"], reason: "ok" },
     status: "ready",
+  });
+
+  assert.equal(result.success, true);
+});
+
+test("tiny caption schema accepts compact fast extractor output", () => {
+  const result = tinyCaptionOutputSchema.safeParse({
+    status: "ready",
+    entities: [
+      {
+        name: "Beige",
+        category: "eat",
+        intent: { l1: "taste", l2: "Restaurant", l3: ["Date night"] },
+        locality: "Marathahalli",
+        city: "Bengaluru",
+        state: "Karnataka",
+        country: "India",
+        confidence: "high",
+        googleMapsQuery: "Beige Marathahalli Bengaluru",
+        evidenceText: "Caption mentions Beige in Marathahalli.",
+      },
+    ],
+    weakMentions: [],
   });
 
   assert.equal(result.success, true);

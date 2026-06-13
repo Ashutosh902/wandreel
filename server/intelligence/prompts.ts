@@ -211,3 +211,79 @@ export function buildUserPrompt(source: ExtractionResult, analytics?: Intelligen
 
   return `Process this extracted combined text for Wandreel. Return valid JSON only.\n\nInput:\n${JSON.stringify(payload, null, 2)}`;
 }
+
+export function buildTinyCaptionSystemPrompt(): string {
+  return `You extract Wandreel places from caption-only evidence.
+
+Use only: title, caption/description, and lightweight comments.
+
+Return JSON only:
+{
+  "status": "ready" | "needs_review" | "no_supported_entity_found",
+  "entities": [
+    {
+      "name": string,
+      "category": "eat" | "do" | "stay" | "see",
+      "intent": {
+        "l1": "taste" | "activity" | "stay" | "explore",
+        "l2": string,
+        "l3": string[]
+      },
+      "locality": string | null,
+      "city": string | null,
+      "state": string | null,
+      "country": string | null,
+      "confidence": "high" | "medium" | "low",
+      "googleMapsQuery": string | null,
+      "evidenceText": string | null
+    }
+  ],
+  "weakMentions": []
+}
+
+Rules:
+1. Use caption/title/comments evidence only.
+2. Do not invent place names.
+3. If the place is vague or ambiguous, return "needs_review" or "no_supported_entity_found".
+4. Return "ready" only when a real supported entity is reasonably clear.
+5. category must be one of eat, do, stay, see.
+6. intent.l1 must match category: eat->taste, do->activity, stay->stay, see->explore.
+7. Choose exactly one intent.l2 from:
+   taste: Cafe, Restaurant, Bar, Dessert, Street Food, Fine Dining, Breakfast, Bakery, Sweets, Food Market
+   activity: Adventure, Workshop, Comedy, Night Out, Shopping, Wellness, Sports, Water Activity, Event, Family Activity
+   stay: Hotel, Resort, Hostel, Homestay, Villa, Dorm Stay, Workation, Luxury Stay, Budget Stay, Pet Stay
+   explore: Nature, Heritage, Waterfall, Viewpoint, Museum, Monument, Spiritual, Park, Beach, Local Market
+8. intent.l3 is not predefined. Extract up to 3 short tags from caption/title/comments only.
+9. Never use Saved or Visited in intent.l2 or intent.l3.
+10. Do not split a generic experience phrase into a separate activity entity unless it is clearly named/bookable.
+11. If a short proper name appears with clear venue words and locality/city evidence, treat it as a named entity.
+12. Keep generic experiences like "boat ride" in intent.l3 unless a separate operator/tour/activity is clearly named.
+
+Examples:
+- "Beige rooftop restaurant in Marathahalli Bangalore" -> ready, eat, taste, Restaurant.
+- "Periyar Reserve boat ride" -> usually one see/explore entity, with "boat ride" in intent.l3.`;
+}
+
+export function buildTinyCaptionUserPrompt(source: ExtractionResult, analytics?: IntelligenceRequest["analytics"]): string {
+  const comments = source.metadata.commentEvidence;
+  const payload = {
+    sourceUrl: source.metadata.canonicalUrl || source.metadata.sourceUrl,
+    platform: source.metadata.platform,
+    title: trimText(source.metadata.title, 300) || null,
+    description: trimText(source.metadata.description, 2200) || null,
+    comments: comments
+      ? {
+          pinnedComment: trimText(comments.pinnedComment, 240) || null,
+          topComments: Array.isArray(comments.topComments)
+            ? comments.topComments.map((item) => trimText(item, 180)).filter(Boolean).slice(0, 3)
+            : [],
+        }
+      : {
+          pinnedComment: null,
+          topComments: [],
+        },
+    attemptNumber: Number(analytics?.attemptNumber ?? source.attemptInfo?.attemptNumber ?? 1) || 1,
+  };
+
+  return `Extract Wandreel entities from this caption evidence only. Return JSON only.\n\nInput:\n${JSON.stringify(payload, null, 2)}`;
+}

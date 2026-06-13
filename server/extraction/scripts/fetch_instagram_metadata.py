@@ -71,7 +71,7 @@ def fetch_public_metadata(url: str) -> dict:
     }
 
 
-def fetch_authenticated(shortcode: str, comments_limit: int) -> dict:
+def fetch_authenticated(shortcode: str, comments_limit: int, include_comments: bool) -> dict:
     try:
         import instaloader  # type: ignore
     except Exception:
@@ -106,17 +106,24 @@ def fetch_authenticated(shortcode: str, comments_limit: int) -> dict:
         post = instaloader.Post.from_shortcode(ctx, shortcode)
         caption = str(post.caption or "").strip()
         owner = str(getattr(post, "owner_username", "") or "").strip()
-        comments: list[str] = []
-        try:
-            for c in post.get_comments():
-                text = str(getattr(c, "text", "") or "").strip()
-                if text:
-                    comments.append(text)
-                if len(comments) >= comments_limit:
-                    break
-        except Exception:
-            # Comments often fail due to privacy/rate limits; keep caption if available.
-            pass
+        pinned_comment = ""
+        top_comments: list[str] = []
+        if include_comments and comments_limit > 0:
+            try:
+                for c in post.get_comments():
+                    text = str(getattr(c, "text", "") or "").strip()
+                    if not text:
+                        continue
+                    is_pinned = bool(getattr(c, "is_pinned", False) or getattr(c, "pinned", False))
+                    if is_pinned and not pinned_comment:
+                        pinned_comment = text
+                        continue
+                    top_comments.append(text)
+                    if len(top_comments) >= comments_limit:
+                        break
+            except Exception:
+                # Comments often fail due to privacy/rate limits; keep caption if available.
+                pass
 
         return {
             "ok": True,
@@ -124,7 +131,10 @@ def fetch_authenticated(shortcode: str, comments_limit: int) -> dict:
             "description": caption,
             "owner": owner,
             "thumbnail": str(getattr(post, "url", "") or "").strip(),
-            "comments": comments,
+            "comments": top_comments,
+            "pinnedComment": pinned_comment,
+            "topComments": top_comments,
+            "commentFetchAttempted": include_comments,
             "source": "instaloader_auth",
             "authenticated": True,
         }
@@ -139,21 +149,36 @@ def main() -> int:
 
     url = sys.argv[1].strip()
     comments_limit = 15
+    fetch_mode = "metadata"
     if len(sys.argv) > 2:
         try:
             comments_limit = max(1, min(50, int(sys.argv[2])))
         except Exception:
             comments_limit = 15
+    if len(sys.argv) > 3:
+        fetch_mode = str(sys.argv[3] or "metadata").strip().lower()
 
     shortcode = extract_shortcode(url)
     auth_mode = os.environ.get("INSTAGRAM_AUTH_MODE", "auto").strip().lower()
+    include_comments = fetch_mode == "comments_only"
 
     auth_result = {"ok": False, "error": "AUTH_NOT_ATTEMPTED"}
     if auth_mode in {"auto", "authenticated", "auth"}:
-        auth_result = fetch_authenticated(shortcode, comments_limit)
+        auth_result = fetch_authenticated(shortcode, comments_limit, include_comments)
         if auth_result.get("ok"):
             print(json.dumps(auth_result))
             return 0
+
+    if fetch_mode == "comments_only":
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "error": auth_result.get("error") or "COMMENTS_UNAVAILABLE",
+                }
+            )
+        )
+        return 0
 
     public_result = fetch_public_metadata(url)
     if public_result.get("ok"):

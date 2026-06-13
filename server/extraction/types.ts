@@ -7,6 +7,14 @@ export const EXTRACTION_STAGE_KEYS = ["basicMetadata", "caption", "transcript", 
 export type ExtractionStageKey = (typeof EXTRACTION_STAGE_KEYS)[number];
 
 export type ConfidenceLabel = "high" | "medium" | "low";
+export type MetadataCommentEvidence = {
+  attempted: boolean;
+  timedOut: boolean;
+  pinnedComment: string | null;
+  topComments: string[];
+  provider: "instagram_script" | "public_meta" | "fallback" | null;
+  reason: string | null;
+};
 export type VerificationQueryShape =
   | "place_like"
   | "address_like"
@@ -25,6 +33,7 @@ export type ExtractedMetadata = {
   imageUrl: string | null;
   fetchedAtIso: string;
   provider: "html" | "youtube_script" | "instagram_script" | "fallback";
+  commentEvidence?: MetadataCommentEvidence;
 };
 
 export type TranscriptResult = {

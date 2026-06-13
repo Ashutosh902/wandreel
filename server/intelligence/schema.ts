@@ -9,6 +9,26 @@ const intentSchema = z.object({
   l3: z.array(z.string().min(1)).max(3),
 });
 
+export const tinyCaptionOutputSchema = z.object({
+  status: z.enum(["ready", "needs_review", "no_supported_entity_found"]),
+  entities: z.array(z.object({
+    name: z.string().min(1),
+    category: categorySchema,
+    intent: intentSchema.optional(),
+    locality: z.string().nullable(),
+    city: z.string().nullable(),
+    state: z.string().nullable(),
+    country: z.string().nullable(),
+    confidence: z.enum(["high", "medium", "low"]),
+    googleMapsQuery: z.string().nullable(),
+    evidenceText: z.string().nullable(),
+  })),
+  weakMentions: z.array(z.object({
+    text: z.string().min(1),
+    reason: z.string().min(1),
+  })).default([]),
+});
+
 export const intelligenceOutputSchema = z.object({
   source: z.object({
     url: z.string().nullable(),

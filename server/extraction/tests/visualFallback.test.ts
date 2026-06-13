@@ -1,7 +1,38 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { buildCombinedText } from "../combinedText";
 import { assessVerificationCandidate, classifyQueryShape, isSemanticMismatch, runVisualFallback, shouldTriggerVisualFallback } from "../visualFallback";
 import { getAttemptVisualFallbackPolicy } from "../pipeline";
+
+test("combined text includes pinned and top comments before first intelligence pass", () => {
+  const combined = buildCombinedText({
+    metadata: {
+      sourceUrl: "https://www.instagram.com/p/example/",
+      canonicalUrl: "https://www.instagram.com/p/example",
+      platform: "instagram",
+      title: "Boat ride",
+      description: "Periyar Reserve in Thekkady",
+      siteName: "Instagram",
+      imageUrl: "https://example.com/cover.jpg",
+      fetchedAtIso: new Date().toISOString(),
+      provider: "instagram_script",
+      commentEvidence: {
+        attempted: true,
+        timedOut: false,
+        pinnedComment: "This is in Periyar Tiger Reserve",
+        topComments: ["Boat ride timing is morning", "Cardamom County is nearby"],
+        provider: "instagram_script",
+        reason: null,
+      },
+    },
+    transcript: null,
+    ocr: null,
+  });
+
+  assert.match(combined.combinedTextClean || "", /Pinned comment: This is in Periyar Tiger Reserve/);
+  assert.match(combined.combinedTextClean || "", /Comment: Boat ride timing is morning/);
+  assert.match(combined.combinedTextClean || "", /Comment: Cardamom County is nearby/);
+});
 
 test("generic OCR sentence must not verify Digha Sonpur Setu", () => {
   const assessment = assessVerificationCandidate({

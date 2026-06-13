@@ -34,6 +34,7 @@ import {
 import { featureFlags } from "./featureFlags";
 import { saveAttemptHypothesisSummary } from "./attemptHypothesisStore";
 import { buildAttemptHypothesisSummary } from "./intelligence/hypothesisSummary";
+import type { IntelligencePipelineResult } from "./intelligence/types";
 
 const app = express();
 const clientOrigin = process.env.CLIENT_ORIGIN || "http://localhost:5173";
@@ -494,6 +495,15 @@ async function persistAnalyticsEntitiesForAttempt(input: {
   });
 }
 
+function getAttempt1FastPathIntelligenceResult(source: any): IntelligencePipelineResult | null {
+  const attemptNumber = Number(source?.attemptInfo?.attemptNumber ?? source?.debug?.orchestration?.attemptNumber ?? 1) || 1;
+  const acceptedAfter = String(source?.debug?.orchestration?.acceptedAfter || "");
+  const fastPath = source?.debug?.fastPathIntelligence;
+  if (attemptNumber !== 1 || acceptedAfter !== "description") return null;
+  if (!fastPath || fastPath.accepted !== true || !fastPath.result) return null;
+  return fastPath.result as IntelligencePipelineResult;
+}
+
 app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
   try {
     const modeRaw = String(req.body?.mode || "sync").trim().toLowerCase();
@@ -550,6 +560,15 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
     }
 
     if (mode === "draft_async") {
+      const fastPathResult = getAttempt1FastPathIntelligenceResult(source);
+      if (fastPathResult) {
+        return res.json({
+          ok: true,
+          mode,
+          draft: false,
+          ...fastPathResult,
+        });
+      }
       const attemptRecord = await createAnalyticsAttemptFromRequest(req, source);
       const analyticsPayload = req.body?.analytics && typeof req.body.analytics === "object" ? req.body.analytics : null;
       const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
@@ -628,7 +647,8 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
     const attemptRecord = await createAnalyticsAttemptFromRequest(req, source);
     const analyticsPayload = req.body?.analytics && typeof req.body.analytics === "object" ? req.body.analytics : null;
     const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
-    const result = await runIntelligencePipeline({
+    const fastPathResult = getAttempt1FastPathIntelligenceResult(source);
+    const result = fastPathResult || await runIntelligencePipeline({
       source,
       analytics: {
         attemptId: attemptRecord?.attemptId ?? null,

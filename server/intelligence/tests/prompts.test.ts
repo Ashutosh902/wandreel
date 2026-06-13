@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildSystemPrompt } from "../prompts";
+import { buildSystemPrompt, buildTinyCaptionSystemPrompt } from "../prompts";
 
 test("system prompt includes hard rules and category constraints", () => {
   const prompt = buildSystemPrompt();
@@ -16,4 +16,12 @@ test("system prompt includes hard rules and category constraints", () => {
   assert.match(prompt, /see:/i);
   assert.match(prompt, /For each entity, include level2 fields/i);
   assert.match(prompt, /date-night/i);
+});
+
+test("tiny caption prompt stays short and caption-only", () => {
+  const prompt = buildTinyCaptionSystemPrompt();
+  assert.match(prompt, /Use only: title, caption\/description, and lightweight comments/i);
+  assert.doesNotMatch(prompt, /visualFallback|OCR|transcript/i);
+  assert.match(prompt, /intent\.l3 is not predefined/i);
+  assert.match(prompt, /Do not split a generic experience phrase into a separate activity entity/i);
 });

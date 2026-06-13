@@ -1,7 +1,7 @@
-import { intelligenceOutputSchema, formatZodErrors } from "./schema";
+import { intelligenceOutputSchema, formatZodErrors, tinyCaptionOutputSchema } from "./schema";
 import type { DiscoveryEntity, IntelligenceOutput, IntelligencePipelineResult, IntelligenceRequest, StructuredEntity } from "./types";
 import { normalizeEntityIntent, normalizeIntelligenceOutput } from "./normalize";
-import { callOpenAiStructuredExtraction } from "./providers/openai";
+import { callOpenAiStructuredExtraction, callOpenAiTinyCaptionExtraction } from "./providers/openai";
 import { recordSla } from "../metrics/slaTracker";
 import { resolveEntityLocality } from "./placeResolver";
 import type { ExtractionResult } from "../extraction/types";
@@ -85,6 +85,73 @@ function adaptStructuredRaw(raw: unknown, req: IntelligenceRequest): unknown {
       reason: "Derived from structured response.",
     },
     status: candidate?.status ?? "needs_review",
+  };
+}
+
+function adaptTinyCaptionRaw(raw: unknown, req: IntelligenceRequest): unknown {
+  const parsed = tinyCaptionOutputSchema.safeParse(raw);
+  if (!parsed.success) return raw;
+
+  const metadata = req.source.metadata;
+  const entities = parsed.data.entities.map((entity) => {
+    const category = entity.category;
+    const level2 = buildDefaultLevel2(category);
+    const adaptedEntity = {
+      category,
+      name: entity.name,
+      entityType: "place",
+      city: entity.city,
+      state: entity.state,
+      country: entity.country,
+      locality: entity.locality,
+      tags: [],
+      details: {},
+      level2,
+      googleMapsQuery: entity.googleMapsQuery,
+      sourceEvidence: entity.evidenceText ?? "Derived from caption evidence",
+      confidence: entity.confidence,
+      intent: entity.intent,
+    };
+
+    return {
+      ...adaptedEntity,
+      intent: normalizeEntityIntent({ entity: adaptedEntity, category, level2 }),
+    };
+  });
+  const structuredEntities = parsed.data.entities.map((entity, index) => ({
+    ...entity,
+    address: null,
+    intent: entities[index]?.intent,
+  }));
+
+  const showIn = {
+    eat: entities.some((entity) => entity.category === "eat"),
+    do: entities.some((entity) => entity.category === "do"),
+    stay: entities.some((entity) => entity.category === "stay"),
+    see: entities.some((entity) => entity.category === "see"),
+  };
+  const categoriesPresent = (["eat", "do", "stay", "see"] as const).filter((cat) => showIn[cat]);
+
+  return {
+    source: {
+      url: metadata.canonicalUrl || metadata.sourceUrl || null,
+      platform: metadata.platform === "web" ? "website" : metadata.platform,
+      title: metadata.title || null,
+      creator: null,
+      sourceType: "mixed_discovery",
+    },
+    placeCollections: [],
+    categoriesPresent,
+    weakMentions: parsed.data.weakMentions,
+    showIn,
+    structuredEntities,
+    entities,
+    visibility: {
+      showIn: categoriesPresent,
+      doNotShowIn: (["eat", "do", "stay", "see"] as const).filter((cat) => !categoriesPresent.includes(cat)),
+      reason: "Derived from tiny caption response.",
+    },
+    status: parsed.data.status,
   };
 }
 
@@ -431,6 +498,84 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
       provider: providerResult.timingsMs.provider,
       schemaFirstPass: schemaFirstPassMs,
       normalize: normalizeMs,
+      schemaSecondPass: schemaSecondPassMs,
+    },
+    providerMeta: providerResult.providerMeta,
+    usage: providerResult.usage,
+  };
+}
+
+export async function runTinyCaptionIntelligence(req: IntelligenceRequest): Promise<IntelligencePipelineResult> {
+  const totalStartedAt = Date.now();
+  const providerResult = await callOpenAiTinyCaptionExtraction(req.source, req.analytics);
+  const raw = adaptTinyCaptionRaw(providerResult.raw, req);
+  const schemaFirstStartedAt = Date.now();
+  const firstPass = intelligenceOutputSchema.safeParse(raw);
+  const schemaFirstPassMs = Date.now() - schemaFirstStartedAt;
+
+  if (firstPass.success) {
+    const enrichedOutput = await enrichWithResolvedLocations(applyVisualEntityFallback(firstPass.data, req), req.source);
+    const agg = recordSla("intelligence.total", Date.now() - totalStartedAt);
+    if (Number(process.env.INTELLIGENCE_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.INTELLIGENCE_SLA_LOG_EVERY) === 0) {
+      console.info("[sla][intelligence.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
+    }
+    return {
+      output: enrichedOutput,
+      validationErrors: [],
+      fixed: false,
+      timingsMs: {
+        total: Date.now() - totalStartedAt,
+        provider: providerResult.timingsMs.provider,
+        schemaFirstPass: schemaFirstPassMs,
+        normalize: 0,
+        schemaSecondPass: 0,
+      },
+      providerMeta: providerResult.providerMeta,
+      usage: providerResult.usage,
+    };
+  }
+
+  const normalized = normalizeIntelligenceOutput(raw);
+  const schemaSecondStartedAt = Date.now();
+  const secondPass = intelligenceOutputSchema.safeParse(normalized);
+  const schemaSecondPassMs = Date.now() - schemaSecondStartedAt;
+  if (secondPass.success) {
+    const enrichedOutput = await enrichWithResolvedLocations(applyVisualEntityFallback(secondPass.data, req), req.source);
+    return {
+      output: enrichedOutput,
+      validationErrors: formatZodErrors(firstPass.error),
+      fixed: true,
+      timingsMs: {
+        total: Date.now() - totalStartedAt,
+        provider: providerResult.timingsMs.provider,
+        schemaFirstPass: schemaFirstPassMs,
+        normalize: 0,
+        schemaSecondPass: schemaSecondPassMs,
+      },
+      providerMeta: providerResult.providerMeta,
+      usage: providerResult.usage,
+    };
+  }
+
+  return {
+    output: applyVisualEntityFallback({
+      ...normalized,
+      status: "needs_review",
+      visibility: {
+        ...normalized.visibility,
+        reason: "Tiny caption schema validation failed. Manual review required.",
+      },
+    }, req),
+    validationErrors: [
+      ...formatZodErrors(firstPass.error),
+      ...formatZodErrors(secondPass.error),
+    ],
+    fixed: true,
+    timingsMs: {
+      total: Date.now() - totalStartedAt,
+      provider: providerResult.timingsMs.provider,
+      schemaFirstPass: schemaFirstPassMs,
+      normalize: 0,
       schemaSecondPass: schemaSecondPassMs,
     },
     providerMeta: providerResult.providerMeta,

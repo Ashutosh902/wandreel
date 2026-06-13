@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import type { ExtractionResult } from "../../extraction/types";
 import type { IntelligenceRequest } from "../types";
-import { buildSystemPrompt, buildUserPrompt } from "../prompts";
+import { buildSystemPrompt, buildTinyCaptionSystemPrompt, buildTinyCaptionUserPrompt, buildUserPrompt } from "../prompts";
 
 export type OpenAiExtractionResult = {
   raw: unknown;
@@ -11,7 +11,7 @@ export type OpenAiExtractionResult = {
   providerMeta: {
     model: string;
     fallbackUsed?: boolean;
-    taskType?: "default" | "complex_extraction" | "retry_refined" | "retry_final";
+    taskType?: "default" | "complex_extraction" | "retry_refined" | "retry_final" | "tiny_caption";
   };
   usage: {
     inputTokens: number | null;
@@ -83,9 +83,12 @@ async function runStructuredRequest(input: {
   model: string;
   source: ExtractionResult;
   analytics?: IntelligenceRequest["analytics"];
-  taskType: "default" | "complex_extraction" | "retry_refined" | "retry_final";
+  taskType: "default" | "complex_extraction" | "retry_refined" | "retry_final" | "tiny_caption";
   fallbackUsed: boolean;
   fallbackReason: string | null;
+  systemPrompt: string;
+  userPrompt: string;
+  maxOutputTokens?: number;
 }): Promise<OpenAiExtractionResult & { parsed: unknown }> {
   console.info("[openai-model-routing]", {
     selectedModel: input.model,
@@ -98,14 +101,15 @@ async function runStructuredRequest(input: {
   const response = await input.client.responses.create({
     model: input.model,
     input: [
-      { role: "system", content: [{ type: "input_text", text: buildSystemPrompt({ attemptNumber: input.analytics?.attemptNumber }) }] },
-      { role: "user", content: [{ type: "input_text", text: buildUserPrompt(input.source, input.analytics) }] },
+      { role: "system", content: [{ type: "input_text", text: input.systemPrompt }] },
+      { role: "user", content: [{ type: "input_text", text: input.userPrompt }] },
     ],
     text: {
       format: {
         type: "json_object",
       },
     },
+    ...(input.maxOutputTokens ? { max_output_tokens: input.maxOutputTokens } : {}),
   });
   const providerMs = Date.now() - startedAt;
   const usage = {
@@ -153,6 +157,8 @@ export async function callOpenAiStructuredExtraction(
       taskType: "retry_final",
       fallbackUsed: finalRetryModel !== defaultModel,
       fallbackReason: "final_retry_strict_prompt",
+      systemPrompt: buildSystemPrompt({ attemptNumber: analytics?.attemptNumber }),
+      userPrompt: buildUserPrompt(source, analytics),
     });
   }
 
@@ -165,6 +171,8 @@ export async function callOpenAiStructuredExtraction(
       taskType: "retry_refined",
       fallbackUsed: Boolean(complexModel && complexModel !== defaultModel),
       fallbackReason: "retry_refined_prompt",
+      systemPrompt: buildSystemPrompt({ attemptNumber: analytics?.attemptNumber }),
+      userPrompt: buildUserPrompt(source, analytics),
     });
   }
 
@@ -176,6 +184,8 @@ export async function callOpenAiStructuredExtraction(
     taskType: "default",
     fallbackUsed: false,
     fallbackReason: null,
+    systemPrompt: buildSystemPrompt({ attemptNumber: analytics?.attemptNumber }),
+    userPrompt: buildUserPrompt(source, analytics),
   });
 
   if (!complexModel || complexModel === defaultModel || !shouldUseComplexFallback(source, firstPass.parsed)) {
@@ -190,6 +200,8 @@ export async function callOpenAiStructuredExtraction(
     taskType: "complex_extraction",
     fallbackUsed: true,
     fallbackReason: "low_confidence_or_no_strong_entity",
+    systemPrompt: buildSystemPrompt({ attemptNumber: analytics?.attemptNumber }),
+    userPrompt: buildUserPrompt(source, analytics),
   });
 
   return {
@@ -204,4 +216,29 @@ export async function callOpenAiStructuredExtraction(
       totalTokens: (firstPass.usage.totalTokens || 0) + (secondPass.usage.totalTokens || 0) || null,
     },
   };
+}
+
+export async function callOpenAiTinyCaptionExtraction(
+  source: ExtractionResult,
+  analytics?: IntelligenceRequest["analytics"],
+): Promise<OpenAiExtractionResult> {
+  const client = getClient();
+  const defaultModel =
+    process.env.OPENAI_TINY_CAPTION_MODEL ||
+    process.env.EXTRACTION_COMPLEX_MODEL ||
+    process.env.OPENAI_MODEL ||
+    process.env.INTELLIGENCE_MODEL ||
+    "gpt-5-nano";
+  return runStructuredRequest({
+    client,
+    model: defaultModel,
+    source,
+    analytics,
+    taskType: "tiny_caption",
+    fallbackUsed: false,
+    fallbackReason: null,
+    systemPrompt: buildTinyCaptionSystemPrompt(),
+    userPrompt: buildTinyCaptionUserPrompt(source, analytics),
+    maxOutputTokens: 600,
+  });
 }

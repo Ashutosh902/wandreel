@@ -81,10 +81,17 @@ export function buildCombinedText(input: {
 }) {
   const title = String(input.metadata.title || "").trim();
   const description = String(input.metadata.description || "").trim();
+  const pinnedComment = String(input.metadata.commentEvidence?.pinnedComment || "").trim();
+  const topComments = Array.isArray(input.metadata.commentEvidence?.topComments)
+    ? input.metadata.commentEvidence?.topComments.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  const comments = [pinnedComment ? `Pinned comment: ${pinnedComment}` : "", ...topComments.map((item) => `Comment: ${item}`)]
+    .filter(Boolean)
+    .join("\n");
   const transcript = String(input.transcript?.text || "").trim();
   const ocr = String(input.ocr?.text || "").trim();
 
-  const raw = [title, description, transcript, ocr].filter(Boolean).join("\n\n").trim();
+  const raw = [title, description, comments, transcript, ocr].filter(Boolean).join("\n\n").trim();
   const rawDecoded = decodeHtmlEntities(raw);
   const normalized = normalizeWhitespace(rawDecoded);
   const split = normalized.split("\n").map((s) => s.trim()).filter(Boolean);
@@ -107,4 +114,3 @@ export function buildCombinedText(input: {
     },
   };
 }
-
