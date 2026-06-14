@@ -364,17 +364,19 @@ export function AddScreen() {
         place,
         sortOrder: (place.runId * 1000) - index,
       }));
+    const runsWithVisibleResolvedPlaces = new Set(resolvedCards.map((card) => card.runId));
 
     const loadingCards =
       selectedDetectedCategory === "Auto-detect"
         ? pendingJobs.map((pending) => ({
+            shouldShow: !runsWithVisibleResolvedPlaces.has(pending.runId),
             key: `pending-${pending.runId}`,
             runId: pending.runId,
             sourceUrl: pending.sourceUrl,
             kind: "pending" as const,
             pending,
             sortOrder: pending.runId * 1000 + 999,
-          }))
+          })).filter((card) => card.shouldShow).map(({ shouldShow: _shouldShow, ...card }) => card)
         : [];
 
     return [...loadingCards, ...resolvedCards].sort((left, right) => right.sortOrder - left.sortOrder);
@@ -710,6 +712,13 @@ export function AddScreen() {
     ...jobs.filter((item) => item.runId !== pendingJob.runId),
   ];
 
+  const getPreservedRunPlaces = (places: DetectedPlace[], pendingJob: PendingDetectionJob) => {
+    const currentRunPlaces = places.filter((item) => item.runId === pendingJob.runId);
+    if (currentRunPlaces.length) return currentRunPlaces;
+    if (pendingJob.draftPlaces?.length) return pendingJob.draftPlaces;
+    return [pendingJob.fallbackPlace];
+  };
+
   const publishSavedToCategoryFeed = (place: DetectedPlace) => {
     const intent = resolveEntityIntent({
       category: place.category,
@@ -977,6 +986,7 @@ export function AddScreen() {
       imageUrl: nextFallbackPlace.imageUrl,
       videoUrl: normalizedSourceUrl,
       fallbackPlace: nextFallbackPlace,
+      draftPlaces: [],
     };
 
     const nextDraftPlaces = replaceRunPlaces(detectedPlacesRef.current, runId);
@@ -1022,6 +1032,7 @@ export function AddScreen() {
         imageUrl: extraction.metadata?.imageUrl || categoryFallbackImage[draftPlace.category],
         videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || normalizedSourceUrl,
         fallbackPlace: draftPlace,
+        draftPlaces: [],
       };
       syncDraftState(
         replaceRunPlaces(detectedPlacesRef.current, runId),
@@ -1076,9 +1087,11 @@ export function AddScreen() {
       const queuedPendingJob: PendingDetectionJob = {
         ...extractionPendingJob,
         jobId,
+        draftPlaces: resolvedPlaces,
       };
+      const nextVisiblePlaces = resolvedPlaces.length ? resolvedPlaces : [];
       syncDraftState(
-        replaceRunPlaces(detectedPlacesRef.current, runId),
+        replaceRunPlaces(detectedPlacesRef.current, runId, nextVisiblePlaces),
         upsertPendingJob(pendingJobsRef.current, queuedPendingJob),
         normalizedSourceUrl,
       );
@@ -1088,8 +1101,12 @@ export function AddScreen() {
       stopAnalysisProgress();
       streamAbortRef.current?.abort();
       streamAbortRef.current = null;
+      const pendingForRun = pendingJobsRef.current.find((item) => item.runId === runId) ?? null;
+      const preservedRunPlaces = pendingForRun
+        ? getPreservedRunPlaces(detectedPlacesRef.current, pendingForRun)
+        : [fallbackPlace];
       syncDraftState(
-        replaceRunPlaces(detectedPlacesRef.current, runId, [fallbackPlace]),
+        replaceRunPlaces(detectedPlacesRef.current, runId, preservedRunPlaces),
         pendingJobsRef.current.filter((item) => item.runId !== runId),
         "",
       );
@@ -1133,11 +1150,14 @@ export function AddScreen() {
                 },
                 pending.runId,
               );
-              nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, resolvedPlaces.length ? resolvedPlaces : [pending.fallbackPlace]);
+              const replacementPlaces = resolvedPlaces.length
+                ? resolvedPlaces
+                : getPreservedRunPlaces(nextPlaces, pending);
+              nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, replacementPlaces);
               nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
               didChange = true;
 
-              const readyPlace = resolvedPlaces[0] || pending.fallbackPlace;
+              const readyPlace = replacementPlaces[0] || pending.fallbackPlace;
               addReadyNotification({
                 id: `ready-${pending.jobId}`,
                 runId: pending.runId,
@@ -1151,13 +1171,13 @@ export function AddScreen() {
                 createdAtMs: Date.now(),
               });
             } else if (job.status === "failed" || Date.now() - pending.startedAtMs >= ADD_INTELLIGENCE_TIMEOUT_MS) {
-              nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, [pending.fallbackPlace]);
+              nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, getPreservedRunPlaces(nextPlaces, pending));
               nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
               didChange = true;
             }
           } catch {
             if (Date.now() - pending.startedAtMs >= ADD_INTELLIGENCE_TIMEOUT_MS) {
-              nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, [pending.fallbackPlace]);
+              nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, getPreservedRunPlaces(nextPlaces, pending));
               nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
               didChange = true;
             }

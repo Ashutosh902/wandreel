@@ -55,6 +55,7 @@ export type PendingDetectionJob = {
   imageUrl: string;
   videoUrl: string;
   fallbackPlace: DetectedPlace;
+  draftPlaces?: DetectedPlace[];
 };
 
 export type PersistedAddDraft = {
@@ -118,6 +119,13 @@ export function readPersistedAddDraft(): PersistedAddDraft | null {
               sourceUrl: item.sourceUrl || item.videoUrl || item.fallbackPlace?.sourceUrl || "",
               retryCount: Number.isFinite(item.retryCount) ? item.retryCount : item.fallbackPlace?.retryCount || 0,
               isRetrying: Boolean(item.isRetrying),
+              draftPlaces: Array.isArray(item.draftPlaces)
+                ? item.draftPlaces.map((place) => ({
+                    ...place,
+                    sourceUrl: place.sourceUrl || item.sourceUrl || item.videoUrl || "",
+                    retryCount: Number.isFinite(place.retryCount) ? place.retryCount : item.retryCount || 0,
+                  }))
+                : [],
               fallbackPlace: item.fallbackPlace
                 ? {
                     ...item.fallbackPlace,
