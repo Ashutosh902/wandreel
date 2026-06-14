@@ -3,7 +3,7 @@ import { CATEGORY_FEED_CACHE_KEY } from "./addFlowState";
 import type { EntityIntent } from "./intent";
 import { resolveEntityIntent } from "./intent";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+const API_BASE_URL = (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL || "http://localhost:8787";
 
 export type SavedPlaceRecord = {
   id: string;
@@ -36,6 +36,8 @@ export type SavedPlaceApiItem = {
   category?: string | null;
   metaPrimary?: string | null;
   metaSecondary?: string | null;
+  createdAt?: string | number | null;
+  updatedAt?: string | number | null;
   metadata?: {
     metaPrimary?: string | null;
     metaSecondary?: string | null;
@@ -52,6 +54,8 @@ export type SavedPlaceApiItem = {
     isGlobal?: boolean | null;
     sharedVisibility?: "private" | "global" | null;
     sharedAt?: number | null;
+    createdAt?: string | number | null;
+    updatedAt?: string | number | null;
   } | null;
 };
 
@@ -95,6 +99,50 @@ export function clearSavedPlacesByCategory() {
 
 export function flattenSavedPlaces(byCategory: Record<CategoryLabel, SavedPlaceRecord[]>) {
   return categoryOrder.flatMap((category) => byCategory[category] || []);
+}
+
+type SavedPlaceTimestampSource = {
+  createdAtMs?: number | null;
+  createdAt?: string | number | null;
+  savedAt?: string | number | null;
+  addedAt?: string | number | null;
+};
+
+function parseTimestampCandidate(value: unknown): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const numeric = Number(trimmed);
+    if (Number.isFinite(numeric)) return numeric;
+    const parsed = Date.parse(trimmed);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+export function getSavedPlaceTimestampMs(place: SavedPlaceTimestampSource): number {
+  const candidates = [
+    place.createdAtMs,
+    place.createdAt,
+    place.savedAt,
+    place.addedAt,
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = parseTimestampCandidate(candidate);
+    if (parsed !== null) return parsed;
+  }
+
+  return 0;
+}
+
+export function getRecentlyAddedSavedPlaces(places: SavedPlaceRecord[], limit = 7) {
+  return [...places]
+    .sort((a, b) => getSavedPlaceTimestampMs(b) - getSavedPlaceTimestampMs(a))
+    .slice(0, limit);
 }
 
 export function getSavedPlaceCounts(byCategory: Record<CategoryLabel, SavedPlaceRecord[]>) {
@@ -149,6 +197,9 @@ export function removeSavedPlace(place: SavedPlaceRecord) {
 export function mergeSavedPlacesFromApi(items: SavedPlaceApiItem[]) {
   const current = readSavedPlacesByCategory();
   const next = createEmptySavedPlacesByCategory();
+  const existingByKey = new Map(
+    flattenSavedPlaces(current).map((place) => [getSavedPlaceKey(place), place] as const),
+  );
 
   for (const category of categoryOrder) {
     next[category] = [...current[category]];
@@ -158,6 +209,10 @@ export function mergeSavedPlacesFromApi(items: SavedPlaceApiItem[]) {
     const mapped = mapSavedPlaceApiItem(item);
     if (!mapped) continue;
     const placeKey = getSavedPlaceKey(mapped);
+    const fallbackTimestamp = existingByKey.get(placeKey)?.createdAtMs ?? null;
+    if (!mapped.createdAtMs && fallbackTimestamp !== null) {
+      mapped.createdAtMs = fallbackTimestamp;
+    }
     for (const category of categoryOrder) {
       next[category] = next[category].filter((entry) => getSavedPlaceKey(entry) !== placeKey);
     }
@@ -285,7 +340,15 @@ export function mapSavedPlaceApiItem(item: SavedPlaceApiItem): SavedPlaceRecord 
     sharedVisibility:
       item.metadata?.sharedVisibility === "global" || item.metadata?.isGlobal === true ? "global" : "private",
     sharedAt: typeof item.metadata?.sharedAt === "number" ? item.metadata.sharedAt : undefined,
-    createdAtMs: Date.now(),
+    createdAtMs: getSavedPlaceTimestampMs({
+      createdAtMs:
+        typeof item.metadata?.createdAt === "number"
+          ? item.metadata.createdAt
+          : typeof item.createdAt === "number"
+            ? item.createdAt
+            : null,
+      createdAt: item.createdAt ?? item.metadata?.createdAt ?? null,
+    }),
   };
 }
 
@@ -335,6 +398,17 @@ function normalizeSavedPlace(
     sharedVisibility:
       item.sharedVisibility === "global" || item.isGlobal === true ? "global" : "private",
     sharedAt: typeof item.sharedAt === "number" ? item.sharedAt : undefined,
-    createdAtMs: typeof item.createdAtMs === "number" ? item.createdAtMs : Date.now(),
+    createdAtMs: getSavedPlaceTimestampMs({
+      createdAtMs: typeof item.createdAtMs === "number" ? item.createdAtMs : null,
+      createdAt: typeof (item as { createdAt?: string | number | null }).createdAt !== "undefined"
+        ? (item as { createdAt?: string | number | null }).createdAt ?? null
+        : null,
+      savedAt: typeof (item as { savedAt?: string | number | null }).savedAt !== "undefined"
+        ? (item as { savedAt?: string | number | null }).savedAt ?? null
+        : null,
+      addedAt: typeof (item as { addedAt?: string | number | null }).addedAt !== "undefined"
+        ? (item as { addedAt?: string | number | null }).addedAt ?? null
+        : null,
+    }),
   };
 }

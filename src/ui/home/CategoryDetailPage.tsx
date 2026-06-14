@@ -21,10 +21,8 @@ type CategorySortOption = "distance" | "alphabetical" | "recent";
 
 type CategoryScreenConfig = {
   searchPlaceholder: string;
-  chips: CategoryFilterChip[];
 };
 
-const CATEGORY_LEVEL2_ENABLED = String(import.meta.env.VITE_CATEGORY_LEVEL2_ENABLED ?? "true").toLowerCase() !== "false";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 
 const categoryOrder: CategoryLabel[] = ["Taste", "Activity", "Stay", "Explore"];
@@ -32,19 +30,15 @@ const categoryOrder: CategoryLabel[] = ["Taste", "Activity", "Stay", "Explore"];
 const categoryConfigs: Record<CategoryLabel, CategoryScreenConfig> = {
   Taste: {
     searchPlaceholder: "Search saved restaurants...",
-    chips: CATEGORY_LEVEL2_ENABLED ? ["All", "Saved", "Visited"] : ["All", "Saved"],
   },
   Activity: {
     searchPlaceholder: "Search saved activities...",
-    chips: CATEGORY_LEVEL2_ENABLED ? ["All", "Saved", "Visited"] : ["All", "Saved"],
   },
   Stay: {
     searchPlaceholder: "Search saved stays...",
-    chips: CATEGORY_LEVEL2_ENABLED ? ["All", "Saved", "Visited"] : ["All", "Saved"],
   },
   Explore: {
     searchPlaceholder: "Search saved places...",
-    chips: CATEGORY_LEVEL2_ENABLED ? ["All", "Saved", "Visited"] : ["All", "Saved"],
   },
 };
 
@@ -315,10 +309,7 @@ export function CategoryDetailPage({
     );
     return allowed.filter((chip) => seen.has(chip));
   }, [category, distanceAwarePlaces]);
-  const chips = useMemo(
-    () => [...config.chips, ...availableL2Chips],
-    [availableL2Chips, config.chips],
-  );
+  const chips = useMemo(() => ["All", ...availableL2Chips], [availableL2Chips]);
   useEffect(() => {
     if (!chips.includes(selectedChip)) {
       setSelectedChip("All");
@@ -333,11 +324,7 @@ export function CategoryDetailPage({
           title: place.title,
           metaSecondary: place.metaSecondary,
         });
-        const matchesChip =
-          selectedChip === "All" ||
-          (selectedChip === "Saved" && place.tags.includes("Saved")) ||
-          (selectedChip === "Visited" && place.tags.includes("Visited")) ||
-          placeIntent.l2 === selectedChip;
+        const matchesChip = selectedChip === "All" || placeIntent.l2 === selectedChip;
         const matchesSearch =
           normalizedQuery.length === 0 ||
           place.title.toLowerCase().includes(normalizedQuery) ||

@@ -16,33 +16,7 @@ export function RecentlyAddedCarousel({
   places: SavedPlaceRecord[];
   onAddLink: () => void;
 }) {
-  const getRecentTimestamp = (place: SavedPlaceRecord) => {
-    const legacyPlace = place as SavedPlaceRecord & {
-      createdAt?: string | number | null;
-      savedAt?: string | number | null;
-      addedAt?: string | number | null;
-    };
-    const candidates = [
-      typeof place.createdAtMs === "number" ? place.createdAtMs : null,
-      legacyPlace.createdAt ?? null,
-      legacyPlace.savedAt ?? null,
-      legacyPlace.addedAt ?? null,
-    ];
-
-    for (const value of candidates) {
-      if (typeof value === "number" && Number.isFinite(value)) return value;
-      if (typeof value === "string" && value.trim()) {
-        const parsed = Date.parse(value);
-        if (Number.isFinite(parsed)) return parsed;
-      }
-    }
-
-    return 0;
-  };
-
-  const recentPlaces = [...places]
-    .sort((a, b) => getRecentTimestamp(b) - getRecentTimestamp(a))
-    .slice(0, 7);
+  const recentPlaces = places;
 
   return (
     <section className="wr-recent-wrap">

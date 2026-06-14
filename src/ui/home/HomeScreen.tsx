@@ -38,6 +38,7 @@ import {
   createEmptySavedPlacesByCategory,
   flattenSavedPlaces,
   getSavedPlaceCounts,
+  getRecentlyAddedSavedPlaces,
   mergeSavedPlacesFromApi,
   readSavedPlacesByCategory,
   SAVED_PLACES_UPDATED_EVENT,
@@ -67,7 +68,7 @@ function DiscoverPage({
   notificationCount,
   onNotificationsClick,
   savedPlacesByCategory,
-  visibleSavedPlaces,
+  recentSavedPlaces,
   heroMode,
 }: {
   activeCategory: CategoryLabel | null;
@@ -78,7 +79,7 @@ function DiscoverPage({
   notificationCount: number;
   onNotificationsClick: () => void;
   savedPlacesByCategory: Record<CategoryLabel, SavedPlaceRecord[]>;
-  visibleSavedPlaces: SavedPlaceRecord[];
+  recentSavedPlaces: SavedPlaceRecord[];
   heroMode: HeroMode;
 }) {
   const counts = getSavedPlaceCounts(savedPlacesByCategory);
@@ -122,7 +123,7 @@ function DiscoverPage({
         <>
           <HeroCard mode={heroMode} title={heroTitle} subtitle={heroSubtitle} />
           <BucketlistSummary counts={counts} onSelectCategory={onSelectCategory} onAddLink={onAddLink} />
-          <RecentlyAddedCarousel places={visibleSavedPlaces} onAddLink={onAddLink} />
+          <RecentlyAddedCarousel places={recentSavedPlaces} onAddLink={onAddLink} />
         </>
       )}
     </>
@@ -238,6 +239,10 @@ export function HomeScreen() {
   const visibleSavedPlaces = useMemo(
     () => (isAuthenticated ? allSavedPlaces : []),
     [allSavedPlaces, isAuthenticated],
+  );
+  const recentSavedPlaces = useMemo(
+    () => getRecentlyAddedSavedPlaces(visibleSavedPlaces, 7),
+    [visibleSavedPlaces],
   );
   const visibleSavedPlacesByCategory = useMemo(() => {
     if (!isAuthenticated) return createEmptySavedPlacesByCategory();
@@ -594,7 +599,7 @@ export function HomeScreen() {
             notificationCount={visibleReadyNotifications.length}
           onNotificationsClick={() => setIsReadySheetOpen(true)}
           savedPlacesByCategory={visibleSavedPlacesByCategory}
-          visibleSavedPlaces={visibleSavedPlaces}
+          recentSavedPlaces={recentSavedPlaces}
           heroMode={heroMode}
           onViewMap={(category) => {
             setTransitionDirection(1);
@@ -662,7 +667,7 @@ export function HomeScreen() {
     mapEntryMode,
     mapSourceCategory,
     readyNotifications.length,
-    visibleSavedPlaces,
+    recentSavedPlaces,
     visibleSavedPlacesByCategory,
   ]);
 
