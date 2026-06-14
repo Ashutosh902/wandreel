@@ -5,6 +5,7 @@ import { callOpenAiStructuredExtraction, callOpenAiTinyCaptionExtraction } from 
 import { recordSla } from "../metrics/slaTracker";
 import { resolveEntityLocality } from "./placeResolver";
 import type { ExtractionResult } from "../extraction/types";
+import { augmentIntelligenceOutputWithCaptionLists } from "./captionListAugment";
 
 function buildDefaultLevel2(category: "eat" | "do" | "stay" | "see") {
   return category === "eat"
@@ -557,7 +558,8 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
   const firstPass = intelligenceOutputSchema.safeParse(raw);
   const schemaFirstPassMs = Date.now() - schemaFirstStartedAt;
   if (firstPass.success) {
-    const enrichedOutput = await enrichWithResolvedLocations(applyVisualEntityFallback(firstPass.data, req), req.source);
+    const augmentedOutput = augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback(firstPass.data, req), req.source);
+    const enrichedOutput = await enrichWithResolvedLocations(augmentedOutput, req.source);
     const agg = recordSla("intelligence.total", Date.now() - totalStartedAt);
     if (Number(process.env.INTELLIGENCE_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.INTELLIGENCE_SLA_LOG_EVERY) === 0) {
       console.info("[sla][intelligence.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
@@ -586,7 +588,8 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
   const schemaSecondPassMs = Date.now() - schemaSecondStartedAt;
 
   if (secondPass.success) {
-    const enrichedOutput = await enrichWithResolvedLocations(applyVisualEntityFallback(secondPass.data, req), req.source);
+    const augmentedOutput = augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback(secondPass.data, req), req.source);
+    const enrichedOutput = await enrichWithResolvedLocations(augmentedOutput, req.source);
     const agg = recordSla("intelligence.total", Date.now() - totalStartedAt);
     if (Number(process.env.INTELLIGENCE_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.INTELLIGENCE_SLA_LOG_EVERY) === 0) {
       console.info("[sla][intelligence.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
@@ -608,14 +611,14 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
   }
 
   return {
-    output: applyVisualEntityFallback({
+    output: augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback({
       ...normalized,
       status: "needs_review",
       visibility: {
         ...normalized.visibility,
         reason: "Schema validation failed after auto-fix. Manual review required.",
       },
-    }, req),
+    }, req), req.source),
     validationErrors: [
       ...formatZodErrors(firstPass.error),
       ...formatZodErrors(secondPass.error),
