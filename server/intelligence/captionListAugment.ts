@@ -93,6 +93,10 @@ function normalizeLooseLabel(input: unknown): string {
     .toLowerCase();
 }
 
+function normalizeEntityKeyPart(input: unknown): string {
+  return normalizeLooseLabel(input).replace(/[^a-z0-9]+/g, "");
+}
+
 function inferIntentL1FromText(text: string): IntentL1 {
   if (/\b(hotel|stay|resort|homestay|hostel|villa|room|suite)\b/i.test(text)) return "stay";
   if (/\b(activity|adventure|cycling|workshop|sports|boating|show|event|music|live music|party)\b/i.test(text)) return "activity";
@@ -288,7 +292,7 @@ function extractListCandidateLines(text: string): Array<{ header: string; line: 
 }
 
 function isDuplicate(existingNames: Set<string>, candidate: CaptionListEntity) {
-  const key = `${candidate.category}|${candidate.name.toLowerCase()}`;
+  const key = `${candidate.category}|${normalizeEntityKeyPart(candidate.name)}`;
   if (existingNames.has(key)) return true;
   existingNames.add(key);
   return false;
@@ -312,9 +316,7 @@ export function augmentIntelligenceOutputWithCaptionLists(
   output: IntelligenceOutput,
   source: ExtractionResult,
 ): IntelligenceOutput {
-  if (output.structuredEntities.length > 1) return output;
-
-  const existingNames = new Set(output.entities.map((entity) => `${entity.category}|${entity.name.toLowerCase()}`));
+  const existingNames = new Set(output.entities.map((entity) => `${entity.category}|${normalizeEntityKeyPart(entity.name)}`));
   const extraCandidates = extractCaptionListEntities(source, existingNames);
   if (!extraCandidates.length) return output;
 

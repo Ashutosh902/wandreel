@@ -89,6 +89,68 @@ function buildTinyOutput(name = "The Fresh Factory"): IntelligenceOutput {
   };
 }
 
+function buildTinyOutputWithNames(names: string[]): IntelligenceOutput {
+  const structuredEntities = names.map((name) => ({
+    name,
+    category: "eat" as const,
+    locality: null,
+    city: "Bengaluru",
+    state: "Karnataka",
+    country: "India",
+    address: null,
+    confidence: "medium" as const,
+    googleMapsQuery: `${name} Bengaluru`,
+    evidenceText: "Derived from caption evidence",
+    intent: { l1: "taste" as const, l2: "Restaurant", l3: [] },
+  }));
+
+  const entities = names.map((name) => ({
+    category: "eat" as const,
+    name,
+    entityType: "place",
+    city: "Bengaluru",
+    state: "Karnataka",
+    country: "India",
+    locality: null,
+    tags: [],
+    details: {},
+    level2: {
+      category: "eat" as const,
+      cuisineType: null,
+      mealType: null,
+      dietaryTags: [],
+      vibeTags: [],
+      priceTier: null,
+    },
+    intent: { l1: "taste" as const, l2: "Restaurant", l3: [] },
+    googleMapsQuery: `${name} Bengaluru`,
+    sourceEvidence: "Derived from caption evidence",
+    confidence: "medium" as const,
+  }));
+
+  return {
+    source: {
+      url: "https://www.instagram.com/p/test",
+      platform: "instagram",
+      title: "Instagram caption test",
+      creator: null,
+      sourceType: "mixed_discovery",
+    },
+    placeCollections: [],
+    categoriesPresent: ["eat"],
+    weakMentions: [],
+    showIn: { eat: true, do: false, stay: false, see: false },
+    structuredEntities,
+    entities,
+    visibility: {
+      showIn: ["eat"],
+      doNotShowIn: ["do", "stay", "see"],
+      reason: "Derived from tiny caption response.",
+    },
+    status: "ready",
+  };
+}
+
 test("tiny fast path post-processing expands recommendation captions into multiple cards", () => {
   const req = buildInstagramReq(
     "Farmers market at 6 am @thefreshfactoryindia with live music set by @denoykp @lional_lishoy\n\nMy top recommendations /\n@superbrew.in for authentic Japanese ceremonial grade matcha\n@nariandkage for freshly made cheese and spreads\n@sprout.og loved their mornings buns and multigrain cookies",
@@ -114,5 +176,22 @@ test("tiny fast path post-processing does not create fake place cards for creato
   assert.deepEqual(
     result.structuredEntities.map((entity) => entity.name),
     ["Single Place"],
+  );
+});
+
+test("tiny fast path post-processing appends missing praised handle recommendations to an existing multi-card result", () => {
+  const req = buildInstagramReq(
+    "Farmers market at 6 am @thefreshfactoryindia with live music set by @denoykp @lional_lishoy\n\nMy top recommendations /\n@superbrew.in for authentic Japanese ceremonial grade matcha\n@nariandkage for freshly made cheese and spreads\n@sprout.og loved their mornings buns and multigrain cookies",
+  );
+
+  const result = postProcessTinyCaptionOutput(
+    buildTinyOutputWithNames(["The Fresh Factory India", "Super Brew", "Nari and Kage"]),
+    req,
+  );
+
+  assert.equal(result.structuredEntities.length, 4);
+  assert.deepEqual(
+    result.structuredEntities.map((entity) => entity.name),
+    ["The Fresh Factory India", "Super Brew", "Nari and Kage", "Sprout"],
   );
 });
