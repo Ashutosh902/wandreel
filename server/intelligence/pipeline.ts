@@ -3,7 +3,7 @@ import type { DiscoveryEntity, IntelligenceOutput, IntelligencePipelineResult, I
 import { normalizeEntityIntent, normalizeIntelligenceOutput } from "./normalize";
 import { callOpenAiStructuredExtraction, callOpenAiTinyCaptionExtraction } from "./providers/openai";
 import { recordSla } from "../metrics/slaTracker";
-import { resolveEntityLocality } from "./placeResolver";
+import { inferPlaceResolveContext, mergeResolutionIntoContext, resolveEntityLocality } from "./placeResolver";
 import type { ExtractionResult } from "../extraction/types";
 import { augmentIntelligenceOutputWithCaptionLists } from "./captionListAugment";
 
@@ -492,28 +492,33 @@ async function enrichWithResolvedLocations(output: IntelligencePipelineResult["o
   const enabled = String(process.env.PLACE_RESOLUTION_ENABLED || "true").toLowerCase() !== "false";
   if (!enabled || !Array.isArray(output.structuredEntities) || output.structuredEntities.length === 0) return output;
 
-  const resolved = await Promise.all(
-    output.structuredEntities.map(async (entity) => {
-      if (shouldSkipGoogleResolution(entity, source)) {
-        return entity;
-      }
-      const resolution = await resolveEntityLocality(entity);
-      return {
-        ...entity,
-        locality: resolution.locality || entity.locality,
-        city: resolution.city || entity.city,
-        state: resolution.state || entity.state,
-        country: resolution.country || entity.country,
-        address: resolution.formattedAddress || entity.address,
-        placeId: resolution.placeId,
-        photoUrl: resolution.photoUrl || entity.photoUrl || null,
-        lat: resolution.lat,
-        lng: resolution.lng,
-        resolvedBy: resolution.provider,
-        resolutionConfidence: resolution.confidence,
-      };
-    }),
-  );
+  let resolveContext = inferPlaceResolveContext(source, output.structuredEntities);
+  const resolved: typeof output.structuredEntities = [];
+  for (const entity of output.structuredEntities) {
+    if (shouldSkipGoogleResolution(entity, source)) {
+      resolved.push(entity);
+      continue;
+    }
+    const resolution = await resolveEntityLocality(entity, resolveContext);
+    const resolvedEntity = {
+      ...entity,
+      locality: resolution.locality || entity.locality,
+      city: resolution.city || entity.city,
+      state: resolution.state || entity.state,
+      country: resolution.country || entity.country,
+      address: resolution.formattedAddress || entity.address,
+      placeId: resolution.placeId,
+      photoUrl: resolution.photoUrl || entity.photoUrl || null,
+      lat: resolution.lat,
+      lng: resolution.lng,
+      resolvedBy: resolution.provider,
+      resolutionConfidence: resolution.confidence,
+    };
+    resolved.push(resolvedEntity);
+    if (resolution.provider === "google_maps" && resolution.confidence !== "low") {
+      resolveContext = mergeResolutionIntoContext(resolveContext, resolution);
+    }
+  }
 
   const byName = new Map<string, (typeof resolved)[number]>();
   for (const item of resolved) {
