@@ -18,7 +18,7 @@ import {
   type IntelligenceEntity,
   type PendingDetectionJob,
 } from "./addFlowState";
-import { resolveEntityIntent } from "./intent";
+import { buildIntentSubtitle, resolveEntityIntent } from "./intent";
 import { upsertSavedPlace } from "./savedPlaces";
 import {
   SHARED_INTENT_RECEIVED_EVENT,
@@ -108,6 +108,45 @@ const STREAM_STAGE_COPY: Record<string, string> = {
   failed: "Almost there...",
 };
 
+type RetryStatusMessageInput = {
+  isLoading: boolean;
+  nextAttemptNumber: number;
+  resultAttemptNumber: number;
+  confidence?: DetectedPlace["confidence"];
+  possibleMatchesCount?: number;
+  retryCount: number;
+  maxRetries: number;
+  needsManualReview: boolean;
+};
+
+function getRetryStatusMessage(input: RetryStatusMessageInput): string | null {
+  if (input.isLoading) {
+    if (input.nextAttemptNumber === 2) {
+      return "We’ll check deeper evidence like text in the video.";
+    }
+    if (input.nextAttemptNumber >= 3) {
+      return "We’ll use visual matching. This may still need your confirmation.";
+    }
+    return "We’re reading the link for you.";
+  }
+
+  const isFinalAttempt = input.resultAttemptNumber >= input.maxRetries + 1;
+  const isUncertain =
+    input.needsManualReview ||
+    input.confidence !== "high" ||
+    (input.possibleMatchesCount ?? 0) > 1;
+
+  if (isFinalAttempt && isUncertain) {
+    return "We found possible matches. Please confirm or edit.";
+  }
+
+  if (input.retryCount >= input.maxRetries && isUncertain) {
+    return "This one’s on us — we couldn’t confirm it confidently. Please edit or save manually.";
+  }
+
+  return null;
+}
+
 function isUsefulStreamStage(stage: string): boolean {
   return !["connected", "started", "metadata_started", "heartbeat"].includes(stage);
 }
@@ -145,7 +184,6 @@ export function AddScreen() {
   const locationDebounceTimerRef = useRef<number | null>(null);
   const detectedPlacesRef = useRef<DetectedPlace[]>([]);
   const pendingJobsRef = useRef<PendingDetectionJob[]>([]);
-  const isResolvingFinal = pendingJobs.length > 0;
   const getAnalyticsAnonymousId = () => {
     let existing = window.localStorage.getItem(ADD_ANALYTICS_ANONYMOUS_ID_KEY);
     if (existing) return existing;
@@ -503,18 +541,43 @@ export function AddScreen() {
   };
 
   const formatPreviewLocation = (place: DetectedPlace) => {
-    return [place.locality, place.city].filter(Boolean).join(", ") || place.locality || "Unknown locality";
+    const compact = [place.city, place.state].filter(Boolean).join(", ");
+    const detailed = [place.locality, place.city].filter(Boolean).join(", ");
+    return compact || detailed || place.locality || place.state || "Unknown locality";
   };
 
-  const formatConfidenceLabel = (confidence?: DetectedPlace["confidence"]) => {
-    if (!confidence) return null;
-    return `${confidence.charAt(0).toUpperCase()}${confidence.slice(1)} confidence`;
+  const formatConfidenceLabel = (place: DetectedPlace, retryCount: number) => {
+    if (retryCount >= MAX_PREVIEW_RETRIES && place.confidence !== "high") return "Possible match";
+    if (place.confidence === "high" && !isNeedsManualReview(place)) return "High confidence";
+    if (place.confidence === "medium") return "Needs confirmation";
+    if (place.confidence === "low") return "Possible match";
+    return isNeedsManualReview(place) ? "Needs confirmation" : null;
   };
 
-  const formatEvidenceText = (place: DetectedPlace) => {
-    const evidence = String(place.evidenceText || "").trim();
-    if (!evidence) return "Needs review before saving.";
-    return evidence.length > 120 ? `${evidence.slice(0, 117)}...` : evidence;
+  const formatSourcePill = (place: DetectedPlace, retryCount: number) => {
+    if (retryCount >= MAX_PREVIEW_RETRIES) return "From visual check";
+    if (/instagram/i.test(place.source)) return "From reel";
+    if (/youtube/i.test(place.source)) return "From video";
+    return "From link";
+  };
+
+  const formatContextLine = (place: DetectedPlace) => {
+    const parts = [
+      place.category,
+      place.intent?.l2 || "",
+      place.intent?.l3?.[0] || "",
+    ].filter(Boolean);
+    return parts.join(" · ");
+  };
+
+  const getCardActionState = (place: DetectedPlace, retryCount: number) => {
+    const confidenceLabel = formatConfidenceLabel(place, retryCount);
+    const needsReview = isNeedsManualReview(place) || confidenceLabel === "Needs confirmation" || confidenceLabel === "Possible match";
+    return {
+      confidenceLabel,
+      needsReview,
+      saveIsPrimary: !needsReview && place.confidence === "high",
+    };
   };
 
   const isNeedsManualReview = (place: DetectedPlace) => {
@@ -1452,7 +1515,28 @@ export function AddScreen() {
 
         {shouldShowDetectedSection ? (
           <section className="wr-add-detected-wrap is-ready" aria-label="Detected places">
-            <div className="wr-add-detected-head"><p>{isResolvingFinal ? "Resolving this link" : "Detected from this link"}</p><span>{previewCards.length} places</span></div>
+            <div className="wr-add-detected-head">
+              <p>
+                {previewCards.length === 1
+                  ? "1 place found from this link"
+                  : `${previewCards.length} places found from this link`}
+              </p>
+              {activePreviewCard?.kind === "resolved" ? (
+                (() => {
+                  const retryCount = activePreviewCard.place.retryCount ?? 0;
+                  const message = getRetryStatusMessage({
+                    isLoading: false,
+                    nextAttemptNumber: retryCount + 2,
+                    resultAttemptNumber: retryCount + 1,
+                    confidence: activePreviewCard.place.confidence ?? null,
+                    retryCount,
+                    maxRetries: MAX_PREVIEW_RETRIES,
+                    needsManualReview: isNeedsManualReview(activePreviewCard.place),
+                  });
+                  return message ? <small>{message}</small> : null;
+                })()
+              ) : null}
+            </div>
 
             <div className="wr-add-chip-row">
               {chipOrder.map((chip) => {
@@ -1480,6 +1564,14 @@ export function AddScreen() {
                       const retryCountLabel = getRetryCountLabel(retryCount);
                       const isRetrying = card.pending.isRetrying;
                       const isRetryDisabled = true;
+                      const pendingMessage = getRetryStatusMessage({
+                        isLoading: true,
+                        nextAttemptNumber: retryCount + 2,
+                        resultAttemptNumber: retryCount + 1,
+                        retryCount,
+                        maxRetries: MAX_PREVIEW_RETRIES,
+                        needsManualReview: true,
+                      });
                       return (
                     <article
                       key={card.key}
@@ -1492,10 +1584,12 @@ export function AddScreen() {
                         <span className="wr-add-preview-loading-core" />
                       </div>
                       <div className="wr-add-preview-body">
-                        <p className="wr-add-preview-kicker">PROCESSING PREVIEW {index + 1} OF {previewCards.length}</p>
+                        <div className="wr-add-preview-topline">
+                          <p className="wr-add-preview-kicker">{index + 1} of {previewCards.length}</p>
+                        </div>
                         <h4>Finding place details...</h4>
-                        <p>{isRetrying ? "We’re taking another look with our best model." : "We're fetching the info for you."}</p>
-                        <p>Keep scrolling - come back anytime to save it.</p>
+                        <p>{pendingMessage || (isRetrying ? "We’re taking another look." : "We’re reading the link for you.")}</p>
+                        <p className="wr-add-preview-supporting">Keep scrolling. You can come back anytime.</p>
                         {retryCountLabel ? <p className="wr-add-preview-retry-note">{retryCountLabel}</p> : null}
                         <div className="wr-add-preview-actions">
                           <button
@@ -1518,7 +1612,29 @@ export function AddScreen() {
                     (() => {
                       const retryCount = card.place.retryCount ?? 0;
                       const retryCountLabel = getRetryCountLabel(retryCount);
-                      const isRetryExhausted = retryCount >= MAX_PREVIEW_RETRIES && isNeedsManualReview(card.place);
+                      const isRetryExhausted = retryCount >= MAX_PREVIEW_RETRIES;
+                      const contextLine = formatContextLine(card.place);
+                      const confidenceLabel = formatConfidenceLabel(card.place, retryCount);
+                      const actionState = getCardActionState(card.place, retryCount);
+                      const subtitle = buildIntentSubtitle({
+                        intent: card.place.intent ?? null,
+                        locality: card.place.locality,
+                        city: card.place.city,
+                        category: card.place.category,
+                      });
+                      const retryStatusMessage = getRetryStatusMessage({
+                        isLoading: false,
+                        nextAttemptNumber: retryCount + 2,
+                        resultAttemptNumber: retryCount + 1,
+                        confidence: card.place.confidence ?? null,
+                        retryCount,
+                        maxRetries: MAX_PREVIEW_RETRIES,
+                        needsManualReview: isNeedsManualReview(card.place),
+                      });
+                      const exhaustedMessage =
+                        isRetryExhausted && actionState.needsReview
+                          ? "This one’s on us — we couldn’t confirm it confidently. Please edit or save manually."
+                          : retryStatusMessage;
                       return (
                     <article
                       key={card.key}
@@ -1528,22 +1644,25 @@ export function AddScreen() {
                       <button type="button" className="wr-add-preview-close" aria-label="Close preview card" onClick={(event) => { event.stopPropagation(); handleDismissPreview(card); }}><X size={14} /></button>
                       <img src={card.place.imageUrl} alt={card.place.name} className="wr-add-preview-image" />
                       <div className="wr-add-preview-body">
-                        <p className="wr-add-preview-kicker">DETECTED PREVIEW {index + 1} OF {previewCards.length}</p>
+                        <div className="wr-add-preview-topline">
+                          <p className="wr-add-preview-kicker">{index + 1} of {previewCards.length}</p>
+                        </div>
                         <h4>{card.place.name}</h4>
-                        <p>{card.place.category} · {formatPreviewLocation(card.place)}</p>
-                        <p className="wr-add-preview-evidence">{formatEvidenceText(card.place)}</p>
+                        <p className="wr-add-preview-location">{formatPreviewLocation(card.place)}</p>
+                        <p className="wr-add-preview-context">{contextLine || subtitle.primary}</p>
+                        {subtitle.secondary ? <p className="wr-add-preview-supporting">{subtitle.secondary}</p> : null}
                         <div className="wr-add-preview-meta">
-                          <span>From {card.place.source}</span>
-                          {formatConfidenceLabel(card.place.confidence) ? <span>{formatConfidenceLabel(card.place.confidence)}</span> : null}
+                          <span>{formatSourcePill(card.place, retryCount)}</span>
+                          {confidenceLabel ? <span>{confidenceLabel}</span> : null}
                           {retryCountLabel ? <span>{retryCountLabel}</span> : null}
                         </div>
-                        {isRetryExhausted ? (
-                          <p className="wr-add-preview-retry-limit">This one’s on us — we couldn’t extract it properly. Please edit the details manually.</p>
+                        {exhaustedMessage ? (
+                          <p className="wr-add-preview-retry-limit">{exhaustedMessage}</p>
                         ) : null}
                         <div className="wr-add-preview-actions">
                           <button
                             type="button"
-                            className="wr-add-preview-btn"
+                            className={`wr-add-preview-btn ${actionState.saveIsPrimary ? "" : "is-primary"}`}
                             onClick={(event) => {
                               event.stopPropagation();
                               setActivePreviewKey(card.key);
@@ -1551,7 +1670,7 @@ export function AddScreen() {
                               setIsEditing(true);
                             }}
                           >
-                            Edit details
+                            Edit
                           </button>
                           <button
                             type="button"
@@ -1566,13 +1685,13 @@ export function AddScreen() {
                           </button>
                           <button
                             type="button"
-                            className="wr-add-preview-btn is-primary"
+                            className={`wr-add-preview-btn ${actionState.saveIsPrimary ? "is-primary" : ""}`}
                             onClick={(event) => {
                               event.stopPropagation();
                               void savePlace(card.place);
                             }}
                           >
-                            Save place
+                            Save
                           </button>
                         </div>
                       </div>
@@ -1645,7 +1764,7 @@ export function AddScreen() {
             <div className="wr-add-edit-actions">
               <button type="button" className="wr-add-preview-btn" onClick={cancelEdit}>Cancel</button>
               <button type="button" className="wr-add-preview-btn" onClick={handleApplyEdit}>Update card</button>
-              <button type="button" className="wr-add-preview-btn is-primary" onClick={() => void handleSaveEditedPlace()}>Save place</button>
+              <button type="button" className="wr-add-preview-btn is-primary" onClick={() => void handleSaveEditedPlace()}>Save</button>
             </div>
           </section>
         </div>
