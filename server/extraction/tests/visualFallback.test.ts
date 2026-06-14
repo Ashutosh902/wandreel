@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildCombinedText } from "../combinedText";
 import { assessVerificationCandidate, classifyQueryShape, isSemanticMismatch, runVisualFallback, shouldTriggerVisualFallback } from "../visualFallback";
-import { getAttemptVisualFallbackPolicy } from "../pipeline";
+import { getAttemptVisualFallbackPolicy, resolveAttemptRoute } from "../pipeline";
 
 test("combined text includes pinned and top comments before first intelligence pass", () => {
   const combined = buildCombinedText({
@@ -206,4 +206,36 @@ test("attempt 3 forced visual fallback does not stop on generic OCR when a frame
   assert.equal(result.attempted, true);
   assert.equal(result.triggered, true);
   assert.notEqual(result.reason, "sufficient_upstream_signal");
+});
+
+test("attempt 2 uses long lane when attempt 1 accepted on fast path", () => {
+  assert.equal(
+    resolveAttemptRoute({
+      attemptNumber: 2,
+      priorAttempt1Profile: {
+        usedLongLane: false,
+        acceptedAfter: "description",
+        route: "attempt_1",
+        transcriptAttempted: false,
+        ocrAttempted: false,
+      },
+    }),
+    "retry_1_long",
+  );
+});
+
+test("attempt 2 uses refinement lane when attempt 1 already ran long lane", () => {
+  assert.equal(
+    resolveAttemptRoute({
+      attemptNumber: 2,
+      priorAttempt1Profile: {
+        usedLongLane: true,
+        acceptedAfter: "manual_review",
+        route: "attempt_1",
+        transcriptAttempted: true,
+        ocrAttempted: true,
+      },
+    }),
+    "retry_1_refinement",
+  );
 });

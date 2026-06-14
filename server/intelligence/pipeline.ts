@@ -335,7 +335,135 @@ function inferScenicVisualEntity(source: ExtractionResult): { entity: DiscoveryE
   return { entity, structured };
 }
 
+function getAttemptNumber(req: IntelligenceRequest): number {
+  return Number(req.analytics?.attemptNumber ?? req.source.attemptInfo?.attemptNumber ?? 1) || 1;
+}
+
+function isStronglyVerifiedVisualCandidate(source: ExtractionResult): boolean {
+  const selected = source.visualFallback?.selectedCandidate;
+  if (!selected) return false;
+  const verificationConfidence = String(selected.verificationConfidence || "").toLowerCase();
+  const finalConfidence = String(selected.finalConfidence || "").toLowerCase();
+  return Boolean(
+    selected.locationVerified &&
+    (verificationConfidence === "high" || verificationConfidence === "medium" || finalConfidence === "high"),
+  );
+}
+
+function hasAmbiguousVisualCandidateSet(source: ExtractionResult): boolean {
+  const candidates = Array.isArray(source.visualFallback?.candidates) ? source.visualFallback!.candidates : [];
+  if (candidates.length < 2) return false;
+  const top = Number(candidates[0]?.rankingScore || 0);
+  const second = Number(candidates[1]?.rankingScore || 0);
+  return Math.abs(top - second) <= 0.08;
+}
+
+function buildAttempt3VisualEvidenceText(source: ExtractionResult): string {
+  const selected = source.visualFallback?.selectedCandidate;
+  const alternates = (source.visualFallback?.candidates || [])
+    .slice(0, 3)
+    .map((candidate) => candidate.candidateName || candidate.query)
+    .filter(Boolean);
+  const parts = [
+    source.visualFallback?.summaryText || null,
+    selected?.visualEvidence || null,
+    alternates.length ? `Visual candidates: ${alternates.join(", ")}` : null,
+  ].filter(Boolean);
+  return parts.join(" | ") || "Attempt 3 visual fallback candidate set remained ambiguous.";
+}
+
+function applyAttempt3VisualDecision(output: IntelligenceOutput, req: IntelligenceRequest): IntelligenceOutput {
+  if (getAttemptNumber(req) < 3) return output;
+
+  const selected = req.source.visualFallback?.selectedCandidate;
+  if (!selected) return output;
+
+  const visualFallbackEntity = inferScenicVisualEntity(req.source);
+  if (!visualFallbackEntity) return output;
+
+  const strongVisual = isStronglyVerifiedVisualCandidate(req.source);
+  if (strongVisual) {
+    const evidenceText = buildAttempt3VisualEvidenceText(req.source);
+    const structured = {
+      ...visualFallbackEntity.structured,
+      confidence: "high" as const,
+      evidenceText,
+    };
+    const entity = {
+      ...visualFallbackEntity.entity,
+      sourceEvidence: evidenceText,
+      confidence: "high" as const,
+      details: {
+        ...visualFallbackEntity.entity.details,
+        locationVerified: true,
+        needsReview: false,
+      },
+    };
+    return {
+      ...output,
+      categoriesPresent: [entity.category],
+      showIn: {
+        eat: entity.category === "eat",
+        do: entity.category === "do",
+        stay: entity.category === "stay",
+        see: entity.category === "see",
+      },
+      structuredEntities: [structured],
+      entities: [entity],
+      visibility: {
+        showIn: [entity.category],
+        doNotShowIn: (["eat", "do", "stay", "see"] as const).filter((cat) => cat !== entity.category),
+        reason: "Attempt 3 strongly verified visual candidate selected as primary evidence.",
+      },
+      status: "ready",
+    };
+  }
+
+  if (!hasAmbiguousVisualCandidateSet(req.source) && !selected.needsReview) {
+    return output;
+  }
+
+  const evidenceText = buildAttempt3VisualEvidenceText(req.source);
+  const structured = {
+    ...visualFallbackEntity.structured,
+    confidence: "low" as const,
+    evidenceText,
+  };
+  const entity = {
+    ...visualFallbackEntity.entity,
+    sourceEvidence: evidenceText,
+    confidence: "low" as const,
+    details: {
+      ...visualFallbackEntity.entity.details,
+      locationVerified: selected.locationVerified ?? false,
+      needsReview: true,
+    },
+  };
+  return {
+    ...output,
+    categoriesPresent: [entity.category],
+    showIn: {
+      eat: entity.category === "eat",
+      do: entity.category === "do",
+      stay: entity.category === "stay",
+      see: entity.category === "see",
+    },
+    structuredEntities: [structured],
+    entities: [entity],
+    visibility: {
+      showIn: [entity.category],
+      doNotShowIn: (["eat", "do", "stay", "see"] as const).filter((cat) => cat !== entity.category),
+      reason: "Attempt 3 visual candidate set remained ambiguous. Manual review required.",
+    },
+    status: "needs_review",
+  };
+}
+
 export function applyVisualEntityFallback(output: IntelligenceOutput, req: IntelligenceRequest): IntelligenceOutput {
+  if (getAttemptNumber(req) >= 3 && req.source.visualFallback?.selectedCandidate) {
+    return applyAttempt3VisualDecision(output, req);
+  }
+
   if (output.structuredEntities.length > 0 || output.entities.length > 0) return output;
 
   const inferred = inferScenicVisualEntity(req.source);

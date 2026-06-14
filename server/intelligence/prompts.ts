@@ -15,13 +15,17 @@ export function buildSystemPrompt(input?: { attemptNumber?: number | null }): st
     attemptNumber >= 3
       ? `
 17. This is the final retry / Attempt 3.
-18. Use all accumulated evidence together: description, transcript, OCR from prior attempts, current OCR, visual fallback, and prior hypotheses.
-19. Treat prior hypotheses only as candidates to verify or reject, never as ground truth.
-20. Visual fallback is the strongest evidence source in this attempt when it returns a verified candidate.
-21. If visualFallback.selectedCandidate exists and has locationVerified=true or medium/high verification confidence, prefer it unless text evidence clearly contradicts it.
+18. In Attempt 3, visual fallback / reverse-image evidence is the primary decision source.
+19. Metadata, transcript, OCR, and prior attempt outputs are supporting context only. They may corroborate, disambiguate, or reject a visual candidate, but they must not override a strongly verified visual candidate.
+20. Prior attempt hypotheses are never ground truth. Treat them only as candidates to verify or reject.
+21. If visualFallback.selectedCandidate exists and is strongly verified by search/location evidence, prefer it unless there is clear contradiction from stronger evidence.
 22. If visual evidence conflicts with a prior guess, choose the better-supported result and make the evidence clear in evidenceText.
-23. Prefer needs_review over inventing a specific place.
-24. If still uncertain, return a final manual-review style low-confidence result rather than guessing.`
+23. If visualFallback returns multiple plausible candidates but none is uniquely verified, return status = "needs_review" with low confidence and list the best candidates in evidenceText instead of guessing.
+24. If visual candidate is strongly verified + supported by metadata/OCR/location, return ready.
+25. If visual candidate is plausible but not uniquely verified, return needs_review with candidate list.
+26. Prefer manual-review style honesty over a specific but weakly supported place guess.
+27. Do not let caption-only or prior-attempt guesses outweigh a strongly verified visual candidate in Attempt 3.
+28. Do not convert an ambiguous visual match into a confident ready result.`
       : attemptNumber === 2
         ? `
 17. This is Retry 1 / Attempt 2.
@@ -115,18 +119,22 @@ Hard rules:
     - high: exact named entity + strong locality/city evidence
     - medium: named entity with partial but plausible location evidence
     - low: generic clue, weak place name, uncertain locality, or needs manual review
-21. Every entity must include intent.
-22. intent.l1 must match category using the fixed mapping: eat->taste, do->activity, stay->stay, see->explore.
-23. Choose exactly one intent.l2.
-24. intent.l2 must come only from the valid L2 list for the chosen intent.l1.
-25. Do not return multiple L2 values.
-26. Do not put Saved or Visited into intent.l2 or intent.l3.
-27. intent.l3 is extracted from metadata/caption, transcript, OCR, and visual evidence. It is not predefined.
-28. intent.l3 may include up to 3 short micro-intents, each ideally 3-4 words max.
-29. Do not invent intent.l3 when evidence is weak.
-30. Do not use generic intent.l3 tags like "nice place", "good view", "travel spot", or "food place".
-31. Use intent.l3 for nuance instead of assigning multiple L2s.
-32. If no strong L2 is available but the entity is valid, choose the closest valid L2 conservatively.${retryInstructions}`;
+21. Confidence rules for Attempt 3:
+    - high: visual candidate strongly verified, with supporting metadata/OCR/location evidence
+    - medium: named visual candidate with partial but plausible verification
+    - low: generic OCR text, multiple plausible visual matches, weak locality match, or manual review needed
+22. Every entity must include intent.
+23. intent.l1 must match category using the fixed mapping: eat->taste, do->activity, stay->stay, see->explore.
+24. Choose exactly one intent.l2.
+25. intent.l2 must come only from the valid L2 list for the chosen intent.l1.
+26. Do not return multiple L2 values.
+27. Do not put Saved or Visited into intent.l2 or intent.l3.
+28. intent.l3 is extracted from metadata/caption, transcript, OCR, and visual evidence. It is not predefined.
+29. intent.l3 may include up to 3 short micro-intents, each ideally 3-4 words max.
+30. Do not invent intent.l3 when evidence is weak.
+31. Do not use generic intent.l3 tags like "nice place", "good view", "travel spot", or "food place".
+32. Use intent.l3 for nuance instead of assigning multiple L2s.
+33. If no strong L2 is available but the entity is valid, choose the closest valid L2 conservatively.${retryInstructions}`;
 }
 
 export function buildUserPrompt(source: ExtractionResult, analytics?: IntelligenceRequest["analytics"]): string {

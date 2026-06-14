@@ -57,6 +57,19 @@ type CacheEntry = {
   result: ExtractionResult;
 };
 
+type AttemptExecutionProfile = {
+  usedLongLane: boolean;
+  acceptedAfter: OrchestrationTrace["acceptedAfter"] | null;
+  route: OrchestrationTrace["route"] | null;
+  transcriptAttempted: boolean;
+  ocrAttempted: boolean;
+};
+
+type AttemptExecutionProfileEntry = {
+  expiresAt: number;
+  profile: AttemptExecutionProfile;
+};
+
 type StageDecision = {
   stage: "description" | "transcript" | "ocr" | "visualFallback";
   ran: boolean;
@@ -67,7 +80,7 @@ type OrchestrationTrace = {
   attemptNumber: number;
   triggerType: ExtractionTriggerType;
   sourcePlatform: ExtractionResult["metadata"]["platform"];
-  route: "quick" | "attempt_1" | "retry_1" | "retry_2";
+  route: "quick" | "attempt_1" | "retry_1_long" | "retry_1_refinement" | "retry_2";
   transcriptReused?: boolean;
   ocrFrameCount?: number;
   visualFrameCount?: number;
@@ -123,6 +136,7 @@ type AttemptVisualFallbackPolicy = {
 };
 
 const extractionCache = new Map<string, CacheEntry>();
+const attemptExecutionProfileCache = new Map<string, AttemptExecutionProfileEntry>();
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_METADATA_BUDGET_MS = 12000;
 const DEFAULT_TRANSCRIPT_BUDGET_MS = 60000;
@@ -592,7 +606,10 @@ function buildExtractionDebug(input: {
   };
 }
 
-async function readMetadata(inputUrl: string, options?: { mode?: ExtractionMode; attemptNumber?: number }) {
+async function readMetadata(
+  inputUrl: string,
+  options?: { mode?: ExtractionMode; attemptNumber?: number; includeComments?: boolean },
+) {
   let metadataFailureReason: string | null = null;
   const metadataStartedAt = nowMs();
   const canonicalUrl = canonicalizeUrl(inputUrl);
@@ -603,7 +620,7 @@ async function readMetadata(inputUrl: string, options?: { mode?: ExtractionMode;
   const commentsPromise =
     detectedPlatform === "instagram" &&
     options?.mode === "deep" &&
-    Number(options?.attemptNumber || 1) === 1
+    (Number(options?.attemptNumber || 1) === 1 || options?.includeComments === true)
       ? withBudget(
           extractInstagramCommentEvidence(inputUrl),
           getNumberEnv("EXTRACTION_COMMENT_BUDGET_MS", DEFAULT_COMMENT_BUDGET_MS),
@@ -947,6 +964,96 @@ function getCachedAttemptResult(input: {
   return cloneResult(cached.result);
 }
 
+function getAttemptExecutionProfileFromResult(result: ExtractionResult | null): AttemptExecutionProfile {
+  const acceptedAfterRaw = result?.debug && typeof result.debug === "object"
+    ? (result.debug as Record<string, any>)?.orchestration?.acceptedAfter
+    : null;
+  const routeRaw = result?.debug && typeof result.debug === "object"
+    ? (result.debug as Record<string, any>)?.orchestration?.route
+    : null;
+  const acceptedAfter =
+    acceptedAfterRaw === "description" ||
+    acceptedAfterRaw === "transcript" ||
+    acceptedAfterRaw === "ocr" ||
+    acceptedAfterRaw === "visualFallback" ||
+    acceptedAfterRaw === "manual_review"
+      ? acceptedAfterRaw
+      : null;
+  const route =
+    routeRaw === "quick" ||
+    routeRaw === "attempt_1" ||
+    routeRaw === "retry_1_long" ||
+    routeRaw === "retry_1_refinement" ||
+    routeRaw === "retry_2"
+      ? routeRaw
+      : null;
+  const transcriptAttempted = Boolean(result?.transcript?.attempted);
+  const ocrAttempted = Boolean(result?.ocr?.attempted);
+  const usedLongLane =
+    transcriptAttempted ||
+    ocrAttempted ||
+    acceptedAfter === "transcript" ||
+    acceptedAfter === "ocr" ||
+    acceptedAfter === "manual_review" ||
+    acceptedAfter === "visualFallback";
+  return {
+    usedLongLane,
+    acceptedAfter,
+    route,
+    transcriptAttempted,
+    ocrAttempted,
+  };
+}
+
+function getCachedAttemptExecutionProfile(input: {
+  url: string;
+  mode: ExtractionMode;
+  attemptNumber: number;
+}): AttemptExecutionProfile | null {
+  const cacheKey = buildAttemptCacheKey(input.mode, input.url, input.attemptNumber);
+  const cachedResult = getCachedAttemptResult(input);
+  if (cachedResult) {
+    const derived = getAttemptExecutionProfileFromResult(cachedResult);
+    attemptExecutionProfileCache.set(cacheKey, {
+      expiresAt: nowMs() + DEFAULT_CACHE_TTL_MS,
+      profile: JSON.parse(JSON.stringify(derived)) as AttemptExecutionProfile,
+    });
+    return derived;
+  }
+  const cachedProfile = attemptExecutionProfileCache.get(cacheKey);
+  if (!cachedProfile) return null;
+  if (cachedProfile.expiresAt <= nowMs()) {
+    attemptExecutionProfileCache.delete(cacheKey);
+    return null;
+  }
+  return JSON.parse(JSON.stringify(cachedProfile.profile)) as AttemptExecutionProfile;
+}
+
+function saveAttemptExecutionProfile(input: {
+  url: string;
+  mode: ExtractionMode;
+  attemptNumber: number;
+  profile: AttemptExecutionProfile;
+  ttlMs: number;
+}) {
+  const cacheKey = buildAttemptCacheKey(input.mode, input.url, input.attemptNumber);
+  attemptExecutionProfileCache.set(cacheKey, {
+    expiresAt: nowMs() + input.ttlMs,
+    profile: JSON.parse(JSON.stringify(input.profile)) as AttemptExecutionProfile,
+  });
+}
+
+export function resolveAttemptRoute(input: {
+  attemptNumber: number;
+  priorAttempt1Profile: AttemptExecutionProfile | null;
+}): OrchestrationTrace["route"] {
+  if (input.attemptNumber >= 3) return "retry_2";
+  if (input.attemptNumber <= 1) return "attempt_1";
+  const profile = input.priorAttempt1Profile;
+  if (!profile) return "retry_1_long";
+  return profile.usedLongLane ? "retry_1_refinement" : "retry_1_long";
+}
+
 function createTrace(input: Omit<OrchestrationTrace, "decisions" | "acceptedAfter">): OrchestrationTrace {
   return {
     ...input,
@@ -972,6 +1079,20 @@ function finalizeTrace(trace: OrchestrationTrace, acceptedAfter: OrchestrationTr
 
 function logTrace(trace: OrchestrationTrace) {
   console.info("[extraction-stage-routing]", trace);
+}
+
+function persistAttemptExecutionProfileFromResult(result: ExtractionResult, ttlMs: number) {
+  const attemptNumber = Number(result.attemptInfo?.attemptNumber || 1);
+  const mode = result.mode;
+  const url = result.source || result.metadata.sourceUrl;
+  const profile = getAttemptExecutionProfileFromResult(result);
+  saveAttemptExecutionProfile({
+    url,
+    mode,
+    attemptNumber,
+    profile,
+    ttlMs,
+  });
 }
 
 function buildResult(input: {
@@ -1158,6 +1279,17 @@ export async function runExtractionPipeline(input: {
   const cacheTtlMs = getNumberEnv("EXTRACTION_CACHE_TTL_MS", DEFAULT_CACHE_TTL_MS);
   const cacheKey = buildAttemptCacheKey(input.mode, input.url, attemptNumber);
   const sharedCacheKey = buildSharedCacheKey(input.mode, input.url);
+  const priorAttempt1Profile = attemptNumber >= 2
+    ? getCachedAttemptExecutionProfile({
+        url: input.url,
+        mode: input.mode,
+        attemptNumber: 1,
+      })
+    : null;
+  const route = resolveAttemptRoute({
+    attemptNumber,
+    priorAttempt1Profile,
+  });
   const cached = extractionCache.get(cacheKey) || extractionCache.get(sharedCacheKey);
   if (!debugEnabled && cached && cached.expiresAt > nowMs()) {
     const cachedResult = cloneResult(cached.result);
@@ -1196,6 +1328,7 @@ export async function runExtractionPipeline(input: {
     cachedResult.cache = { hit: true, key: extractionCache.get(cacheKey) ? cacheKey : sharedCacheKey };
     extractionCache.set(cacheKey, { expiresAt: cached.expiresAt, result: cloneResult(cachedResult) });
     extractionCache.set(sharedCacheKey, { expiresAt: cached.expiresAt, result: cloneResult(cachedResult) });
+    persistAttemptExecutionProfileFromResult(cachedResult, Math.max(cached.expiresAt - nowMs(), 1));
     return cachedResult;
   }
 
@@ -1205,6 +1338,7 @@ export async function runExtractionPipeline(input: {
   const { metadata, metadataFailureReason, metadataMs, metadataFetchMs, commentsMs } = await readMetadata(input.url, {
     mode: input.mode,
     attemptNumber,
+    includeComments: route === "retry_1_long",
   });
   await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "metadata_done", "Metadata fetched.");
 
@@ -1277,6 +1411,7 @@ export async function runExtractionPipeline(input: {
       console.info("[extraction-debug]", quickResult.debug);
     }
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "completed", "Extraction completed.");
+    persistAttemptExecutionProfileFromResult(quickResult, cacheTtlMs);
     if (!debugEnabled && !isLowSignalInstagramResult(quickResult)) {
       extractionCache.set(cacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(quickResult) });
     }
@@ -1287,7 +1422,6 @@ export async function runExtractionPipeline(input: {
     return quickResult;
   }
 
-  const route = attemptNumber >= 3 ? "retry_2" : attemptNumber === 2 ? "retry_1" : "attempt_1";
   const visualFallbackPolicy = getAttemptVisualFallbackPolicy(attemptNumber);
   const orchestration = createTrace({
     attemptNumber,
@@ -1427,6 +1561,7 @@ export async function runExtractionPipeline(input: {
     }
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "accepted_description", "Accepted after caption evidence.");
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "completed", "Extraction completed.");
+    persistAttemptExecutionProfileFromResult(result, cacheTtlMs);
     console.info(
       `[attempt-1-sla] acceptedAfter=description fastExtractorMs=${descriptionProbeMs} duplicateLlmSkipped=true llmCalls=${llmCallsBeforeResponse} metadataMs=${metadataMs} commentsMs=${commentsMs} totalMs=${result.sla?.totalMs ?? result.perf?.totalMs ?? 0}`,
     );
@@ -1558,7 +1693,7 @@ export async function runExtractionPipeline(input: {
     }
     orchestration.ocrFrameCount = sequential.screenshots.length;
     orchestration.visualFrameCount = sequential.screenshots.length;
-  } else if (attemptNumber === 2) {
+  } else if (attemptNumber === 2 && route === "retry_1_refinement") {
     orchestration.inheritedEvidence = {
       transcriptAttempts: priorAttempt1?.transcript?.text ? [1] : [],
       ocrAttempts: priorAttempt1?.ocr?.text ? [1] : [],
@@ -1572,7 +1707,7 @@ export async function runExtractionPipeline(input: {
       transcript = reusedTranscript;
       transcriptMs = 0;
       orchestration.transcriptReused = true;
-      pushDecision(orchestration, "transcript", false, "retry_1_transcript_reused");
+      pushDecision(orchestration, "transcript", false, "retry_1_refinement_transcript_reused");
     } else {
       await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_started", "Reading transcript clues.");
       const transcriptRead = await readTranscript(metadata);
@@ -1581,14 +1716,14 @@ export async function runExtractionPipeline(input: {
         used: false,
         source: transcriptRead.transcript.source || null,
         text: "",
-        reason: transcriptRead.transcript.reason || "retry_1_transcript_missing_rerun",
+        reason: transcriptRead.transcript.reason || "retry_1_refinement_transcript_missing_rerun",
       };
       transcriptMs = transcriptRead.transcriptMs;
       await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_done", "Transcript step finished.");
       orchestration.transcriptReused = false;
-      pushDecision(orchestration, "transcript", true, "retry_1_transcript_missing_rerun");
+      pushDecision(orchestration, "transcript", true, "retry_1_refinement_transcript_missing_rerun");
     }
-    pushDecision(orchestration, "ocr", true, "retry_1_frame_ocr");
+    pushDecision(orchestration, "ocr", true, "retry_1_refinement_frame_ocr");
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "frame_extraction_started", "Checking video frames.");
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "ocr_started", "Reading on-screen text.");
     const sequential = await processRetryFramesSequentially({
@@ -1600,6 +1735,37 @@ export async function runExtractionPipeline(input: {
     screenshots = sequential.screenshots;
     screenshotsDebug = sequential.screenshotsDebug;
     ocr = mergeOcrResults(priorAttempt1?.ocr ?? null, sequential.ocr) ?? sequential.ocr;
+    ocrMs = sequential.ocrMs;
+    frameExtractionMs = sequential.frameExtractionMs;
+    ocrOnlyMs = sequential.ocrOnlyMs;
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "frame_extraction_done", "Frame check finished.");
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "ocr_done", "On-screen text step finished.");
+    orchestration.ocrFrameCount = sequential.screenshots.length;
+    orchestration.visualFrameCount = 0;
+  } else if (attemptNumber === 2) {
+    orchestration.inheritedEvidence = {
+      transcriptAttempts: [],
+      ocrAttempts: [],
+    };
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_started", "Reading transcript clues.");
+    const transcriptRead = await readTranscript(metadata);
+    transcript = transcriptRead.transcript;
+    transcriptMs = transcriptRead.transcriptMs;
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_done", "Transcript step finished.");
+    orchestration.transcriptReused = false;
+    pushDecision(orchestration, "transcript", true, "retry_1_long_lane_transcript");
+    pushDecision(orchestration, "ocr", true, "retry_1_long_lane_frame_ocr");
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "frame_extraction_started", "Checking video frames.");
+    await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "ocr_started", "Reading on-screen text.");
+    const sequential = await processRetryFramesSequentially({
+      metadata,
+      transcript,
+      selectionMode: "anchors",
+      includeVisual: false,
+    });
+    screenshots = sequential.screenshots;
+    screenshotsDebug = sequential.screenshotsDebug;
+    ocr = sequential.ocr;
     ocrMs = sequential.ocrMs;
     frameExtractionMs = sequential.frameExtractionMs;
     ocrOnlyMs = sequential.ocrOnlyMs;
@@ -1690,6 +1856,7 @@ export async function runExtractionPipeline(input: {
         console.info("[extraction-debug]", result.debug);
       }
       await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "completed", "Extraction completed.");
+      persistAttemptExecutionProfileFromResult(result, cacheTtlMs);
       if (!debugEnabled && !isLowSignalInstagramResult(result)) {
         extractionCache.set(cacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
         extractionCache.set(sharedCacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
@@ -1777,6 +1944,7 @@ export async function runExtractionPipeline(input: {
     console.info("[extraction-debug]", result.debug);
   }
   await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "completed", "Extraction completed.");
+  persistAttemptExecutionProfileFromResult(result, cacheTtlMs);
   if (!debugEnabled && !isLowSignalInstagramResult(result)) {
     extractionCache.set(cacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
     extractionCache.set(sharedCacheKey, { expiresAt: nowMs() + cacheTtlMs, result: cloneResult(result) });
