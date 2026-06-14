@@ -171,6 +171,7 @@ export function AddScreen() {
   const [editCoords, setEditCoords] = useState<{ lat: number | null; lng: number | null }>({ lat: null, lng: null });
   const [locationSuggestions, setLocationSuggestions] = useState<Array<{ placeId: string; label: string; secondaryText: string | null; description: string | null }>>([]);
   const [isLocationSearching, setIsLocationSearching] = useState(false);
+  const [isEditNameManuallyChanged, setIsEditNameManuallyChanged] = useState(false);
   const [pendingJobs, setPendingJobs] = useState<PendingDetectionJob[]>([]);
   const [queuedSharedLink, setQueuedSharedLink] = useState<string | null>(null);
   const [removingPlaceId, setRemovingPlaceId] = useState<string | null>(null);
@@ -182,6 +183,9 @@ export function AddScreen() {
   const analysisStartedAtRef = useRef<number | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   const locationDebounceTimerRef = useRef<number | null>(null);
+  const locationResolveAbortRef = useRef<AbortController | null>(null);
+  const editSessionRef = useRef(0);
+  const editingPlaceIdRef = useRef<string | null>(null);
   const detectedPlacesRef = useRef<DetectedPlace[]>([]);
   const pendingJobsRef = useRef<PendingDetectionJob[]>([]);
   const getAnalyticsAnonymousId = () => {
@@ -290,9 +294,14 @@ export function AddScreen() {
     setEditCoords({ lat: null, lng: null });
     setLocationSuggestions([]);
     setIsLocationSearching(false);
+    setIsEditNameManuallyChanged(false);
     setPendingJobs([]);
     setRemovingPlaceId(null);
     setAutoSelectFirstSuggestion(true);
+    editSessionRef.current += 1;
+    editingPlaceIdRef.current = null;
+    locationResolveAbortRef.current?.abort();
+    locationResolveAbortRef.current = null;
     if (options?.clearPersisted ?? true) {
       clearReviewRunId();
       clearPersistedAddDraft();
@@ -336,6 +345,10 @@ export function AddScreen() {
   useEffect(() => {
     pendingJobsRef.current = pendingJobs;
   }, [pendingJobs]);
+
+  useEffect(() => {
+    editingPlaceIdRef.current = editingPlaceId;
+  }, [editingPlaceId]);
 
   useEffect(() => () => {
     stopAnalysisProgress();
@@ -404,23 +417,85 @@ export function AddScreen() {
     }
   }, [activePreviewKey, previewCards]);
 
-  useEffect(() => {
-    if (!editingPlace) return;
-    if (!isEditing) {
-      setEditName(editingPlace.name);
-      setEditCategory(editingPlace.category);
-      setEditLocality(editingPlace.locality);
-      setEditAddress(editingPlace.fullAddress);
-      setEditPlaceId(editingPlace.placeId ?? null);
-      setEditCoords({ lat: editingPlace.lat ?? null, lng: editingPlace.lng ?? null });
+  const populateEditForm = (place: DetectedPlace) => {
+    setEditName(place.name);
+    setEditCategory(place.category);
+    setEditLocality(place.locality);
+    setEditAddress(place.fullAddress);
+    setEditPlaceId(place.placeId ?? null);
+    setEditCoords({ lat: place.lat ?? null, lng: place.lng ?? null });
+    setLocationSuggestions([]);
+    setIsLocationSearching(false);
+    setIsEditNameManuallyChanged(false);
+    setAutoSelectFirstSuggestion(true);
+  };
+
+  const getActiveEditingPlace = () => {
+    const activeId = editingPlaceIdRef.current;
+    if (!activeId) return null;
+    return detectedPlacesRef.current.find((item) => item.id === activeId) ?? null;
+  };
+
+  const applySelectedSuggestion = (
+    item: { placeId: string; label: string; secondaryText: string | null; description: string | null },
+    options?: { shouldUpdateName?: boolean; sessionId?: number; placeId?: string | null },
+  ) => {
+    const activeSessionId = options?.sessionId ?? editSessionRef.current;
+    const activePlaceId = options?.placeId ?? editingPlaceIdRef.current;
+    if (!activePlaceId || activeSessionId !== editSessionRef.current || activePlaceId !== editingPlaceIdRef.current) {
+      return;
     }
-  }, [editingPlace, isEditing]);
+
+    setEditPlaceId(item.placeId);
+    setEditLocality(item.label);
+    setEditAddress(item.description || item.secondaryText || item.label);
+    if (options?.shouldUpdateName) {
+      setEditName(item.label);
+    }
+    setLocationSuggestions([]);
+
+    locationResolveAbortRef.current?.abort();
+    const controller = new AbortController();
+    locationResolveAbortRef.current = controller;
+    void fetch(`${API_BASE_URL}/api/location/resolve-place?placeId=${encodeURIComponent(item.placeId)}`, { signal: controller.signal })
+      .then((res) => res.json())
+      .then((data) => {
+        if (controller.signal.aborted) return;
+        if (activeSessionId !== editSessionRef.current || activePlaceId !== editingPlaceIdRef.current) return;
+        const lat = data?.location?.lat;
+        const lng = data?.location?.lng;
+        if (typeof lat === "number" && typeof lng === "number") {
+          setEditCoords({ lat, lng });
+        }
+      })
+      .catch(() => {
+        // Ignore fetch errors and aborted requests.
+      });
+  };
+
+  const openEditPlace = (place: DetectedPlace) => {
+    editSessionRef.current += 1;
+    editingPlaceIdRef.current = place.id;
+    locationResolveAbortRef.current?.abort();
+    locationResolveAbortRef.current = null;
+    if (locationDebounceTimerRef.current) {
+      window.clearTimeout(locationDebounceTimerRef.current);
+      locationDebounceTimerRef.current = null;
+    }
+    populateEditForm(place);
+    setEditingPlaceId(place.id);
+    setIsEditing(true);
+  };
 
   useEffect(() => {
     if (!isEditing) return;
+    const activePlaceId = editingPlaceIdRef.current;
+    if (!activePlaceId) return;
+    const sessionId = editSessionRef.current;
     const query = editName.trim();
     if (query.length < 3) {
       setLocationSuggestions([]);
+      setIsLocationSearching(false);
       return;
     }
     let cancelled = false;
@@ -432,38 +507,26 @@ export function AddScreen() {
       setIsLocationSearching(true);
       void searchLocations(query)
         .then((items) => {
-          if (!cancelled) {
+          if (!cancelled && sessionId === editSessionRef.current && activePlaceId === editingPlaceIdRef.current) {
             setLocationSuggestions(items.slice(0, 4));
-            // Auto-select and populate the first suggestion
             if (autoSelectFirstSuggestion && items.length > 0) {
               const firstItem = items[0];
-              setEditPlaceId(firstItem.placeId);
-              setEditLocality(firstItem.label);
-              setEditAddress(firstItem.description || firstItem.secondaryText || firstItem.label);
-              // Auto-fetch coordinates if available (via resolve-place API)
-              if (firstItem.placeId) {
-                void fetch(`${API_BASE_URL}/api/location/resolve-place?placeId=${encodeURIComponent(firstItem.placeId)}`)
-                  .then(res => res.json())
-                  .then(data => {
-                    const lat = data?.location?.lat;
-                    const lng = data?.location?.lng;
-                    if (!cancelled && typeof lat === "number" && typeof lng === "number") {
-                      setEditCoords({ lat, lng });
-                    }
-                  })
-                  .catch(() => {
-                    // Ignore fetch errors
-                  });
-              }
-              setAutoSelectFirstSuggestion(false); // Disable auto-select after first use
+              const activePlace = getActiveEditingPlace();
+              const shouldUpdateName = !isEditNameManuallyChanged
+                && Boolean(activePlace)
+                && (editName.trim().length === 0 || editName.trim() === activePlace?.name.trim());
+              applySelectedSuggestion(firstItem, { shouldUpdateName, sessionId, placeId: activePlaceId });
+              setAutoSelectFirstSuggestion(false);
             }
           }
         })
         .catch(() => {
-          if (!cancelled) setLocationSuggestions([]);
+          if (!cancelled && sessionId === editSessionRef.current && activePlaceId === editingPlaceIdRef.current) setLocationSuggestions([]);
         })
         .finally(() => {
-          if (!cancelled) setIsLocationSearching(false);
+          if (!cancelled && sessionId === editSessionRef.current && activePlaceId === editingPlaceIdRef.current) {
+            setIsLocationSearching(false);
+          }
         });
     }, 400); // Reduced debounce time for better responsiveness
     return () => {
@@ -472,13 +535,18 @@ export function AddScreen() {
         window.clearTimeout(locationDebounceTimerRef.current);
       }
     };
-  }, [autoSelectFirstSuggestion, editName, isEditing, searchLocations]);
+  }, [autoSelectFirstSuggestion, editName, isEditNameManuallyChanged, isEditing, searchLocations]);
 
   // Reset auto-select flag when edit modal opens
   useEffect(() => {
     if (isEditing) {
       setAutoSelectFirstSuggestion(true);
+      return;
     }
+    locationResolveAbortRef.current?.abort();
+    locationResolveAbortRef.current = null;
+    setLocationSuggestions([]);
+    setIsLocationSearching(false);
   }, [isEditing]);
 
   useEffect(() => {
@@ -1265,7 +1333,8 @@ export function AddScreen() {
   };
 
   const handleApplyEdit = () => {
-    if (!editingPlace) return;
+    const activeEditingPlace = getActiveEditingPlace();
+    if (!activeEditingPlace) return;
     const name = editName.trim();
     const locality = editLocality.trim();
     const fullAddress = editAddress.trim();
@@ -1273,7 +1342,7 @@ export function AddScreen() {
       showToast({ message: "Name and locality are required.", variant: "error" });
       return;
     }
-    const nextPlaces = detectedPlacesRef.current.map((item) => (item.id === editingPlace.id ? {
+    const nextPlaces = detectedPlacesRef.current.map((item) => (item.id === activeEditingPlace.id ? {
       ...item,
       name,
       category: editCategory,
@@ -1285,40 +1354,41 @@ export function AddScreen() {
     } : item));
     syncDraftState(nextPlaces, pendingJobsRef.current, linkInput);
     void postReelAnalyticsEvent({
-      clientRunId: String(editingPlace.runId),
-      attemptNumber: (editingPlace.retryCount ?? 0) + 1,
+      clientRunId: String(activeEditingPlace.runId),
+      attemptNumber: (activeEditingPlace.retryCount ?? 0) + 1,
       eventName: "edited",
-      sourceUrl: editingPlace.sourceUrl,
-      sourcePlatform: editingPlace.source,
-      entityIndex: editingPlace.entityIndex ?? null,
-      finalPlaceId: editPlaceId ?? editingPlace.placeId ?? null,
+      sourceUrl: activeEditingPlace.sourceUrl,
+      sourcePlatform: activeEditingPlace.source,
+      entityIndex: activeEditingPlace.entityIndex ?? null,
+      finalPlaceId: editPlaceId ?? activeEditingPlace.placeId ?? null,
       payload: {
         category: editCategory,
-        hasPlaceId: Boolean(editPlaceId ?? editingPlace.placeId),
-        entityIndex: editingPlace.entityIndex ?? null,
+        hasPlaceId: Boolean(editPlaceId ?? activeEditingPlace.placeId),
+        entityIndex: activeEditingPlace.entityIndex ?? null,
       },
     });
     setIsEditing(false);
     setEditingPlaceId(null);
+    editingPlaceIdRef.current = null;
     showToast({ message: "Details updated", variant: "success" });
   };
 
   const cancelEdit = () => {
-    if (editingPlace) {
-      setEditName(editingPlace.name);
-      setEditCategory(editingPlace.category);
-      setEditLocality(editingPlace.locality);
-      setEditAddress(editingPlace.fullAddress);
-      setEditPlaceId(editingPlace.placeId ?? null);
-      setEditCoords({ lat: editingPlace.lat ?? null, lng: editingPlace.lng ?? null });
-      setLocationSuggestions([]);
+    const activeEditingPlace = getActiveEditingPlace();
+    if (activeEditingPlace) {
+      populateEditForm(activeEditingPlace);
     }
+    editSessionRef.current += 1;
+    locationResolveAbortRef.current?.abort();
+    locationResolveAbortRef.current = null;
     setIsEditing(false);
     setEditingPlaceId(null);
+    editingPlaceIdRef.current = null;
   };
 
   const handleSaveEditedPlace = async () => {
-    if (!editingPlace) return;
+    const activeEditingPlace = getActiveEditingPlace();
+    if (!activeEditingPlace) return;
     const name = editName.trim();
     const locality = editLocality.trim();
     const fullAddress = editAddress.trim();
@@ -1327,14 +1397,14 @@ export function AddScreen() {
       return;
     }
     const editedPlace: DetectedPlace = {
-      ...editingPlace,
+      ...activeEditingPlace,
       name,
       category: editCategory,
       locality,
       fullAddress: fullAddress || locality,
-      placeId: editPlaceId ?? editingPlace.placeId ?? null,
-      lat: editCoords.lat ?? editingPlace.lat ?? null,
-      lng: editCoords.lng ?? editingPlace.lng ?? null,
+      placeId: editPlaceId ?? activeEditingPlace.placeId ?? null,
+      lat: editCoords.lat ?? activeEditingPlace.lat ?? null,
+      lng: editCoords.lng ?? activeEditingPlace.lng ?? null,
     };
     await savePlace(editedPlace);
   };
@@ -1407,6 +1477,7 @@ export function AddScreen() {
         showToast({ message: `Saved to ${place.category}`, variant: "success" });
         setIsEditing(false);
         setEditingPlaceId(null);
+        editingPlaceIdRef.current = null;
         removeDetectedWithAnimation(place);
       } catch {
         showToast({ message: "Couldn't connect. Please try again.", variant: "error" });
@@ -1453,6 +1524,7 @@ export function AddScreen() {
       removeReadyNotificationByRunId(card.runId);
       setIsEditing(false);
       setEditingPlaceId(null);
+      editingPlaceIdRef.current = null;
       showToast({ message: "Place removed", variant: "info" });
       return;
     }
@@ -1479,6 +1551,7 @@ export function AddScreen() {
     removeReadyNotificationByRunId(selectedPreview.runId);
     setIsEditing(false);
     setEditingPlaceId(null);
+    editingPlaceIdRef.current = null;
     showToast({ message: "Place removed", variant: "info" });
   };
 
@@ -1686,8 +1759,7 @@ export function AddScreen() {
                             onClick={(event) => {
                               event.stopPropagation();
                               setActivePreviewKey(card.key);
-                              setEditingPlaceId(card.place.id);
-                              setIsEditing(true);
+                              openEditPlace(card.place);
                             }}
                           >
                             Edit
@@ -1735,7 +1807,7 @@ export function AddScreen() {
       {isEditing && editingPlace ? (
         <div className="wr-add-edit-layer" role="presentation">
           <button type="button" className="wr-add-edit-backdrop" aria-label="Cancel edit" onClick={cancelEdit} />
-          <section className="wr-add-edit-sheet" role="dialog" aria-modal="true" aria-label="Edit detected place">
+          <section key={editingPlace.id} className="wr-add-edit-sheet" role="dialog" aria-modal="true" aria-label="Edit detected place">
             <div className="wr-add-edit-head">
               <div>
                 <p>EDIT WANDREEL</p>
@@ -1745,7 +1817,14 @@ export function AddScreen() {
             </div>
             <label className="wr-add-edit-field">
               <span>Title</span>
-              <input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Place name" />
+              <input
+                value={editName}
+                onChange={(e) => {
+                  setEditName(e.target.value);
+                  setIsEditNameManuallyChanged(true);
+                }}
+                placeholder="Place name"
+              />
             </label>
             <label className="wr-add-edit-field">
               <span>Category</span>
@@ -1770,10 +1849,7 @@ export function AddScreen() {
                   type="button"
                   key={item.placeId}
                   onClick={() => {
-                    setEditPlaceId(item.placeId);
-                    setEditLocality(item.label);
-                    setEditAddress(item.description || item.secondaryText || item.label);
-                    setLocationSuggestions([]);
+                    applySelectedSuggestion(item, { shouldUpdateName: !isEditNameManuallyChanged });
                   }}
                 >
                   <span>{item.label}</span>
