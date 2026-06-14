@@ -550,6 +550,10 @@ async function enrichWithResolvedLocations(output: IntelligencePipelineResult["o
   };
 }
 
+export function postProcessTinyCaptionOutput(output: IntelligenceOutput, req: IntelligenceRequest): IntelligenceOutput {
+  return augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback(output, req), req.source);
+}
+
 export async function runIntelligencePipeline(req: IntelligenceRequest): Promise<IntelligencePipelineResult> {
   const totalStartedAt = Date.now();
   const providerResult = await callOpenAiStructuredExtraction(req.source, req.analytics);
@@ -645,7 +649,7 @@ export async function runTinyCaptionIntelligence(req: IntelligenceRequest): Prom
   const schemaFirstPassMs = Date.now() - schemaFirstStartedAt;
 
   if (firstPass.success) {
-    const enrichedOutput = await enrichWithResolvedLocations(applyVisualEntityFallback(firstPass.data, req), req.source);
+    const enrichedOutput = await enrichWithResolvedLocations(postProcessTinyCaptionOutput(firstPass.data, req), req.source);
     const agg = recordSla("intelligence.total", Date.now() - totalStartedAt);
     if (Number(process.env.INTELLIGENCE_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.INTELLIGENCE_SLA_LOG_EVERY) === 0) {
       console.info("[sla][intelligence.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
@@ -671,7 +675,7 @@ export async function runTinyCaptionIntelligence(req: IntelligenceRequest): Prom
   const secondPass = intelligenceOutputSchema.safeParse(normalized);
   const schemaSecondPassMs = Date.now() - schemaSecondStartedAt;
   if (secondPass.success) {
-    const enrichedOutput = await enrichWithResolvedLocations(applyVisualEntityFallback(secondPass.data, req), req.source);
+    const enrichedOutput = await enrichWithResolvedLocations(postProcessTinyCaptionOutput(secondPass.data, req), req.source);
     return {
       output: enrichedOutput,
       validationErrors: formatZodErrors(firstPass.error),
@@ -689,7 +693,7 @@ export async function runTinyCaptionIntelligence(req: IntelligenceRequest): Prom
   }
 
   return {
-    output: applyVisualEntityFallback({
+    output: postProcessTinyCaptionOutput({
       ...normalized,
       status: "needs_review",
       visibility: {
