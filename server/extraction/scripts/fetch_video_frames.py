@@ -25,6 +25,11 @@ def short_preview(lines: list[str], max_lines: int = 4, max_chars: int = 600) ->
     return preview[:max_chars]
 
 
+def emit_phase_log(event: str, **details: object) -> None:
+    payload = {"event": event, **details}
+    print(f"[frame-script] {json.dumps(payload, ensure_ascii=True)}", file=sys.stderr, flush=True)
+
+
 class YtDlpLogger:
     def __init__(self) -> None:
         self.messages: list[str] = []
@@ -210,6 +215,7 @@ def main() -> int:
     media_debug: dict = {"mediaUrlAvailable": False, "durationSeconds": None}
     yt_dlp_debug: dict = {"exitCode": None, "stderrShortPreview": None}
     try:
+        emit_phase_log("before_video_download", sourceUrl=source_url, selectionMode=selection_mode, outputMode=output_mode)
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(source_url, download=True)
         yt_dlp_debug = {
@@ -270,12 +276,26 @@ def main() -> int:
                 )
             )
             return 0
+        emit_phase_log(
+            "after_video_download",
+            videoPath=video_path,
+            videoSizeBytes=os.path.getsize(video_path) if os.path.exists(video_path) else None,
+            durationSeconds=duration,
+        )
 
         scene_selection_debug: list[dict] = []
         if selection_mode == "scene_edges":
+            emit_phase_log("before_ffmpeg_frame_extract", phase="scene_detection", videoPath=video_path)
             timestamps, scene_selection_debug = select_scene_edge_timestamps(video_path, duration, ffmpeg_exe, temp_dir)
         else:
             timestamps = select_timestamps(duration, max(1, min(frame_count, 4)))
+        emit_phase_log(
+            "before_ffmpeg_frame_extract",
+            phase="frame_capture",
+            frameCount=len(timestamps),
+            timestamps=timestamps,
+            videoPath=video_path,
+        )
         frames = []
         for index, ts in enumerate(timestamps):
             output_path = os.path.join(temp_dir, f"frame_{index + 1}.jpg")
@@ -297,6 +317,13 @@ def main() -> int:
             subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             extracted_paths.append(output_path)
             frame_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
+            emit_phase_log(
+                "after_each_frame_written",
+                frameLabel=f"frame_{index + 1}",
+                timestampSec=ts,
+                outputPath=output_path,
+                sizeBytes=frame_size,
+            )
             frame_debug.append({
                 "path": output_path,
                 "timestampSec": ts,
@@ -328,6 +355,12 @@ def main() -> int:
                         "dataBase64": encoded,
                     }
                 )
+        emit_phase_log(
+            "after_ffmpeg_frame_extract",
+            frameCount=len(frames),
+            tempDir=temp_dir,
+            totalFrameBytes=sum(int(item.get("sizeBytes") or 0) for item in frame_debug),
+        )
 
         print(
             json.dumps(

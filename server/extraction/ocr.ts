@@ -1,5 +1,5 @@
 import type { ExtractedMetadata, OcrResult, ScreenshotAsset } from "./types";
-import { runPythonJsonScript } from "./pythonRunner";
+import { runPythonJsonScript, runPythonJsonScriptWithArgs } from "./pythonRunner";
 import { extractVisionOcr, extractVisionOcrFromScreenshots } from "./visionOcr";
 import { selectSourceScreenshots } from "./frameSelection";
 
@@ -69,5 +69,28 @@ export async function enrichWithFrameOcr(metadata: ExtractedMetadata, screenshot
     used: false,
     text: "",
     reason: screenshots.length > 0 ? "vision_ocr_empty" : "ocr_not_available",
+  };
+}
+
+export async function extractLocalOcrFromImagePath(imagePath: string): Promise<{ text: string; reason: string | null }> {
+  if (!String(imagePath || "").trim()) {
+    return { text: "", reason: "ocr_image_path_missing" };
+  }
+  const parsed = await runPythonJsonScriptWithArgs("fetch_ocr_text.py", ["--image-path", imagePath], 120000);
+  if (parsed?.ok && typeof parsed.text === "string" && parsed.text.trim()) {
+    return { text: parsed.text.trim(), reason: null };
+  }
+
+  const reason = typeof parsed?.errorCode === "string"
+    ? parsed.errorCode
+    : typeof parsed?.status === "string"
+      ? parsed.status
+      : typeof parsed?.error === "string"
+        ? parsed.error
+        : "ocr_not_available";
+
+  return {
+    text: "",
+    reason,
   };
 }

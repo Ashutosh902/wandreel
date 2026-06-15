@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import os from "node:os";
 import { promisify } from "node:util";
 import path from "node:path";
@@ -101,11 +101,127 @@ async function executePythonScript(scriptPath: string, args: string[], timeoutMs
       const { stdout } = await execFileAsync(cmd, commandArgs, {
         timeout: timeoutMs,
         env: buildPythonEnv(pydepsPath),
-        maxBuffer: 20 * 1024 * 1024,
+        maxBuffer: 4 * 1024 * 1024,
       });
       const raw = String(stdout || "").trim();
       if (!raw) continue;
       return parseJsonFromPythonStdout(raw);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError && typeof lastError === "object" && "message" in lastError) {
+    const stderr =
+      "stderr" in lastError && typeof (lastError as { stderr?: unknown }).stderr === "string"
+        ? String((lastError as { stderr?: unknown }).stderr || "").trim()
+        : "";
+    const exitCode =
+      "code" in lastError && (typeof (lastError as { code?: unknown }).code === "number" || typeof (lastError as { code?: unknown }).code === "string")
+        ? (lastError as { code?: number | string }).code ?? null
+        : null;
+    console.warn("[python-script-failed]", {
+      scriptPath,
+      exitCode,
+      stderrShortPreview: shortPreview(stderr),
+      error: String((lastError as { message?: unknown }).message || "python_runtime_failed"),
+    });
+    return {
+      ok: false,
+      error: String((lastError as { message?: unknown }).message || "python_runtime_failed"),
+      exitCode,
+      stderr: stderr || undefined,
+      stderrShortPreview: shortPreview(stderr),
+    };
+  }
+  return null;
+}
+
+async function executePythonScriptStreaming(
+  scriptName: string,
+  scriptPath: string,
+  args: string[],
+  timeoutMs: number,
+  pydepsPath: string,
+): Promise<any | null> {
+  const commands = ["python", "py"];
+  let lastError: unknown = null;
+
+  for (const cmd of commands) {
+    try {
+      const commandArgs = cmd === "py" ? ["-3", scriptPath, ...args] : [scriptPath, ...args];
+      const parsed = await new Promise<any | null>((resolve, reject) => {
+        const child = spawn(cmd, commandArgs, {
+          env: buildPythonEnv(pydepsPath),
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let stdout = "";
+        let stderr = "";
+        let stdoutExceeded = false;
+        let stderrExceeded = false;
+        const stdoutLimit = 4 * 1024 * 1024;
+        const stderrLimit = 512 * 1024;
+        const timer = setTimeout(() => {
+          child.kill("SIGTERM");
+          reject(new Error(`python script timed out after ${timeoutMs}ms`));
+        }, timeoutMs);
+
+        child.stdout.setEncoding("utf8");
+        child.stderr.setEncoding("utf8");
+
+        child.stdout.on("data", (chunk: string) => {
+          if (!stdoutExceeded) {
+            const next = stdout + chunk;
+            if (next.length > stdoutLimit) {
+              stdout = next.slice(-stdoutLimit);
+              stdoutExceeded = true;
+            } else {
+              stdout = next;
+            }
+          }
+        });
+
+        child.stderr.on("data", (chunk: string) => {
+          for (const line of String(chunk || "").split(/\r?\n/)) {
+            const trimmed = line.trim();
+            if (!trimmed) continue;
+            console.info("[python-script-log]", {
+              scriptName,
+              line: trimmed,
+            });
+          }
+          if (!stderrExceeded) {
+            const next = stderr + chunk;
+            if (next.length > stderrLimit) {
+              stderr = next.slice(-stderrLimit);
+              stderrExceeded = true;
+            } else {
+              stderr = next;
+            }
+          }
+        });
+
+        child.on("error", (error) => {
+          clearTimeout(timer);
+          reject(error);
+        });
+
+        child.on("close", (code) => {
+          clearTimeout(timer);
+          if (code !== 0) {
+            const error = new Error(`python exited with code ${code}`);
+            Object.assign(error, { code, stderr });
+            reject(error);
+            return;
+          }
+          try {
+            resolve(parseJsonFromPythonStdout(stdout));
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+      if (parsed) return parsed;
     } catch (error) {
       lastError = error;
     }
@@ -252,7 +368,10 @@ export async function runPythonJsonScript(scriptName: string, url: string, timeo
 export async function runPythonJsonScriptWithArgs(scriptName: string, args: string[], timeoutMs = 45000): Promise<any | null> {
   const scriptPath = path.resolve(import.meta.dirname, "scripts", scriptName);
   const configuredPydepsPath = getRuntimePydepsPath();
-  const firstAttempt = await executePythonScript(scriptPath, args, timeoutMs, configuredPydepsPath);
+  const useStreamingRunner = scriptName === "fetch_video_frames.py";
+  const firstAttempt = useStreamingRunner
+    ? await executePythonScriptStreaming(scriptName, scriptPath, args, timeoutMs, configuredPydepsPath)
+    : await executePythonScript(scriptPath, args, timeoutMs, configuredPydepsPath);
 
   if (!shouldBootstrapRuntime(scriptName, firstAttempt)) {
     return firstAttempt;
@@ -264,5 +383,7 @@ export async function runPythonJsonScriptWithArgs(scriptName: string, args: stri
   const installed = await ensureRuntimeProfileInstalled(profile, configuredPydepsPath);
   if (!installed) return firstAttempt;
 
-  return executePythonScript(scriptPath, args, timeoutMs, configuredPydepsPath);
+  return useStreamingRunner
+    ? executePythonScriptStreaming(scriptName, scriptPath, args, timeoutMs, configuredPydepsPath)
+    : executePythonScript(scriptPath, args, timeoutMs, configuredPydepsPath);
 }

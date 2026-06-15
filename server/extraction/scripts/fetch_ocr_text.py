@@ -166,26 +166,38 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": "URL_REQUIRED"}))
         return 0
 
-    source_url = sys.argv[1].strip()
-    platform = detect_platform(source_url)
+    image_path_arg = ""
+    if sys.argv[1] == "--image-path":
+        if len(sys.argv) < 3:
+            print(json.dumps({"ok": False, "error": "IMAGE_PATH_REQUIRED"}))
+            return 0
+        image_path_arg = sys.argv[2].strip()
+        source_url = ""
+        platform = "local_image"
+    else:
+        source_url = sys.argv[1].strip()
+        platform = detect_platform(source_url)
     image_path = ""
     cookiefile = ""
     try:
-        thumb_url, cookiefile = get_thumbnail_url(source_url, platform)
-        if not thumb_url:
-            print(
-                json.dumps(
-                    {
-                        "ok": False,
-                        "platform": platform,
-                        "status": "thumbnail_not_found",
-                        "errorCode": "thumbnail_not_found",
-                        "error": "THUMBNAIL_NOT_FOUND",
-                    }
+        if image_path_arg:
+            image_path = image_path_arg
+        else:
+            thumb_url, cookiefile = get_thumbnail_url(source_url, platform)
+            if not thumb_url:
+                print(
+                    json.dumps(
+                        {
+                            "ok": False,
+                            "platform": platform,
+                            "status": "thumbnail_not_found",
+                            "errorCode": "thumbnail_not_found",
+                            "error": "THUMBNAIL_NOT_FOUND",
+                        }
+                    )
                 )
-            )
-            return 0
-        image_path = download_image(thumb_url)
+                return 0
+            image_path = download_image(thumb_url)
 
         text = ""
         engine = ""
@@ -242,7 +254,7 @@ def main() -> int:
             )
         )
     finally:
-        if image_path and os.path.exists(image_path):
+        if image_path and not image_path_arg and os.path.exists(image_path):
             try:
                 os.remove(image_path)
             except Exception:

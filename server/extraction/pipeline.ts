@@ -10,6 +10,7 @@ import { runVisualFallback } from "./visualFallback";
 import { buildCombinedText } from "./combinedText";
 import { runIntelligencePipeline, runTinyCaptionIntelligence } from "../intelligence";
 import { extractVisionOcrFromScreenshots } from "./visionOcr";
+import { extractLocalOcrFromImagePath } from "./ocr";
 import type {
   ExtractionMode,
   ExtractionResult,
@@ -23,6 +24,7 @@ import type {
 import { canonicalizeUrl, detectSourcePlatform } from "./url";
 import { recordSla } from "../metrics/slaTracker";
 import { getAttemptHypothesisSummary } from "../attemptHypothesisStore";
+import { createMemoryTracker } from "../diagnostics/memoryDiagnostics";
 import fs from "node:fs/promises";
 
 export type ExtractionProgressStage =
@@ -623,12 +625,25 @@ function buildExtractionDebug(input: {
 
 async function readMetadata(
   inputUrl: string,
-  options?: { mode?: ExtractionMode; attemptNumber?: number; includeComments?: boolean },
+  options?: {
+    mode?: ExtractionMode;
+    attemptNumber?: number;
+    includeComments?: boolean;
+    triggerType?: ExtractionTriggerType;
+    memoryTracker?: ReturnType<typeof createMemoryTracker>;
+  },
 ) {
   let metadataFailureReason: string | null = null;
   const metadataStartedAt = nowMs();
   const canonicalUrl = canonicalizeUrl(inputUrl);
   const detectedPlatform = detectSourcePlatform(canonicalUrl);
+  options?.memoryTracker?.checkpoint("before_metadata_fetch", {
+    extra: {
+      detectedPlatform,
+      includeComments: Boolean(options?.includeComments),
+      mode: options?.mode ?? "quick",
+    },
+  });
   const metadataFetchStartedAt = nowMs();
   const commentsStartedAt = nowMs();
   let commentsMs = 0;
@@ -693,6 +708,17 @@ async function readMetadata(
       reason: null,
     };
   }
+  options?.memoryTracker?.checkpoint("after_metadata_fetch", {
+    extra: {
+      metadataProvider: metadata.provider,
+      metadataFailureReason,
+      metadataFetchMs,
+      metadataMs: nowMs() - metadataStartedAt,
+      commentsMs,
+      commentEvidenceAttempted: Boolean(metadata.commentEvidence?.attempted),
+      commentTopCount: Array.isArray(metadata.commentEvidence?.topComments) ? metadata.commentEvidence.topComments.length : 0,
+    },
+  });
   return {
     metadata,
     metadataFailureReason,
@@ -702,14 +728,33 @@ async function readMetadata(
   };
 }
 
-async function readTranscript(metadata: ExtractionResult["metadata"]): Promise<{ transcript: TranscriptResult; transcriptMs: number }> {
+async function readTranscript(
+  metadata: ExtractionResult["metadata"],
+  options?: { memoryTracker?: ReturnType<typeof createMemoryTracker> },
+): Promise<{ transcript: TranscriptResult; transcriptMs: number }> {
   const transcriptStartedAt = nowMs();
+  options?.memoryTracker?.checkpoint("before_transcript_whisper", {
+    extra: {
+      platform: metadata.platform,
+      metadataProvider: metadata.provider,
+    },
+  });
   const transcript = await withBudget(
     enrichWithTranscript(metadata),
     getNumberEnv("EXTRACTION_TRANSCRIPT_BUDGET_MS", DEFAULT_TRANSCRIPT_BUDGET_MS),
     () => ({ attempted: true, used: false, source: null, text: "", reason: "timeout" }),
   );
-  return { transcript, transcriptMs: nowMs() - transcriptStartedAt };
+  const transcriptMs = nowMs() - transcriptStartedAt;
+  options?.memoryTracker?.checkpoint("after_transcript_whisper", {
+    extra: {
+      transcriptMs,
+      transcriptUsed: Boolean(transcript.used),
+      transcriptSource: transcript.source ?? null,
+      transcriptChars: String(transcript.text || "").trim().length,
+      transcriptReason: transcript.reason ?? null,
+    },
+  });
+  return { transcript, transcriptMs };
 }
 
 function mergeOcrTexts(parts: string[]): string {
@@ -788,12 +833,20 @@ async function cleanupFrameManifest(tempDir: string | null, frames: FrameManifes
   }
 }
 
+function logFrameExtractionEvent(event: string, details: Record<string, unknown>) {
+  console.info("[frame-extraction]", {
+    event,
+    ...details,
+  });
+}
+
 async function processRetryFramesSequentially(input: {
   metadata: ExtractionResult["metadata"];
   transcript: TranscriptResult | null;
   selectionMode: ScreenshotSelectionMode;
   includeVisual: boolean;
   visualForceReason?: string | null;
+  memoryTracker?: ReturnType<typeof createMemoryTracker>;
 }): Promise<{
   screenshots: ScreenshotAsset[];
   screenshotsDebug: Record<string, unknown>;
@@ -807,8 +860,38 @@ async function processRetryFramesSequentially(input: {
 }> {
   const startedAt = nowMs();
   const manifestStartedAt = nowMs();
+  logFrameExtractionEvent("before_video_download", {
+    canonicalUrl: input.metadata.canonicalUrl,
+    selectionMode: input.selectionMode,
+    includeVisual: input.includeVisual,
+  });
+  input.memoryTracker?.checkpoint("before_video_frame_download", {
+    extra: {
+      selectionMode: input.selectionMode,
+      includeVisual: input.includeVisual,
+      visualForceReason: input.visualForceReason ?? null,
+    },
+  });
   const manifest = await createFrameManifest(input.metadata, input.selectionMode);
   const frameExtractionMs = nowMs() - manifestStartedAt;
+  logFrameExtractionEvent("after_video_download", {
+    canonicalUrl: input.metadata.canonicalUrl,
+    selectionMode: input.selectionMode,
+    includeVisual: input.includeVisual,
+    frameCount: manifest.frames.length,
+    tempDir: manifest.tempDir,
+    reason: (manifest.debug as Record<string, unknown>)?.reason ?? null,
+  });
+  input.memoryTracker?.checkpoint("after_video_frame_download", {
+    frames: manifest.frames,
+    extra: {
+      selectionMode: input.selectionMode,
+      includeVisual: input.includeVisual,
+      frameExtractionMs,
+      tempDir: manifest.tempDir,
+      manifestDebugReason: (manifest.debug as Record<string, unknown>)?.reason ?? null,
+    },
+  });
   const screenshots: ScreenshotAsset[] = [];
   const ocrParts: string[] = [];
   let ocrReason: string | null = null;
@@ -820,17 +903,81 @@ async function processRetryFramesSequentially(input: {
 
   try {
     for (const [frameIndex, frame] of manifest.frames.entries()) {
-      const screenshot = await loadScreenshotAssetFromManifest(frame);
-      if (!screenshot) continue;
+      let screenshot: ScreenshotAsset | null = null;
+      if (input.includeVisual) {
+        logFrameExtractionEvent("before_load_frame_as_data_url", {
+          frameLabel: frame.label,
+          sourcePath: frame.sourcePath ?? null,
+          sizeBytes: frame.sizeBytes ?? null,
+        });
+        input.memoryTracker?.checkpoint("before_screenshot_extraction", {
+          frames: [frame],
+          screenshots,
+          extra: {
+            frameLabel: frame.label,
+            tempDir: manifest.tempDir,
+          },
+        });
+        screenshot = await loadScreenshotAssetFromManifest(frame);
+        if (!screenshot) continue;
+        logFrameExtractionEvent("after_load_frame_as_data_url", {
+          frameLabel: frame.label,
+          sourcePath: frame.sourcePath ?? null,
+          sizeBytes: frame.sizeBytes ?? screenshot.sizeBytes ?? null,
+        });
+        input.memoryTracker?.checkpoint("after_screenshot_extraction", {
+          frames: [frame],
+          screenshots: [screenshot],
+          extra: {
+            frameLabel: frame.label,
+            originalWidth: frame.originalWidth ?? null,
+            originalHeight: frame.originalHeight ?? null,
+            resizedWidth: frame.resizedWidth ?? null,
+            resizedHeight: frame.resizedHeight ?? null,
+          },
+        });
+      }
       screenshots.push({
-        ...screenshot,
-        frameIndex,
         url: `processed://${frame.label}`,
+        origin: "video_frame",
+        label: frame.label || "video_frame",
+        frameIndex,
+        timestampSec: frame.timestampSec ?? null,
+        sizeBytes: frame.sizeBytes ?? null,
+        sourcePath: frame.sourcePath ?? null,
+        originalWidth: frame.originalWidth ?? null,
+        originalHeight: frame.originalHeight ?? null,
+        resizedWidth: frame.resizedWidth ?? null,
+        resizedHeight: frame.resizedHeight ?? null,
       });
 
       const ocrStartedAt = nowMs();
-      const ocrResult = await extractVisionOcrFromScreenshots([screenshot]);
+      logFrameExtractionEvent("before_ocr_call", {
+        frameLabel: frame.label,
+        sourcePath: frame.sourcePath ?? null,
+        sizeBytes: frame.sizeBytes ?? null,
+        includeVisual: input.includeVisual,
+      });
+      input.memoryTracker?.checkpoint("before_ocr_per_frame", {
+        frames: [frame],
+        screenshots: screenshot ? [screenshot] : [],
+        extra: {
+          frameLabel: frame.label,
+          priorHeldScreenshotCount: screenshots.length,
+        },
+      });
+      const ocrResult = input.includeVisual
+        ? await extractVisionOcrFromScreenshots(screenshot ? [screenshot] : [])
+        : await extractLocalOcrFromImagePath(frame.sourcePath || "");
       const ocrDurationMs = nowMs() - ocrStartedAt;
+      logFrameExtractionEvent("after_ocr_call", {
+        frameLabel: frame.label,
+        sourcePath: frame.sourcePath ?? null,
+        ocrDurationMs,
+        ocrTextChars: ocrResult.text.trim().length,
+        ocrReason: ocrResult.reason ?? null,
+        includeVisual: input.includeVisual,
+      });
       ocrOnlyMs += ocrDurationMs;
       if (ocrResult.text.trim()) {
         ocrParts.push(ocrResult.text.trim());
@@ -850,10 +997,16 @@ async function processRetryFramesSequentially(input: {
         ocrUsed: Boolean(ocrResult.text.trim()),
         ocrReason: ocrResult.reason ?? null,
       });
-      if (!input.includeVisual) {
-        // Attempt 1 OCR-only flow should not retain the raw image payload after text extraction.
-        screenshot.url = "";
-      }
+      input.memoryTracker?.checkpoint("after_ocr_per_frame", {
+        frames: [frame],
+        screenshots,
+        extra: {
+          frameLabel: frame.label,
+          ocrDurationMs,
+          ocrTextChars: ocrResult.text.trim().length,
+          ocrReason: ocrResult.reason ?? null,
+        },
+      });
 
       if (input.includeVisual) {
         const aggregateOcr: OcrResult = {
@@ -863,15 +1016,34 @@ async function processRetryFramesSequentially(input: {
           reason: ocrParts.length > 0 ? null : ocrReason || "vision_ocr_empty",
         };
         const visualStartedAt = nowMs();
+        input.memoryTracker?.checkpoint("before_visual_fallback", {
+          frames: [frame],
+          screenshots: screenshot ? [screenshot] : [],
+          extra: {
+            frameLabel: frame.label,
+            aggregateOcrChars: aggregateOcr.text.trim().length,
+          },
+        });
         const visualResult = await runVisualFallback({
           metadata: input.metadata,
           transcript: input.transcript,
           ocr: aggregateOcr,
-          screenshots: [screenshot],
+          screenshots: screenshot ? [screenshot] : [],
           forceTrigger: Boolean(input.visualForceReason),
           forceTriggerReason: input.visualForceReason ?? null,
         });
         visualFallbackOnlyMs += nowMs() - visualStartedAt;
+        input.memoryTracker?.checkpoint("after_visual_fallback", {
+          frames: [frame],
+          screenshots,
+          extra: {
+            frameLabel: frame.label,
+            selectedCandidate: visualResult.selectedCandidate?.candidateName || null,
+            confidence: visualResult.confidence,
+            visualReason: visualResult.reason,
+            candidateCount: Array.isArray(visualResult.candidates) ? visualResult.candidates.length : 0,
+          },
+        });
         perFrameVisualDebug.push({
           frame: frame.label,
           timestampSec: frame.timestampSec ?? null,
@@ -884,16 +1056,33 @@ async function processRetryFramesSequentially(input: {
       }
 
       // Ensure no data URL survives beyond the current frame iteration.
-      screenshot.url = "";
+      if (screenshot) {
+        screenshot.url = "";
+      }
 
       if (frame.sourcePath) {
         try {
           await fs.unlink(frame.sourcePath);
         } catch {}
       }
+      input.memoryTracker?.checkpoint("after_frame_cleanup", {
+        frames: manifest.frames,
+        screenshots,
+        extra: {
+          frameLabel: frame.label,
+          tempDir: manifest.tempDir,
+        },
+      });
     }
   } finally {
     await cleanupFrameManifest(manifest.tempDir, manifest.frames);
+    input.memoryTracker?.checkpoint("after_manifest_cleanup", {
+      screenshots,
+      extra: {
+        tempDir: manifest.tempDir,
+        frameCount: manifest.frames.length,
+      },
+    });
   }
 
   const mergedOcrText = mergeOcrTexts(ocrParts);
@@ -1300,6 +1489,12 @@ export async function runExtractionPipeline(input: {
   const traceEnabled = isTraceEnabled(debugEnabled);
   const attemptNumber = normalizeAttemptNumber(input.attemptNumber);
   const triggerType = normalizeTriggerType(input.triggerType);
+  const memoryTracker = createMemoryTracker({
+    attemptNumber,
+    triggerType,
+    url: input.url,
+    requestId: input.clientRunId || `${attemptNumber}:${triggerType}:${Date.now()}:${canonicalizeUrl(input.url)}`,
+  });
   const cacheTtlMs = getNumberEnv("EXTRACTION_CACHE_TTL_MS", DEFAULT_CACHE_TTL_MS);
   const cacheKey = buildAttemptCacheKey(input.mode, input.url, attemptNumber);
   const sharedCacheKey = buildSharedCacheKey(input.mode, input.url);
@@ -1353,6 +1548,14 @@ export async function runExtractionPipeline(input: {
     extractionCache.set(cacheKey, { expiresAt: cached.expiresAt, result: cloneResult(cachedResult) });
     extractionCache.set(sharedCacheKey, { expiresAt: cached.expiresAt, result: cloneResult(cachedResult) });
     persistAttemptExecutionProfileFromResult(cachedResult, Math.max(cached.expiresAt - nowMs(), 1));
+    memoryTracker.checkpoint("before_final_response", {
+      extra: {
+        cacheHit: true,
+        status: cachedResult.visualFallback?.selectedCandidate ? "visualFallback" : cachedResult.debug && typeof cachedResult.debug === "object"
+          ? (cachedResult.debug as Record<string, any>)?.orchestration?.acceptedAfter ?? null
+          : null,
+      },
+    });
     return cachedResult;
   }
 
@@ -1362,7 +1565,9 @@ export async function runExtractionPipeline(input: {
   const { metadata, metadataFailureReason, metadataMs, metadataFetchMs, commentsMs } = await readMetadata(input.url, {
     mode: input.mode,
     attemptNumber,
+    triggerType,
     includeComments: route === "retry_1_long",
+    memoryTracker,
   });
   await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "metadata_done", "Metadata fetched.");
 
@@ -1599,6 +1804,13 @@ export async function runExtractionPipeline(input: {
     if (Number(process.env.EXTRACTION_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.EXTRACTION_SLA_LOG_EVERY) === 0) {
       console.info("[sla][extraction.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
     }
+    memoryTracker.checkpoint("before_final_response", {
+      extra: {
+        cacheHit: false,
+        acceptedAfter: "description",
+        llmCallsBeforeResponse,
+      },
+    });
     return result;
   }
 
@@ -1674,7 +1886,7 @@ export async function runExtractionPipeline(input: {
       pushDecision(orchestration, "transcript", false, "retry_2_transcript_reused");
     } else {
       await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_started", "Reading transcript clues.");
-      const transcriptRead = await readTranscript(metadata);
+      const transcriptRead = await readTranscript(metadata, { memoryTracker });
       transcript = mergeTranscriptResults(inheritedTranscript, transcriptRead.transcript) ?? {
         attempted: true,
         used: false,
@@ -1699,6 +1911,7 @@ export async function runExtractionPipeline(input: {
       selectionMode: "scene_edges",
       includeVisual: visualFallbackPolicy.includeVisual,
       visualForceReason: visualFallbackPolicy.includeVisual ? visualFallbackPolicy.decisionReason : null,
+      memoryTracker,
     });
     screenshots = sequential.screenshots;
     screenshotsDebug = sequential.screenshotsDebug;
@@ -1736,7 +1949,7 @@ export async function runExtractionPipeline(input: {
       pushDecision(orchestration, "transcript", false, "retry_1_refinement_transcript_reused");
     } else {
       await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_started", "Reading transcript clues.");
-      const transcriptRead = await readTranscript(metadata);
+      const transcriptRead = await readTranscript(metadata, { memoryTracker });
       transcript = mergeTranscriptResults(reusedTranscript ?? null, transcriptRead.transcript) ?? {
         attempted: true,
         used: false,
@@ -1757,6 +1970,7 @@ export async function runExtractionPipeline(input: {
       transcript,
       selectionMode: "anchors",
       includeVisual: false,
+      memoryTracker,
     });
     screenshots = sequential.screenshots;
     screenshotsDebug = sequential.screenshotsDebug;
@@ -1774,7 +1988,7 @@ export async function runExtractionPipeline(input: {
       ocrAttempts: [],
     };
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_started", "Reading transcript clues.");
-    const transcriptRead = await readTranscript(metadata);
+    const transcriptRead = await readTranscript(metadata, { memoryTracker });
     transcript = transcriptRead.transcript;
     transcriptMs = transcriptRead.transcriptMs;
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_done", "Transcript step finished.");
@@ -1788,6 +2002,7 @@ export async function runExtractionPipeline(input: {
       transcript,
       selectionMode: "anchors",
       includeVisual: false,
+      memoryTracker,
     });
     screenshots = sequential.screenshots;
     screenshotsDebug = sequential.screenshotsDebug;
@@ -1801,7 +2016,7 @@ export async function runExtractionPipeline(input: {
     orchestration.visualFrameCount = 0;
   } else {
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_started", "Reading transcript clues.");
-    const transcriptRead = await readTranscript(metadata);
+    const transcriptRead = await readTranscript(metadata, { memoryTracker });
     transcript = transcriptRead.transcript;
     transcriptMs = transcriptRead.transcriptMs;
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_done", "Transcript step finished.");
@@ -1894,6 +2109,13 @@ export async function runExtractionPipeline(input: {
       if (Number(process.env.EXTRACTION_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.EXTRACTION_SLA_LOG_EVERY) === 0) {
         console.info("[sla][extraction.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
       }
+      memoryTracker.checkpoint("before_final_response", {
+        extra: {
+          cacheHit: false,
+          acceptedAfter: "transcript",
+          llmCallsBeforeResponse,
+        },
+      });
       return result;
     }
 
@@ -1904,6 +2126,7 @@ export async function runExtractionPipeline(input: {
       transcript,
       selectionMode: "anchors",
       includeVisual: false,
+      memoryTracker,
     });
     screenshots = sequential.screenshots;
     screenshotsDebug = sequential.screenshotsDebug;
@@ -1982,5 +2205,15 @@ export async function runExtractionPipeline(input: {
   if (Number(process.env.EXTRACTION_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.EXTRACTION_SLA_LOG_EVERY) === 0) {
     console.info("[sla][extraction.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
   }
+  memoryTracker.checkpoint("before_final_response", {
+    screenshots,
+    extra: {
+      cacheHit: false,
+      acceptedAfter: orchestration.acceptedAfter,
+      llmCallsBeforeResponse,
+      ocrChars: String(ocr.text || "").trim().length,
+      visualSelectedCandidate: visualFallback.selectedCandidate?.candidateName || null,
+    },
+  });
   return result;
 }
