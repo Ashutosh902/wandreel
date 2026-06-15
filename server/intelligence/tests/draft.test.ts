@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildDraftIntelligenceOutput } from "../draft";
+import { buildDraftIntelligenceOutput, inferOcrHeuristicCandidate } from "../draft";
 
 test("draft heuristic prefers scenic Explore places over Instagram boilerplate", () => {
   const output = buildDraftIntelligenceOutput({
@@ -29,4 +29,70 @@ test("draft heuristic prefers scenic Explore places over Instagram boilerplate",
   assert.equal(output.structuredEntities.length, 1);
   assert.equal(output.structuredEntities[0].name, "Nandi Hills");
   assert.equal(output.structuredEntities[0].category, "see");
+});
+
+test("ocr heuristic prefers venue-like candidate over slogan-like copy", () => {
+  const candidate = inferOcrHeuristicCandidate({
+    mode: "deep",
+    metadata: {
+      sourceUrl: "https://example.com/reel",
+      canonicalUrl: "https://example.com/reel",
+      platform: "instagram",
+      title: "Untitled",
+      description: "",
+      siteName: "Instagram",
+      imageUrl: null,
+      fetchedAtIso: new Date().toISOString(),
+      provider: "instagram_script",
+    },
+    transcript: null,
+    ocr: {
+      attempted: true,
+      used: true,
+      text: "YOU, ME & COFFEE BY THE SEA\nEva cafe, Anjuna\nMy HAPPY PLACE",
+      reason: null,
+    },
+    source: "https://example.com/reel",
+    platform: "instagram",
+    canonicalUrl: "https://example.com/reel",
+    combinedTextRaw: "",
+    combinedTextClean: "",
+  });
+
+  assert.ok(candidate);
+  assert.equal(candidate?.name, "Eva Cafe");
+  assert.equal(candidate?.locality, "Anjuna");
+});
+
+test("draft heuristic returns needs_review when OCR is only slogan-like generic copy", () => {
+  const output = buildDraftIntelligenceOutput({
+    mode: "deep",
+    metadata: {
+      sourceUrl: "https://example.com/reel",
+      canonicalUrl: "https://example.com/reel",
+      platform: "instagram",
+      title: "Creator on Instagram: vibes",
+      description: "✨",
+      siteName: "Instagram",
+      imageUrl: null,
+      fetchedAtIso: new Date().toISOString(),
+      provider: "instagram_script",
+    },
+    transcript: { attempted: false, used: false, source: null, text: "", reason: "not_attempted" },
+    ocr: {
+      attempted: true,
+      used: true,
+      text: "YOU, ME & COFFEE BY THE SEA\nMY HAPPY PLACE",
+      reason: null,
+    },
+    source: "https://example.com/reel",
+    platform: "instagram",
+    canonicalUrl: "https://example.com/reel",
+    combinedTextRaw: "",
+    combinedTextClean: "",
+  });
+
+  assert.equal(output.status, "needs_review");
+  assert.equal(output.structuredEntities[0].name, "Detected place");
+  assert.equal(output.structuredEntities[0].evidenceText, "OCR text insufficient");
 });
