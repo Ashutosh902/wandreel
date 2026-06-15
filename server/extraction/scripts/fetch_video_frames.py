@@ -149,6 +149,52 @@ def build_ydl_download_profile(selection_mode: str) -> tuple[str, dict]:
     )
 
 
+def build_frame_extract_command(
+    ffmpeg_exe: str,
+    video_path: str,
+    output_path: str,
+    ts: float,
+    selection_mode: str,
+) -> list[str]:
+    if selection_mode == "anchors":
+        return [
+            ffmpeg_exe,
+            "-y",
+            "-threads",
+            "1",
+            "-ss",
+            str(ts),
+            "-i",
+            video_path,
+            "-an",
+            "-sn",
+            "-dn",
+            "-frames:v",
+            "1",
+            "-vf",
+            "scale='min(480,iw)':-2",
+            "-q:v",
+            "8",
+            output_path,
+        ]
+
+    return [
+        ffmpeg_exe,
+        "-y",
+        "-ss",
+        str(ts),
+        "-i",
+        video_path,
+        "-frames:v",
+        "1",
+        "-vf",
+        "scale='min(640,iw)':-2",
+        "-q:v",
+        "6",
+        output_path,
+    ]
+
+
 def select_scene_edge_timestamps(video_path: str, duration_seconds: float, ffmpeg_exe: str, temp_dir: str) -> tuple[list[float], list[dict]]:
     scene_dir = os.path.join(temp_dir, "scene_frames")
     os.makedirs(scene_dir, exist_ok=True)
@@ -346,21 +392,15 @@ def main() -> int:
         frames = []
         for index, ts in enumerate(timestamps):
             output_path = os.path.join(temp_dir, f"frame_{index + 1}.jpg")
-            cmd = [
-                ffmpeg_exe,
-                "-y",
-                "-ss",
-                str(ts),
-                "-i",
-                video_path,
-                "-frames:v",
-                "1",
-                "-vf",
-                "scale='min(640,iw)':-2",
-                "-q:v",
-                "6",
-                output_path,
-            ]
+            cmd = build_frame_extract_command(ffmpeg_exe, video_path, output_path, ts, selection_mode)
+            emit_phase_log(
+                "before_each_frame_extract",
+                frameLabel=f"frame_{index + 1}",
+                timestampSec=ts,
+                selectionMode=selection_mode,
+                outputPath=output_path,
+                ffmpegArgs=cmd[1:],
+            )
             subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             extracted_paths.append(output_path)
             frame_size = os.path.getsize(output_path) if os.path.exists(output_path) else 0
