@@ -114,6 +114,41 @@ def compute_resized_dimensions(width: int | None, height: int | None, max_width:
     return resized_width, resized_height
 
 
+def build_ydl_download_profile(selection_mode: str) -> tuple[str, dict]:
+    if selection_mode == "anchors":
+        return (
+            "bestvideo[height<=360][ext=mp4]/best[height<=360][ext=mp4]/"
+            "bestvideo[height<=480][ext=mp4]/best[height<=480][ext=mp4]/"
+            "bestvideo[height<=360]/best[height<=360]/worst",
+            {
+                "socket_timeout": 15,
+                "retries": 1,
+                "fragment_retries": 1,
+                "file_access_retries": 1,
+                "concurrent_fragment_downloads": 1,
+                "nopart": True,
+                "updatetime": False,
+                "buffersize": 16 * 1024,
+                "http_chunk_size": 1024 * 1024,
+            },
+        )
+
+    return (
+        "mp4/best[ext=mp4]/best",
+        {
+            "socket_timeout": 20,
+            "retries": 1,
+            "fragment_retries": 1,
+            "file_access_retries": 1,
+            "concurrent_fragment_downloads": 1,
+            "nopart": True,
+            "updatetime": False,
+            "buffersize": 16 * 1024,
+            "http_chunk_size": 1024 * 1024,
+        },
+    )
+
+
 def select_scene_edge_timestamps(video_path: str, duration_seconds: float, ffmpeg_exe: str, temp_dir: str) -> tuple[list[float], list[dict]]:
     scene_dir = os.path.join(temp_dir, "scene_frames")
     os.makedirs(scene_dir, exist_ok=True)
@@ -195,6 +230,7 @@ def main() -> int:
     media_id = extract_media_id(source_url)
     temp_dir = tempfile.mkdtemp(prefix=f"wr_frames_{media_id}_")
     out_tmpl = os.path.join(temp_dir, f"{media_id}.%(ext)s")
+    format_selector, profile_overrides = build_ydl_download_profile(selection_mode)
 
     ydl_opts = {
         "quiet": True,
@@ -202,9 +238,10 @@ def main() -> int:
         "noprogress": True,
         "skip_download": False,
         "noplaylist": True,
-        "format": "mp4/best[ext=mp4]/best",
+        "format": format_selector,
         "outtmpl": out_tmpl,
         "ffmpeg_location": ffmpeg_exe,
+        **profile_overrides,
     }
     yt_dlp_logger = YtDlpLogger()
     ydl_opts["logger"] = yt_dlp_logger
@@ -215,7 +252,15 @@ def main() -> int:
     media_debug: dict = {"mediaUrlAvailable": False, "durationSeconds": None}
     yt_dlp_debug: dict = {"exitCode": None, "stderrShortPreview": None}
     try:
-        emit_phase_log("before_video_download", sourceUrl=source_url, selectionMode=selection_mode, outputMode=output_mode)
+        emit_phase_log(
+            "before_video_download",
+            sourceUrl=source_url,
+            selectionMode=selection_mode,
+            outputMode=output_mode,
+            formatSelector=format_selector,
+            audioExcluded=selection_mode == "anchors",
+            profile=profile_overrides,
+        )
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(source_url, download=True)
         yt_dlp_debug = {
@@ -281,6 +326,8 @@ def main() -> int:
             videoPath=video_path,
             videoSizeBytes=os.path.getsize(video_path) if os.path.exists(video_path) else None,
             durationSeconds=duration,
+            formatSelector=format_selector,
+            audioExcluded=selection_mode == "anchors",
         )
 
         scene_selection_debug: list[dict] = []
@@ -375,6 +422,12 @@ def main() -> int:
                         "runtime": runtime_debug,
                         "media": media_debug,
                         "ytDlp": yt_dlp_debug,
+                        "downloadProfile": {
+                            "formatSelector": format_selector,
+                            "audioExcluded": selection_mode == "anchors",
+                            "selectionMode": selection_mode,
+                            "profileOverrides": profile_overrides,
+                        },
                         "frameExtraction": {
                             "reason": "frames_extracted",
                             "videoPath": video_path,
@@ -406,6 +459,12 @@ def main() -> int:
                         "runtime": runtime_debug,
                         "media": media_debug,
                         "ytDlp": yt_dlp_debug,
+                        "downloadProfile": {
+                            "formatSelector": format_selector,
+                            "audioExcluded": selection_mode == "anchors",
+                            "selectionMode": selection_mode,
+                            "profileOverrides": profile_overrides,
+                        },
                         "frameExtraction": {
                             "reason": "frame_extraction_failed",
                             "videoPath": video_path or None,
