@@ -70,6 +70,7 @@ function parseExtractionRequest(req: express.Request) {
     url,
     mode,
     analyticsPayload,
+    clientRunId: analyticsPayload?.clientRunId ? String(analyticsPayload.clientRunId) : null,
     debug,
     attemptNumber,
     triggerType: triggerType as "initial" | "retry",
@@ -169,6 +170,7 @@ async function executeMetadataExtraction(
     debug: boolean;
     attemptNumber: number;
     triggerType: "initial" | "retry";
+    clientRunId?: string | null;
   },
 ) {
   const result = await runExtractionPipeline({
@@ -177,6 +179,7 @@ async function executeMetadataExtraction(
     debug: input.debug,
     attemptNumber: input.attemptNumber,
     triggerType: input.triggerType,
+    clientRunId: input.clientRunId ?? null,
   });
   const attemptRecord = await createAnalyticsAttemptFromRequest(req, result);
   if (attemptRecord?.attemptId) {
@@ -420,7 +423,7 @@ app.get("/api/location/resolve-place", async (req, res) => {
 });
 
 app.post("/api/metadata/extract", async (req, res) => {
-  const { url, mode, debug, attemptNumber, triggerType } = parseExtractionRequest(req);
+  const { url, mode, debug, attemptNumber, triggerType, clientRunId } = parseExtractionRequest(req);
   try {
     if (!url) {
       return res.status(400).json({ ok: false, error: "url is required" });
@@ -432,6 +435,7 @@ app.post("/api/metadata/extract", async (req, res) => {
       debug,
       attemptNumber,
       triggerType,
+      clientRunId,
     });
     if (featureFlags.extractionV2) {
       return res.json({ ok: true, ...result });
@@ -466,7 +470,7 @@ app.post("/api/metadata/extract", async (req, res) => {
 });
 
 app.post("/api/metadata/extract/stream-test", async (req, res) => {
-  const { url, mode, debug, attemptNumber, triggerType } = parseExtractionRequest(req);
+  const { url, mode, debug, attemptNumber, triggerType, clientRunId } = parseExtractionRequest(req);
   if (!url) {
     return res.status(400).json({ ok: false, error: "url is required" });
   }
@@ -511,6 +515,7 @@ app.post("/api/metadata/extract/stream-test", async (req, res) => {
       debug,
       attemptNumber,
       triggerType,
+      clientRunId,
     });
 
     for (const event of inferStreamProgressFromResult(result)) {
@@ -578,7 +583,7 @@ app.post("/api/metadata/extract/stream-test", async (req, res) => {
 });
 
 app.post("/api/metadata/extract/stream", async (req, res) => {
-  const { url, mode, debug, attemptNumber, triggerType } = parseExtractionRequest(req);
+  const { url, mode, debug, attemptNumber, triggerType, clientRunId } = parseExtractionRequest(req);
   if (!url) {
     return res.status(400).json({ ok: false, error: "url is required" });
   }
@@ -644,6 +649,7 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
       debug,
       attemptNumber,
       triggerType,
+      clientRunId,
     });
     for (const event of inferStreamProgressFromResult(result)) {
       if (seenStages.has(event.stage)) continue;
@@ -932,6 +938,7 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
           attemptId: attemptRecord?.attemptId ?? null,
           runId: attemptRecord?.runId ?? null,
           clientRunId: analyticsPayload?.clientRunId ? String(analyticsPayload.clientRunId) : null,
+          requestId: analyticsPayload?.clientRunId ? `intelligence:${String(analyticsPayload.clientRunId)}:draft_async` : null,
           attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
           triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
           anonymousId: analyticsPayload?.anonymousId ? String(analyticsPayload.anonymousId) : null,
@@ -1057,6 +1064,7 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
         attemptId: attemptRecord?.attemptId ?? null,
         runId: attemptRecord?.runId ?? null,
         clientRunId: analyticsPayload?.clientRunId ? String(analyticsPayload.clientRunId) : null,
+        requestId: analyticsPayload?.clientRunId ? `intelligence:${String(analyticsPayload.clientRunId)}:${mode}` : null,
         attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
         triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
         anonymousId: analyticsPayload?.anonymousId ? String(analyticsPayload.anonymousId) : null,

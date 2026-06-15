@@ -1070,7 +1070,13 @@ export function AddScreen() {
           retryCount,
           isRetry: Boolean(options?.isRetry),
         });
-      } catch {
+      } catch (error) {
+        const reason = error instanceof Error ? error.message : "stream_failed";
+        const shouldFallbackToNonStream =
+          reason === "stream_unavailable" ||
+          reason === "stream_stalled" ||
+          reason === "stream_incomplete_no_useful_event";
+        if (!shouldFallbackToNonStream) throw error;
         setAnalysisStageCopy("Almost there...");
         const extractionResponse = await fetch(`${API_BASE_URL}/api/metadata/extract`, {
           method: "POST",

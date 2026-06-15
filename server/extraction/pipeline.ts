@@ -323,6 +323,9 @@ async function runStructuredFastPathDecision(input: {
   mode: ExtractionMode;
   attemptNumber: number;
   triggerType: ExtractionTriggerType;
+  clientRunId?: string | null;
+  requestId?: string | null;
+  probeStage?: "description" | "transcript";
   transcript?: TranscriptResult | null;
   ocr?: OcrResult | null;
 }): Promise<StructuredFastPathDecision> {
@@ -362,8 +365,11 @@ async function runStructuredFastPathDecision(input: {
   const intelligence = await runIntelligencePipeline({
     source: probeSource,
     analytics: {
+      clientRunId: input.clientRunId ?? null,
+      requestId: input.requestId ?? null,
       attemptNumber: input.attemptNumber,
       triggerType: input.triggerType,
+      probeStage: input.probeStage ?? null,
     },
   });
   return {
@@ -378,6 +384,8 @@ async function runTinyCaptionFastPathDecision(input: {
   mode: ExtractionMode;
   attemptNumber: number;
   triggerType: ExtractionTriggerType;
+  clientRunId?: string | null;
+  requestId?: string | null;
 }): Promise<StructuredFastPathDecision> {
   const probeSource: ExtractionResult = {
     mode: input.mode,
@@ -415,6 +423,8 @@ async function runTinyCaptionFastPathDecision(input: {
   const intelligence = await runTinyCaptionIntelligence({
     source: probeSource,
     analytics: {
+      clientRunId: input.clientRunId ?? null,
+      requestId: input.requestId ?? null,
       attemptNumber: input.attemptNumber,
       triggerType: input.triggerType,
     },
@@ -1283,6 +1293,7 @@ export async function runExtractionPipeline(input: {
   debug?: boolean;
   attemptNumber?: number;
   triggerType?: ExtractionTriggerType;
+  clientRunId?: string | null;
   onProgress?: ExtractionProgressReporter;
 }): Promise<ExtractionResult> {
   const debugEnabled = Boolean(input.debug);
@@ -1461,6 +1472,8 @@ export async function runExtractionPipeline(input: {
         mode: input.mode,
         attemptNumber,
         triggerType,
+        clientRunId: input.clientRunId ?? null,
+        requestId: input.clientRunId || null,
       },
       {
         stage: "description",
@@ -1799,6 +1812,9 @@ export async function runExtractionPipeline(input: {
         attemptNumber,
         triggerType,
         transcript,
+        clientRunId: input.clientRunId ?? null,
+        requestId: input.clientRunId || null,
+        probeStage: "transcript",
       },
       {
         stage: "transcript",

@@ -134,8 +134,10 @@ export type IntelligenceRequest = {
     attemptId?: string | null;
     runId?: string | null;
     clientRunId?: string | null;
+    requestId?: string | null;
     attemptNumber?: number | null;
     triggerType?: "initial" | "retry";
+    probeStage?: "description" | "transcript" | null;
     anonymousId?: string | null;
     userId?: string | null;
   };
