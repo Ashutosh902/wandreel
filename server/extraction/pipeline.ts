@@ -259,9 +259,14 @@ function summarizeScreenshot(shot: ScreenshotAsset): Record<string, unknown> {
   return {
     origin: shot.origin,
     label: shot.label,
+    frameIndex: shot.frameIndex ?? null,
     timestampSec: shot.timestampSec ?? null,
     sizeBytes: shot.sizeBytes ?? (shot.url.startsWith("data:") ? Math.round(shot.url.length * 0.75) : null),
     sourcePath: shot.sourcePath ?? null,
+    originalWidth: shot.originalWidth ?? null,
+    originalHeight: shot.originalHeight ?? null,
+    resizedWidth: shot.resizedWidth ?? null,
+    resizedHeight: shot.resizedHeight ?? null,
     urlKind: shot.url.startsWith("data:") ? "data_url" : "remote_url",
   };
 }
@@ -804,11 +809,12 @@ async function processRetryFramesSequentially(input: {
   let visualFallbackOnlyMs = 0;
 
   try {
-    for (const frame of manifest.frames) {
+    for (const [frameIndex, frame] of manifest.frames.entries()) {
       const screenshot = await loadScreenshotAssetFromManifest(frame);
       if (!screenshot) continue;
       screenshots.push({
         ...screenshot,
+        frameIndex,
         url: `processed://${frame.label}`,
       });
 
@@ -834,6 +840,10 @@ async function processRetryFramesSequentially(input: {
         ocrUsed: Boolean(ocrResult.text.trim()),
         ocrReason: ocrResult.reason ?? null,
       });
+      if (!input.includeVisual) {
+        // Attempt 1 OCR-only flow should not retain the raw image payload after text extraction.
+        screenshot.url = "";
+      }
 
       if (input.includeVisual) {
         const aggregateOcr: OcrResult = {
@@ -862,6 +872,9 @@ async function processRetryFramesSequentially(input: {
         });
         bestVisual = chooseBetterVisualResult(bestVisual, visualResult);
       }
+
+      // Ensure no data URL survives beyond the current frame iteration.
+      screenshot.url = "";
 
       if (frame.sourcePath) {
         try {

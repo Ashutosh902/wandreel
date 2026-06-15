@@ -38,9 +38,14 @@ function summarizeScreenshots(screenshots: ScreenshotAsset[]) {
   return screenshots.map((shot) => ({
     origin: shot.origin,
     label: shot.label,
+    frameIndex: shot.frameIndex ?? null,
     timestampSec: shot.timestampSec ?? null,
     sizeBytes: shot.sizeBytes ?? (shot.url.startsWith("data:") ? Math.round(shot.url.length * 0.75) : null),
     sourcePath: shot.sourcePath ?? null,
+    originalWidth: shot.originalWidth ?? null,
+    originalHeight: shot.originalHeight ?? null,
+    resizedWidth: shot.resizedWidth ?? null,
+    resizedHeight: shot.resizedHeight ?? null,
     urlKind: shot.url.startsWith("data:") ? "data_url" : "remote_url",
   }));
 }
@@ -87,7 +92,7 @@ export async function selectSourceScreenshotsDetailed(
       rawError: parsed?.stderr || null,
     };
     const maxVideoFrames = selectionMode === "scene_edges" ? 7 : 4;
-    for (const frame of frames.slice(0, maxVideoFrames)) {
+    for (const [index, frame] of frames.slice(0, maxVideoFrames).entries()) {
       const mimeType = typeof frame?.mimeType === "string" && frame.mimeType.trim() ? frame.mimeType.trim() : "image/jpeg";
       const dataBase64 = typeof frame?.dataBase64 === "string" ? frame.dataBase64.trim() : "";
       if (!dataBase64) continue;
@@ -95,9 +100,14 @@ export async function selectSourceScreenshotsDetailed(
         url: toDataUrl(mimeType, dataBase64),
         origin: "video_frame",
         label: typeof frame?.label === "string" && frame.label.trim() ? frame.label.trim() : "video_frame",
+        frameIndex: index,
         timestampSec: typeof frame?.timestampSec === "number" ? frame.timestampSec : null,
         sizeBytes: typeof frame?.sizeBytes === "number" ? frame.sizeBytes : byteLengthFromBase64(dataBase64),
         sourcePath: typeof frame?.sourcePath === "string" ? frame.sourcePath : null,
+        originalWidth: typeof frame?.originalWidth === "number" ? frame.originalWidth : null,
+        originalHeight: typeof frame?.originalHeight === "number" ? frame.originalHeight : null,
+        resizedWidth: typeof frame?.resizedWidth === "number" ? frame.resizedWidth : null,
+        resizedHeight: typeof frame?.resizedHeight === "number" ? frame.resizedHeight : null,
       });
     }
   }
@@ -216,8 +226,13 @@ export async function loadScreenshotAssetFromManifest(frame: FrameManifestItem):
     url: `data:${frame.mimeType || "image/jpeg"};base64,${encoded}`,
     origin: "video_frame",
     label: frame.label || "video_frame",
+    frameIndex: null,
     timestampSec: frame.timestampSec ?? null,
     sizeBytes: frame.sizeBytes ?? raw.byteLength,
     sourcePath: frame.sourcePath,
+    originalWidth: frame.originalWidth ?? null,
+    originalHeight: frame.originalHeight ?? null,
+    resizedWidth: frame.resizedWidth ?? null,
+    resizedHeight: frame.resizedHeight ?? null,
   };
 }

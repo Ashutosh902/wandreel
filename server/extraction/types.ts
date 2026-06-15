@@ -64,9 +64,14 @@ export type ScreenshotAsset = {
   url: string;
   origin: "video_frame" | "metadata_image";
   label: string;
+  frameIndex?: number | null;
   timestampSec?: number | null;
   sizeBytes?: number | null;
   sourcePath?: string | null;
+  originalWidth?: number | null;
+  originalHeight?: number | null;
+  resizedWidth?: number | null;
+  resizedHeight?: number | null;
 };
 
 export type VisualSearchCandidate = {

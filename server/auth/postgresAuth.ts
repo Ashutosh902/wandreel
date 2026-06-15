@@ -179,6 +179,36 @@ export type ReelJobDto = {
   updatedAt: string;
 };
 
+function isMissingUpdatedAtColumnError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error || "");
+  return /column\s+"updated_at"\s+of relation\s+"reel_analytics_attempts"\s+does not exist/i.test(message);
+}
+
+function sanitizeArtifactPayload<T>(value: T): T {
+  return JSON.parse(
+    JSON.stringify(value, (_key, currentValue) => {
+      if (typeof currentValue === "string" && currentValue.startsWith("data:")) {
+        return "[omitted_data_url]";
+      }
+      if (
+        currentValue &&
+        typeof currentValue === "object" &&
+        !Array.isArray(currentValue) &&
+        typeof (currentValue as Record<string, unknown>).url === "string" &&
+        typeof (currentValue as Record<string, unknown>).origin === "string" &&
+        typeof (currentValue as Record<string, unknown>).label === "string"
+      ) {
+        return {
+          ...(currentValue as Record<string, unknown>),
+          url: "[omitted_image_payload]",
+          sourcePath: null,
+        };
+      }
+      return currentValue;
+    }),
+  ) as T;
+}
+
 export async function ensureAuthSchema() {
   if (schemaReady) return;
   if (!isPostgresConfigured()) {
@@ -306,6 +336,9 @@ export async function ensureAuthSchema() {
   `);
   await pool.query(`
     alter table if exists reel_analytics_attempts add column if not exists hypothesis_json jsonb;
+  `);
+  await pool.query(`
+    alter table if exists reel_analytics_attempts add column if not exists updated_at timestamptz not null default now();
   `);
 
   await pool.query(`
@@ -853,23 +886,75 @@ export async function persistReelAnalyticsAttemptArtifacts(input: ReelAnalyticsA
   const hasExtractionResult = Object.prototype.hasOwnProperty.call(input, "extractionResult");
   const hasIntelligenceResult = Object.prototype.hasOwnProperty.call(input, "intelligenceResult");
   const hasHypothesisSummary = Object.prototype.hasOwnProperty.call(input, "hypothesisSummary");
-  const extractionResult = hasExtractionResult ? JSON.stringify(input.extractionResult ?? null) : null;
-  const intelligenceResult = hasIntelligenceResult ? JSON.stringify(input.intelligenceResult ?? null) : null;
-  const hypothesisSummary = hasHypothesisSummary ? JSON.stringify(input.hypothesisSummary ?? null) : null;
+  const extractionResult = hasExtractionResult ? JSON.stringify(sanitizeArtifactPayload(input.extractionResult ?? null)) : null;
+  const intelligenceResult = hasIntelligenceResult ? JSON.stringify(sanitizeArtifactPayload(input.intelligenceResult ?? null)) : null;
+  const hypothesisSummary = hasHypothesisSummary ? JSON.stringify(sanitizeArtifactPayload(input.hypothesisSummary ?? null)) : null;
 
   if (input.attemptId) {
+    try {
+      await pool.query(
+        `
+          update reel_analytics_attempts
+          set
+            extraction_result_json = case when $2 then $3::jsonb else extraction_result_json end,
+            intelligence_result_json = case when $4 then $5::jsonb else intelligence_result_json end,
+            hypothesis_json = case when $6 then $7::jsonb else hypothesis_json end,
+            updated_at = now()
+          where id = $1
+        `,
+        [
+          input.attemptId,
+          hasExtractionResult,
+          extractionResult,
+          hasIntelligenceResult,
+          intelligenceResult,
+          hasHypothesisSummary,
+          hypothesisSummary,
+        ],
+      );
+    } catch (error) {
+      if (!isMissingUpdatedAtColumnError(error)) throw error;
+      await pool.query(
+        `
+          update reel_analytics_attempts
+          set
+            extraction_result_json = case when $2 then $3::jsonb else extraction_result_json end,
+            intelligence_result_json = case when $4 then $5::jsonb else intelligence_result_json end,
+            hypothesis_json = case when $6 then $7::jsonb else hypothesis_json end
+          where id = $1
+        `,
+        [
+          input.attemptId,
+          hasExtractionResult,
+          extractionResult,
+          hasIntelligenceResult,
+          intelligenceResult,
+          hasHypothesisSummary,
+          hypothesisSummary,
+        ],
+      );
+    }
+    return;
+  }
+
+  const runId = String(input.runId || "").trim();
+  const attemptNumber = Number(input.attemptNumber) || 0;
+  if (!runId || !attemptNumber) return;
+
+  try {
     await pool.query(
       `
         update reel_analytics_attempts
         set
-          extraction_result_json = case when $2 then $3::jsonb else extraction_result_json end,
-          intelligence_result_json = case when $4 then $5::jsonb else intelligence_result_json end,
-          hypothesis_json = case when $6 then $7::jsonb else hypothesis_json end,
+          extraction_result_json = case when $3 then $4::jsonb else extraction_result_json end,
+          intelligence_result_json = case when $5 then $6::jsonb else intelligence_result_json end,
+          hypothesis_json = case when $7 then $8::jsonb else hypothesis_json end,
           updated_at = now()
-        where id = $1
+        where run_id = $1 and attempt_number = $2
       `,
       [
-        input.attemptId,
+        runId,
+        attemptNumber,
         hasExtractionResult,
         extractionResult,
         hasIntelligenceResult,
@@ -878,34 +963,29 @@ export async function persistReelAnalyticsAttemptArtifacts(input: ReelAnalyticsA
         hypothesisSummary,
       ],
     );
-    return;
+  } catch (error) {
+    if (!isMissingUpdatedAtColumnError(error)) throw error;
+    await pool.query(
+      `
+        update reel_analytics_attempts
+        set
+          extraction_result_json = case when $3 then $4::jsonb else extraction_result_json end,
+          intelligence_result_json = case when $5 then $6::jsonb else intelligence_result_json end,
+          hypothesis_json = case when $7 then $8::jsonb else hypothesis_json end
+        where run_id = $1 and attempt_number = $2
+      `,
+      [
+        runId,
+        attemptNumber,
+        hasExtractionResult,
+        extractionResult,
+        hasIntelligenceResult,
+        intelligenceResult,
+        hasHypothesisSummary,
+        hypothesisSummary,
+      ],
+    );
   }
-
-  const runId = String(input.runId || "").trim();
-  const attemptNumber = Number(input.attemptNumber) || 0;
-  if (!runId || !attemptNumber) return;
-
-  await pool.query(
-    `
-      update reel_analytics_attempts
-      set
-        extraction_result_json = case when $3 then $4::jsonb else extraction_result_json end,
-        intelligence_result_json = case when $5 then $6::jsonb else intelligence_result_json end,
-        hypothesis_json = case when $7 then $8::jsonb else hypothesis_json end,
-        updated_at = now()
-      where run_id = $1 and attempt_number = $2
-    `,
-    [
-      runId,
-      attemptNumber,
-      hasExtractionResult,
-      extractionResult,
-      hasIntelligenceResult,
-      intelligenceResult,
-      hasHypothesisSummary,
-      hypothesisSummary,
-    ],
-  );
 }
 
 export async function recordReelAnalyticsEvent(input: ReelAnalyticsEventInput) {
@@ -1055,6 +1135,9 @@ export async function updateReelJob(input: ReelJobUpdateInput): Promise<void> {
   const hasProgressJson = Object.prototype.hasOwnProperty.call(input, "progressJson");
   const hasResultJson = Object.prototype.hasOwnProperty.call(input, "resultJson");
   const hasErrorMessage = Object.prototype.hasOwnProperty.call(input, "errorMessage");
+  const serializedProgressJson = hasProgressJson ? JSON.stringify(sanitizeArtifactPayload(input.progressJson ?? {})) : null;
+  const serializedResultJson =
+    hasResultJson ? (input.resultJson === null ? null : JSON.stringify(sanitizeArtifactPayload(input.resultJson))) : null;
   await pool.query(
     `
       update reel_jobs
@@ -1069,8 +1152,8 @@ export async function updateReelJob(input: ReelJobUpdateInput): Promise<void> {
     [
       input.jobId,
       input.status ?? null,
-      hasProgressJson ? JSON.stringify(input.progressJson ?? {}) : null,
-      hasResultJson ? (input.resultJson === null ? null : JSON.stringify(input.resultJson)) : null,
+      serializedProgressJson,
+      serializedResultJson,
       input.errorMessage ?? null,
       hasProgressJson,
       hasResultJson,
