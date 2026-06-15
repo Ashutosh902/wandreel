@@ -161,6 +161,12 @@ export function buildUserPrompt(source: ExtractionResult, analytics?: Intelligen
     quality: {
       isLowSignal: !String(combinedText || "").trim(),
     },
+    ocrEvidence: {
+      chars: String(source.ocr?.text || "").trim().length,
+      text: trimText(source.ocr?.text, 1200) || null,
+      instruction:
+        "If OCR contains a candidate venue/place line such as 'Eva cafe, Anjuna', prefer that over generic social-media titles like '{creator} on Instagram: ...'. If OCR is weak or empty, do not invent a named entity from the social title alone.",
+    },
     visualFallback: visualFallback
       ? {
           triggered: visualFallback.triggered,

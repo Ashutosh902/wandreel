@@ -1165,6 +1165,21 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
         }
       }
       const draftOutput = buildDraftIntelligenceOutput(source);
+      console.info("[draft-async]", {
+        event: "draft_output",
+        clientRunId: analyticsPayload?.clientRunId ? String(analyticsPayload.clientRunId) : null,
+        attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
+        acceptedAfter: String(source?.debug?.orchestration?.acceptedAfter || ""),
+        ocrChars: String(source?.ocr?.text || "").trim().length,
+        entityCount: Array.isArray(draftOutput.structuredEntities) ? draftOutput.structuredEntities.length : 0,
+        entities: (draftOutput.structuredEntities || []).map((entity) => ({
+          name: entity.name,
+          category: entity.category,
+          locality: entity.locality,
+          confidence: entity.confidence,
+        })),
+        status: draftOutput.status,
+      });
       return res.status(202).json({
         ok: true,
         mode,

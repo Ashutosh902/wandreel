@@ -975,6 +975,7 @@ async function processRetryFramesSequentially(input: {
         sourcePath: frame.sourcePath ?? null,
         ocrDurationMs,
         ocrTextChars: ocrResult.text.trim().length,
+        ocrSnippet: ocrResult.text.trim().slice(0, 160) || null,
         ocrReason: ocrResult.reason ?? null,
         ocrProvider: input.includeVisual ? "openai_vision" : ocrResult.provider,
         includeVisual: input.includeVisual,
@@ -995,6 +996,7 @@ async function processRetryFramesSequentially(input: {
         compressedSizeBytes: frame.sizeBytes ?? screenshot.sizeBytes ?? null,
         ocrDurationMs,
         ocrTextChars: ocrResult.text.trim().length,
+        ocrSnippet: ocrResult.text.trim().slice(0, 160) || null,
         ocrUsed: Boolean(ocrResult.text.trim()),
         ocrReason: ocrResult.reason ?? null,
         ocrProvider: input.includeVisual ? "openai_vision" : ocrResult.provider,
@@ -1089,6 +1091,11 @@ async function processRetryFramesSequentially(input: {
   }
 
   const mergedOcrText = mergeOcrTexts(ocrParts);
+  console.info("[ocr-summary]", {
+    frameCount: perFrameOcrDebug.length,
+    combinedOcrChars: mergedOcrText.trim().length,
+    combinedOcrSnippet: mergedOcrText.trim().slice(0, 220) || null,
+  });
   const ocr: OcrResult = {
     attempted: true,
     used: Boolean(mergedOcrText),

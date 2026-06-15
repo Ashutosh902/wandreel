@@ -64,6 +64,13 @@ export class InMemoryIntelligenceJobStore implements IntelligenceJobStore {
     running.status = "running";
     running.updatedAtIso = new Date().toISOString();
     this.jobs.set(id, running);
+    console.info("[intelligence-job]", {
+      event: "running",
+      jobId: id,
+      clientRunId: req.analytics?.clientRunId ?? null,
+      attemptNumber: req.analytics?.attemptNumber ?? null,
+      acceptedAfter: (req.source.debug as any)?.orchestration?.acceptedAfter ?? null,
+    });
     try {
       await updateReelJob({
         jobId: id,
@@ -185,6 +192,20 @@ export class InMemoryIntelligenceJobStore implements IntelligenceJobStore {
       completed.result = result;
       completed.updatedAtIso = new Date().toISOString();
       this.jobs.set(id, completed);
+      console.info("[intelligence-job]", {
+        event: "completed",
+        jobId: id,
+        clientRunId: req.analytics?.clientRunId ?? null,
+        attemptNumber: req.analytics?.attemptNumber ?? null,
+        acceptedAfter: (req.source.debug as any)?.orchestration?.acceptedAfter ?? null,
+        entityCount: Array.isArray(result.output?.structuredEntities) ? result.output.structuredEntities.length : 0,
+        entities: (result.output?.structuredEntities || []).map((entity, index) => ({
+          index,
+          name: entity.name,
+          category: entity.category,
+          locality: entity.locality,
+        })),
+      });
     } catch (error) {
       if (req.analytics?.attemptId) {
         try {
@@ -217,6 +238,14 @@ export class InMemoryIntelligenceJobStore implements IntelligenceJobStore {
       failed.error = error instanceof Error ? error.message : "unknown_error";
       failed.updatedAtIso = new Date().toISOString();
       this.jobs.set(id, failed);
+      console.info("[intelligence-job]", {
+        event: "failed",
+        jobId: id,
+        clientRunId: req.analytics?.clientRunId ?? null,
+        attemptNumber: req.analytics?.attemptNumber ?? null,
+        acceptedAfter: (req.source.debug as any)?.orchestration?.acceptedAfter ?? null,
+        error: error instanceof Error ? error.message : "unknown_error",
+      });
     }
   }
 }

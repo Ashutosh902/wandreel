@@ -6,6 +6,7 @@ import { recordSla } from "../metrics/slaTracker";
 import { inferPlaceResolveContext, mergeResolutionIntoContext, resolveEntityLocality } from "./placeResolver";
 import type { ExtractionResult } from "../extraction/types";
 import { augmentIntelligenceOutputWithCaptionLists } from "./captionListAugment";
+import { inferOcrHeuristicCandidate } from "./draft";
 
 function buildDefaultLevel2(category: "eat" | "do" | "stay" | "see") {
   return category === "eat"
@@ -559,16 +560,112 @@ export function postProcessTinyCaptionOutput(output: IntelligenceOutput, req: In
   return augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback(output, req), req.source);
 }
 
+function logIntelligenceDecision(event: string, details: Record<string, unknown>) {
+  console.info("[intelligence-decision]", {
+    event,
+    ...details,
+  });
+}
+
+function applyOcrHeuristicPriority(output: IntelligenceOutput, source: ExtractionResult): IntelligenceOutput {
+  const candidate = inferOcrHeuristicCandidate(source);
+  if (!candidate) return output;
+  if (Array.isArray(output.structuredEntities) && output.structuredEntities.length > 0) {
+    const alreadyStrong = output.structuredEntities.some((entity) => {
+      const name = String(entity.name || "").toLowerCase();
+      return name.includes(candidate.name.toLowerCase()) || String(entity.locality || "").toLowerCase() === String(candidate.locality || "").toLowerCase();
+    });
+    if (alreadyStrong) return output;
+  }
+
+  const intent = candidate.category === "eat"
+    ? { l1: "taste" as const, l2: /cafe|café|coffee/i.test(candidate.name) ? "Cafe" : "Restaurant", l3: [] }
+    : { l1: "explore" as const, l2: "Nature", l3: [] };
+
+  return {
+    ...output,
+    categoriesPresent: [candidate.category],
+    showIn: {
+      eat: candidate.category === "eat",
+      do: false,
+      stay: false,
+      see: candidate.category === "see",
+    },
+    structuredEntities: [
+      {
+        name: candidate.name,
+        category: candidate.category,
+        locality: candidate.locality,
+        city: null,
+        state: null,
+        country: null,
+        address: null,
+        confidence: candidate.confidence,
+        googleMapsQuery: [candidate.name, candidate.locality].filter(Boolean).join(" ").trim() || candidate.name,
+        evidenceText: candidate.evidenceText,
+        intent,
+      },
+    ],
+    entities: [
+      {
+        category: candidate.category,
+        name: candidate.name,
+        entityType: "ocr_candidate",
+        city: null,
+        state: null,
+        country: null,
+        locality: candidate.locality,
+        tags: ["ocr"],
+        details: {},
+        level2: candidate.category === "eat"
+          ? { category: "eat", cuisineType: null, mealType: null, dietaryTags: [], vibeTags: [], priceTier: null }
+          : { category: "see", placeType: null, experienceTag: null, vibeTags: [], entryFeeSignal: null },
+        googleMapsQuery: [candidate.name, candidate.locality].filter(Boolean).join(" ").trim() || candidate.name,
+        sourceEvidence: candidate.evidenceText,
+        confidence: candidate.confidence,
+        intent,
+      },
+    ],
+    visibility: {
+      showIn: [candidate.category],
+      doNotShowIn: (["eat", "do", "stay", "see"] as const).filter((cat) => cat !== candidate.category),
+      reason: "OCR heuristic candidate prioritized over generic social metadata.",
+    },
+    status: "ready",
+  };
+}
+
 export async function runIntelligencePipeline(req: IntelligenceRequest): Promise<IntelligencePipelineResult> {
   const totalStartedAt = Date.now();
+  logIntelligenceDecision("before_final_prompt", {
+    clientRunId: req.analytics?.clientRunId ?? null,
+    attemptNumber: req.analytics?.attemptNumber ?? req.source.attemptInfo?.attemptNumber ?? 1,
+    acceptedAfter: (req.source.debug as any)?.orchestration?.acceptedAfter || null,
+    ocrChars: String(req.source.ocr?.text || "").trim().length,
+    ocrSnippet: String(req.source.ocr?.text || "").trim().slice(0, 160) || null,
+    combinedTextHasOcr: Boolean(String(req.source.combinedTextClean || req.source.combinedTextRaw || "").includes(String(req.source.ocr?.text || "").trim().slice(0, 24))),
+  });
   const providerResult = await callOpenAiStructuredExtraction(req.source, req.analytics);
   const raw = adaptStructuredRaw(providerResult.raw, req);
   const schemaFirstStartedAt = Date.now();
   const firstPass = intelligenceOutputSchema.safeParse(raw);
   const schemaFirstPassMs = Date.now() - schemaFirstStartedAt;
   if (firstPass.success) {
-    const augmentedOutput = augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback(firstPass.data, req), req.source);
+    const augmentedOutput = applyOcrHeuristicPriority(
+      augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback(firstPass.data, req), req.source),
+      req.source,
+    );
     const enrichedOutput = await enrichWithResolvedLocations(augmentedOutput, req.source);
+    logIntelligenceDecision("final_output", {
+      clientRunId: req.analytics?.clientRunId ?? null,
+      entityCount: enrichedOutput.structuredEntities.length,
+      acceptedAfter: (req.source.debug as any)?.orchestration?.acceptedAfter || null,
+      entities: enrichedOutput.structuredEntities.map((entity) => ({
+        name: entity.name,
+        category: entity.category,
+        locality: entity.locality,
+      })),
+    });
     const agg = recordSla("intelligence.total", Date.now() - totalStartedAt);
     if (Number(process.env.INTELLIGENCE_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.INTELLIGENCE_SLA_LOG_EVERY) === 0) {
       console.info("[sla][intelligence.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
@@ -597,8 +694,21 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
   const schemaSecondPassMs = Date.now() - schemaSecondStartedAt;
 
   if (secondPass.success) {
-    const augmentedOutput = augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback(secondPass.data, req), req.source);
+    const augmentedOutput = applyOcrHeuristicPriority(
+      augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback(secondPass.data, req), req.source),
+      req.source,
+    );
     const enrichedOutput = await enrichWithResolvedLocations(augmentedOutput, req.source);
+    logIntelligenceDecision("final_output", {
+      clientRunId: req.analytics?.clientRunId ?? null,
+      entityCount: enrichedOutput.structuredEntities.length,
+      acceptedAfter: (req.source.debug as any)?.orchestration?.acceptedAfter || null,
+      entities: enrichedOutput.structuredEntities.map((entity) => ({
+        name: entity.name,
+        category: entity.category,
+        locality: entity.locality,
+      })),
+    });
     const agg = recordSla("intelligence.total", Date.now() - totalStartedAt);
     if (Number(process.env.INTELLIGENCE_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.INTELLIGENCE_SLA_LOG_EVERY) === 0) {
       console.info("[sla][intelligence.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
@@ -620,14 +730,14 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
   }
 
   return {
-    output: augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback({
+    output: applyOcrHeuristicPriority(augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback({
       ...normalized,
       status: "needs_review",
       visibility: {
         ...normalized.visibility,
         reason: "Schema validation failed after auto-fix. Manual review required.",
       },
-    }, req), req.source),
+    }, req), req.source), req.source),
     validationErrors: [
       ...formatZodErrors(firstPass.error),
       ...formatZodErrors(secondPass.error),

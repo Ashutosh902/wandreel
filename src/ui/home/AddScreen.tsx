@@ -278,6 +278,14 @@ export function AddScreen() {
     });
   };
 
+  const logCardSourceEvent = (event: string, details: Record<string, unknown>) => {
+    console.info("[add-card-source]", {
+      event,
+      source: "AddScreen",
+      ...details,
+    });
+  };
+
   const setAnalyzingState = (value: boolean) => {
     isAnalyzingRef.current = value;
     setIsAnalyzing(value);
@@ -756,7 +764,12 @@ export function AddScreen() {
 
   const inferDraftName = (rawTitle: string, rawDesc: string) => {
     const sanitizedTitle = rawTitle.replace(/\s+/g, " ").trim();
-    if (sanitizedTitle && sanitizedTitle.toLowerCase() !== "untitled" && !/(^@)|(^follow\s+@)|(@\w+)/i.test(sanitizedTitle)) {
+    if (
+      sanitizedTitle &&
+      sanitizedTitle.toLowerCase() !== "untitled" &&
+      !/(^@)|(^follow\s+@)|(@\w+)/i.test(sanitizedTitle) &&
+      !/ on instagram:/i.test(sanitizedTitle)
+    ) {
       return sanitizedTitle.slice(0, 80);
     }
 
@@ -1232,6 +1245,14 @@ export function AddScreen() {
         upsertPendingJob(pendingJobsRef.current, extractionPendingJob),
         normalizedSourceUrl,
       );
+      logCardSourceEvent("placeholder_metadata", {
+        clientRunId: String(runId),
+        routeType: "metadata_extract",
+        attemptNumber,
+        name: draftPlace.name,
+        category: draftPlace.category,
+        locality: draftPlace.locality,
+      });
 
       const intelligenceResponse = await fetch(`${API_BASE_URL}/api/intelligence/extract`, {
         method: "POST",
@@ -1263,6 +1284,17 @@ export function AddScreen() {
         },
         runId,
       );
+      logCardSourceEvent("draft_async_immediate", {
+        clientRunId: String(runId),
+        attemptNumber,
+        entityCount: entities.length,
+        entities: entities.map((entity) => ({
+          name: entity.name ?? null,
+          category: entity.category ?? null,
+          locality: entity.locality ?? null,
+        })),
+        draft: intelligence.jobId ? true : false,
+      });
 
       const jobId = intelligence.jobId || null;
       if (!jobId) {
@@ -1272,6 +1304,16 @@ export function AddScreen() {
           pendingJobsRef.current.filter((item) => item.runId !== runId),
           "",
         );
+        logCardSourceEvent("final_sync_result", {
+          clientRunId: String(runId),
+          attemptNumber,
+          entityCount: finalizedPlaces.length,
+          entities: finalizedPlaces.map((place) => ({
+            name: place.name,
+            category: place.category,
+            locality: place.locality,
+          })),
+        });
         releaseAnalysisInFlight(runId);
         setAnalyzingState(false);
         showToast({ message: "Link analyzed", variant: "success" });
@@ -1349,6 +1391,16 @@ export function AddScreen() {
               const replacementPlaces = resolvedPlaces.length
                 ? resolvedPlaces
                 : getPreservedRunPlaces(nextPlaces, pending);
+              logCardSourceEvent("async_intelligence_completed", {
+                clientRunId: String(pending.runId),
+                jobId: pending.jobId,
+                entityCount: entities.length,
+                entities: replacementPlaces.map((place) => ({
+                  name: place.name,
+                  category: place.category,
+                  locality: place.locality,
+                })),
+              });
               nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, replacementPlaces);
               nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
               didChange = true;
@@ -1367,12 +1419,25 @@ export function AddScreen() {
                 createdAtMs: Date.now(),
               });
             } else if (job.status === "failed" || Date.now() - pending.startedAtMs >= ADD_INTELLIGENCE_TIMEOUT_MS) {
+              logCardSourceEvent("async_intelligence_failed_preserve_placeholder", {
+                clientRunId: String(pending.runId),
+                jobId: pending.jobId,
+                status: job.status,
+                timedOut: Date.now() - pending.startedAtMs >= ADD_INTELLIGENCE_TIMEOUT_MS,
+                placeholderName: pending.fallbackPlace.name,
+              });
               nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, getPreservedRunPlaces(nextPlaces, pending));
               nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
               didChange = true;
             }
           } catch {
             if (Date.now() - pending.startedAtMs >= ADD_INTELLIGENCE_TIMEOUT_MS) {
+              logCardSourceEvent("async_intelligence_poll_error_preserve_placeholder", {
+                clientRunId: String(pending.runId),
+                jobId: pending.jobId,
+                timedOut: true,
+                placeholderName: pending.fallbackPlace.name,
+              });
               nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, getPreservedRunPlaces(nextPlaces, pending));
               nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
               didChange = true;

@@ -69,6 +69,72 @@ function inferCategory(text: string): SupportedCategory {
   return "see";
 }
 
+type OcrHeuristicCandidate = {
+  name: string;
+  locality: string | null;
+  category: SupportedCategory;
+  confidence: "high" | "medium" | "low";
+  evidenceText: string;
+};
+
+const OCR_STRONG_PLACE_TERMS = /\b(cafe|cafÃ©|restaurant|bar|bakery|bistro|diner|kitchen|eatery|canteen|food court)\b/i;
+const OCR_WEAK_PLACE_TERMS = /\bcoffee\b/i;
+const OCR_SLOGAN_PATTERNS = /\b(you|me|my|our)\b|by the sea|happy place/i;
+
+function normalizeOcrCandidateName(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+export function inferOcrHeuristicCandidate(source: ExtractionResult): OcrHeuristicCandidate | null {
+  const ocrText = String(source.ocr?.text || "").trim();
+  if (!ocrText) return null;
+  const lines = ocrText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  let bestCandidate: (OcrHeuristicCandidate & { score: number }) | null = null;
+  for (const line of lines) {
+    const hasStrongTerm = OCR_STRONG_PLACE_TERMS.test(line);
+    const hasWeakTerm = OCR_WEAK_PLACE_TERMS.test(line);
+    if (!hasStrongTerm && !hasWeakTerm) continue;
+    const parts = line.split(",").map((item) => item.trim()).filter(Boolean);
+    const namePart = parts[0] || line.trim();
+    const localityPart = parts.length >= 2 ? parts[1] : null;
+    if (!namePart || namePart.length < 3) continue;
+
+    let score = hasStrongTerm ? 6 : 2;
+    if (localityPart) score += 5;
+    if (line.includes(",")) score += 3;
+    if (OCR_SLOGAN_PATTERNS.test(line)) score -= 6;
+    if (namePart.length > 40) score -= 1;
+
+    const candidate = {
+      name: normalizeOcrCandidateName(namePart),
+      locality: localityPart ? normalizeOcrCandidateName(localityPart) : null,
+      category: "eat" as const,
+      confidence: localityPart ? "high" as const : "medium" as const,
+      evidenceText: `OCR candidate: ${line}`,
+      score,
+    };
+    if (!bestCandidate || candidate.score > bestCandidate.score) {
+      bestCandidate = candidate;
+    }
+  }
+
+  if (!bestCandidate || bestCandidate.score <= 0) return null;
+  return {
+    name: bestCandidate.name,
+    locality: bestCandidate.locality,
+    category: bestCandidate.category,
+    confidence: bestCandidate.confidence,
+    evidenceText: bestCandidate.evidenceText,
+  };
+}
+
 function inferName(source: ExtractionResult): string {
   const title = decodeEntities(String(source.metadata?.title || "").trim());
   if (title && title.toLowerCase() !== "untitled" && !titleLooksLikeSocialBoilerplate(title)) return title.slice(0, 80);
@@ -89,7 +155,29 @@ function inferName(source: ExtractionResult): string {
   return "Detected place";
 }
 
+function hasMeaningfulText(input: string | null | undefined, minChars = 12): boolean {
+  return String(input || "").trim().length >= minChars;
+}
+
+function hasNonGenericMetadataCandidate(source: ExtractionResult): boolean {
+  const title = decodeEntities(String(source.metadata?.title || "").trim());
+  if (title && title.toLowerCase() !== "untitled" && !titleLooksLikeSocialBoilerplate(title)) {
+    return true;
+  }
+
+  const description = decodeEntities(String(source.metadata?.description || ""));
+  const firstLine = description.split(/\r?\n/).map((s) => s.trim()).find(Boolean) || "";
+  if (!firstLine) return false;
+  if (firstLine.length < 4) return false;
+  if (titleLooksLikeSocialBoilerplate(firstLine)) return false;
+  return true;
+}
+
 export function buildDraftIntelligenceOutput(source: ExtractionResult): IntelligenceOutput {
+  const ocrCandidate = inferOcrHeuristicCandidate(source);
+  const weakOrEmptyOcrAttempt = Boolean(source.ocr?.attempted) && !hasMeaningfulText(source.ocr?.text);
+  const transcriptHasEntitySignal = hasMeaningfulText(source.transcript?.text);
+  const metadataHasEntitySignal = hasNonGenericMetadataCandidate(source);
   const joinedText = [
     source.metadata?.title || "",
     source.metadata?.description || "",
@@ -97,16 +185,23 @@ export function buildDraftIntelligenceOutput(source: ExtractionResult): Intellig
     source.ocr?.text || "",
   ].join(" ");
 
-  const category = inferCategory(joinedText);
-  const name = inferName(source);
+  const inferredName = inferName(source);
+  const shouldSuppressGenericEntity =
+    !ocrCandidate &&
+    weakOrEmptyOcrAttempt &&
+    !transcriptHasEntitySignal &&
+    !metadataHasEntitySignal;
+
+  const category = ocrCandidate?.category || inferCategory(joinedText);
+  const name = shouldSuppressGenericEntity ? "Detected place" : (ocrCandidate?.name || inferredName);
   const localityCandidate = decodeEntities(String(source.metadata?.description || ""))
     .split(",")
     .map((s) => s.trim())
     .find((s) => /road|city|nagar|karnataka|bihar|india|mangalore|patna/i.test(s)) || null;
-  const locality = localityCandidate && localityCandidate.length <= 60 ? localityCandidate : null;
+  const locality = ocrCandidate?.locality || (localityCandidate && localityCandidate.length <= 60 ? localityCandidate : null);
   const intent =
     category === "eat"
-      ? { l1: "taste" as const, l2: /cafe|café|coffee/i.test(joinedText) ? "Cafe" : "Restaurant", l3: [] }
+      ? { l1: "taste" as const, l2: /cafe|cafÃ©|coffee/i.test(joinedText) ? "Cafe" : "Restaurant", l3: [] }
       : category === "do"
         ? { l1: "activity" as const, l2: "Event", l3: [] }
         : category === "stay"
@@ -143,9 +238,11 @@ export function buildDraftIntelligenceOutput(source: ExtractionResult): Intellig
         state: null,
         country: "India",
         address: null,
-        confidence: "low",
+        confidence: shouldSuppressGenericEntity ? "low" : (ocrCandidate?.confidence || "low"),
         googleMapsQuery: [name, locality].filter(Boolean).join(" ").trim() || name,
-        evidenceText: "Draft heuristic inference from extracted metadata",
+        evidenceText: shouldSuppressGenericEntity
+          ? "OCR text insufficient"
+          : (ocrCandidate?.evidenceText || "Draft heuristic inference from extracted metadata"),
         intent,
       },
     ],
@@ -169,16 +266,22 @@ export function buildDraftIntelligenceOutput(source: ExtractionResult): Intellig
                 ? { category: "stay", stayType: null, useCase: null, amenities: [], locationTags: [], priceTier: null }
                 : { category: "see", placeType: null, experienceTag: null, vibeTags: [], entryFeeSignal: null },
         googleMapsQuery: [name, locality].filter(Boolean).join(" ").trim() || name,
-        sourceEvidence: "Draft heuristic inference from extracted metadata",
-        confidence: "low",
+        sourceEvidence: shouldSuppressGenericEntity
+          ? "OCR text insufficient"
+          : (ocrCandidate?.evidenceText || "Draft heuristic inference from extracted metadata"),
+        confidence: shouldSuppressGenericEntity ? "low" : (ocrCandidate?.confidence || "low"),
         intent,
       },
     ],
     visibility: {
       showIn: [category],
       doNotShowIn: ["eat", "do", "stay", "see"].filter((v) => v !== category),
-      reason: "Draft response generated for fast UX. Async job provides final model output.",
+      reason: shouldSuppressGenericEntity
+        ? "OCR text insufficient"
+        : ocrCandidate
+        ? "Draft response generated from OCR evidence. Async job provides final model output."
+        : "Draft response generated for fast UX. Async job provides final model output.",
     },
-    status: "needs_review",
+    status: ocrCandidate ? "ready" : "needs_review",
   };
 }
