@@ -637,9 +637,11 @@ function applyOcrHeuristicPriority(output: IntelligenceOutput, source: Extractio
 
 export async function runIntelligencePipeline(req: IntelligenceRequest): Promise<IntelligencePipelineResult> {
   const totalStartedAt = Date.now();
-  logIntelligenceDecision("before_final_prompt", {
+  const isProbeRun = Boolean(req.analytics?.probeStage);
+  logIntelligenceDecision(isProbeRun ? "before_probe_prompt" : "before_final_prompt", {
     clientRunId: req.analytics?.clientRunId ?? null,
     attemptNumber: req.analytics?.attemptNumber ?? req.source.attemptInfo?.attemptNumber ?? 1,
+    probeStage: req.analytics?.probeStage ?? null,
     acceptedAfter: (req.source.debug as any)?.orchestration?.acceptedAfter || null,
     ocrChars: String(req.source.ocr?.text || "").trim().length,
     ocrSnippet: String(req.source.ocr?.text || "").trim().slice(0, 160) || null,
@@ -656,9 +658,10 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
       req.source,
     );
     const enrichedOutput = await enrichWithResolvedLocations(augmentedOutput, req.source);
-    logIntelligenceDecision("final_output", {
+    logIntelligenceDecision(isProbeRun ? "probe_output" : "final_output", {
       clientRunId: req.analytics?.clientRunId ?? null,
       entityCount: enrichedOutput.structuredEntities.length,
+      probeStage: req.analytics?.probeStage ?? null,
       acceptedAfter: (req.source.debug as any)?.orchestration?.acceptedAfter || null,
       entities: enrichedOutput.structuredEntities.map((entity) => ({
         name: entity.name,
@@ -699,9 +702,10 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
       req.source,
     );
     const enrichedOutput = await enrichWithResolvedLocations(augmentedOutput, req.source);
-    logIntelligenceDecision("final_output", {
+    logIntelligenceDecision(isProbeRun ? "probe_output" : "final_output", {
       clientRunId: req.analytics?.clientRunId ?? null,
       entityCount: enrichedOutput.structuredEntities.length,
+      probeStage: req.analytics?.probeStage ?? null,
       acceptedAfter: (req.source.debug as any)?.orchestration?.acceptedAfter || null,
       entities: enrichedOutput.structuredEntities.map((entity) => ({
         name: entity.name,

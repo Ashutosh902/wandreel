@@ -117,9 +117,13 @@ def compute_resized_dimensions(width: int | None, height: int | None, max_width:
 def build_ydl_download_profile(selection_mode: str) -> tuple[str, dict]:
     if selection_mode == "anchors":
         return (
-            "bestvideo[height<=360][ext=mp4]/best[height<=360][ext=mp4]/"
-            "bestvideo[height<=480][ext=mp4]/best[height<=480][ext=mp4]/"
-            "bestvideo[height<=360]/best[height<=360]/worst",
+            "bestvideo[height<=240][acodec=none][vcodec!=none][ext=mp4]/"
+            "bestvideo[height<=360][acodec=none][vcodec!=none][ext=mp4]/"
+            "bestvideo[height<=480][acodec=none][vcodec!=none][ext=mp4]/"
+            "bestvideo[height<=240][acodec=none][vcodec!=none]/"
+            "bestvideo[height<=360][acodec=none][vcodec!=none]/"
+            "bestvideo[height<=480][acodec=none][vcodec!=none]/"
+            "worstvideo[acodec=none][vcodec!=none]",
             {
                 "socket_timeout": 15,
                 "retries": 1,
