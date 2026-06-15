@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { createHash } from "node:crypto";
 import express from "express";
 import { extractionJobStore, runExtractionPipeline, type ExtractionMode } from "./extraction";
 import { intelligenceJobStore, runIntelligencePipeline, type IntelligenceMode } from "./intelligence";
@@ -35,6 +36,7 @@ import { featureFlags } from "./featureFlags";
 import { saveAttemptHypothesisSummary } from "./attemptHypothesisStore";
 import { buildAttemptHypothesisSummary } from "./intelligence/hypothesisSummary";
 import type { IntelligencePipelineResult } from "./intelligence/types";
+import { canonicalizeUrl } from "./extraction/url";
 
 const app = express();
 const clientOrigin = process.env.CLIENT_ORIGIN || "http://localhost:5173";
@@ -49,6 +51,27 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: "1mb" }));
+
+type MetadataExtractionRouteName = "stream" | "non_stream" | "stream_test";
+
+type MetadataExtractionRequestContext = {
+  key: string;
+  requestId: string;
+  clientRunId: string | null;
+  urlHash: string;
+  attemptNumber: number;
+  triggerType: "initial" | "retry";
+  routeName: MetadataExtractionRouteName;
+  mode: ExtractionMode;
+};
+
+type MetadataExtractionInFlightEntry = {
+  context: MetadataExtractionRequestContext;
+  startedAt: number;
+  promise: Promise<Awaited<ReturnType<typeof runExtractionPipeline>>>;
+};
+
+const metadataExtractionInFlight = new Map<string, MetadataExtractionInFlightEntry>();
 
 function parseExtractionRequest(req: express.Request) {
   const url = String(req.body?.url || "").trim();
@@ -74,6 +97,95 @@ function parseExtractionRequest(req: express.Request) {
     debug,
     attemptNumber,
     triggerType: triggerType as "initial" | "retry",
+  };
+}
+
+function buildMetadataUrlHash(url: string): string {
+  const canonicalUrl = canonicalizeUrl(url);
+  return createHash("sha1").update(canonicalUrl).digest("hex").slice(0, 12);
+}
+
+function buildMetadataExtractionContext(input: {
+  url: string;
+  clientRunId?: string | null;
+  attemptNumber: number;
+  triggerType: "initial" | "retry";
+  routeName: MetadataExtractionRouteName;
+  mode: ExtractionMode;
+}): MetadataExtractionRequestContext {
+  const clientRunId = input.clientRunId ? String(input.clientRunId) : null;
+  const urlHash = buildMetadataUrlHash(input.url);
+  return {
+    key: `${clientRunId || "anon"}:${urlHash}:${input.attemptNumber}:${input.triggerType}`,
+    requestId: clientRunId || `${input.routeName}:${urlHash}:${input.attemptNumber}:${input.triggerType}`,
+    clientRunId,
+    urlHash,
+    attemptNumber: input.attemptNumber,
+    triggerType: input.triggerType,
+    routeName: input.routeName,
+    mode: input.mode,
+  };
+}
+
+function getOrStartMetadataExtraction(
+  context: MetadataExtractionRequestContext,
+  work: () => Promise<Awaited<ReturnType<typeof runExtractionPipeline>>>,
+) {
+  const existing = metadataExtractionInFlight.get(context.key);
+  if (existing) {
+    console.warn("[metadata-extraction]", {
+      event: "join_inflight",
+      routeName: context.routeName,
+      existingRouteName: existing.context.routeName,
+      requestId: context.requestId,
+      clientRunId: context.clientRunId,
+      urlHash: context.urlHash,
+      attemptNumber: context.attemptNumber,
+      triggerType: context.triggerType,
+      mode: context.mode,
+    });
+    return {
+      promise: existing.promise,
+      isPrimary: false,
+      existingRouteName: existing.context.routeName,
+    };
+  }
+
+  const startedAt = Date.now();
+  console.info("[metadata-extraction]", {
+    event: "start",
+    routeName: context.routeName,
+    requestId: context.requestId,
+    clientRunId: context.clientRunId,
+    urlHash: context.urlHash,
+    attemptNumber: context.attemptNumber,
+    triggerType: context.triggerType,
+    mode: context.mode,
+  });
+
+  const promise = work().finally(() => {
+    metadataExtractionInFlight.delete(context.key);
+    console.info("[metadata-extraction]", {
+      event: "finish",
+      routeName: context.routeName,
+      requestId: context.requestId,
+      clientRunId: context.clientRunId,
+      urlHash: context.urlHash,
+      attemptNumber: context.attemptNumber,
+      triggerType: context.triggerType,
+      mode: context.mode,
+      elapsedMs: getElapsedMs(startedAt),
+    });
+  });
+  metadataExtractionInFlight.set(context.key, {
+    context,
+    startedAt,
+    promise,
+  });
+  return {
+    promise,
+    isPrimary: true,
+    existingRouteName: null,
   };
 }
 
@@ -163,7 +275,6 @@ function inferStreamProgressFromResult(result: any) {
 }
 
 async function executeMetadataExtraction(
-  req: express.Request,
   input: {
     url: string;
     mode: ExtractionMode;
@@ -173,7 +284,7 @@ async function executeMetadataExtraction(
     clientRunId?: string | null;
   },
 ) {
-  const result = await runExtractionPipeline({
+  return runExtractionPipeline({
     url: input.url,
     mode: input.mode,
     debug: input.debug,
@@ -181,6 +292,12 @@ async function executeMetadataExtraction(
     triggerType: input.triggerType,
     clientRunId: input.clientRunId ?? null,
   });
+}
+
+async function persistMetadataExtractionArtifacts(
+  req: express.Request,
+  result: Awaited<ReturnType<typeof runExtractionPipeline>>,
+) {
   const attemptRecord = await createAnalyticsAttemptFromRequest(req, result);
   if (attemptRecord?.attemptId) {
     try {
@@ -192,7 +309,6 @@ async function executeMetadataExtraction(
       console.error("persist extraction attempt artifacts failed", artifactError);
     }
   }
-  return result;
 }
 
 function parseCookies(headerValue: string | undefined) {
@@ -429,14 +545,26 @@ app.post("/api/metadata/extract", async (req, res) => {
       return res.status(400).json({ ok: false, error: "url is required" });
     }
 
-    const result = await executeMetadataExtraction(req, {
+    const context = buildMetadataExtractionContext({
+      url,
+      mode,
+      clientRunId,
+      attemptNumber,
+      triggerType,
+      routeName: "non_stream",
+    });
+    const execution = getOrStartMetadataExtraction(context, () => executeMetadataExtraction({
       url,
       mode,
       debug,
       attemptNumber,
       triggerType,
       clientRunId,
-    });
+    }));
+    const result = await execution.promise;
+    if (execution.isPrimary) {
+      await persistMetadataExtractionArtifacts(req, result);
+    }
     if (featureFlags.extractionV2) {
       return res.json({ ok: true, ...result });
     }
@@ -509,14 +637,34 @@ app.post("/api/metadata/extract/stream-test", async (req, res) => {
   });
 
   try {
-    const result = await executeMetadataExtraction(req, {
+    const context = buildMetadataExtractionContext({
+      url,
+      mode,
+      clientRunId,
+      attemptNumber,
+      triggerType,
+      routeName: "stream_test",
+    });
+    const execution = getOrStartMetadataExtraction(context, () => executeMetadataExtraction({
       url,
       mode,
       debug,
       attemptNumber,
       triggerType,
       clientRunId,
-    });
+    }));
+    if (!execution.isPrimary) {
+      sse.writeEvent("joined_inflight", {
+        stage: "joined_inflight",
+        message: `Joined existing ${execution.existingRouteName || "metadata"} extraction.`,
+        elapsedMs: getElapsedMs(startedAt),
+        attemptNumber,
+      });
+    }
+    const result = await execution.promise;
+    if (execution.isPrimary) {
+      await persistMetadataExtractionArtifacts(req, result);
+    }
 
     for (const event of inferStreamProgressFromResult(result)) {
       if (sse.closed) return;
@@ -628,10 +776,26 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
   }, 12000);
 
   try {
+    const context = buildMetadataExtractionContext({
+      url,
+      mode,
+      clientRunId,
+      attemptNumber,
+      triggerType,
+      routeName: "stream",
+    });
+    const execution = getOrStartMetadataExtraction(context, () => executeMetadataExtraction({
+      url,
+      mode,
+      debug,
+      attemptNumber,
+      triggerType,
+      clientRunId,
+    }));
     console.info("[sse] before runExtractionPipeline", { label: "metadata_extract_stream", url, mode, attemptNumber, triggerType });
     writeProgressEvent("started", {
       stage: "started",
-      message: "Extraction started.",
+      message: execution.isPrimary ? "Extraction started." : `Joined existing ${execution.existingRouteName || "metadata"} extraction.`,
       elapsedMs: getElapsedMs(startedAt),
       attemptNumber,
     });
@@ -643,14 +807,15 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
         attemptNumber,
       });
     }
-    const result = await runExtractionPipeline({
-      url,
-      mode,
-      debug,
-      attemptNumber,
-      triggerType,
-      clientRunId,
-    });
+    if (!execution.isPrimary) {
+      writeProgressEvent("joined_inflight", {
+        stage: "joined_inflight",
+        message: `Joined existing ${execution.existingRouteName || "metadata"} extraction.`,
+        elapsedMs: getElapsedMs(startedAt),
+        attemptNumber,
+      });
+    }
+    const result = await execution.promise;
     for (const event of inferStreamProgressFromResult(result)) {
       if (seenStages.has(event.stage)) continue;
       writeProgressEvent(event.stage, {
@@ -671,19 +836,9 @@ app.post("/api/metadata/extract/stream", async (req, res) => {
       result: { ok: true, ...result },
     });
     sse.end();
-    void (async () => {
-      const attemptRecord = await createAnalyticsAttemptFromRequest(req, result);
-      if (attemptRecord?.attemptId) {
-        try {
-          await persistReelAnalyticsAttemptArtifacts({
-            attemptId: attemptRecord.attemptId,
-            extractionResult: result,
-          });
-        } catch (artifactError) {
-          console.error("persist extraction attempt artifacts failed", artifactError);
-        }
-      }
-    })();
+    if (execution.isPrimary) {
+      void persistMetadataExtractionArtifacts(req, result);
+    }
   } catch (error) {
     clearHeartbeat();
     const message = error instanceof Error ? error.message : "extraction failed";
@@ -938,7 +1093,6 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
           attemptId: attemptRecord?.attemptId ?? null,
           runId: attemptRecord?.runId ?? null,
           clientRunId: analyticsPayload?.clientRunId ? String(analyticsPayload.clientRunId) : null,
-          requestId: analyticsPayload?.clientRunId ? `intelligence:${String(analyticsPayload.clientRunId)}:draft_async` : null,
           attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
           triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
           anonymousId: analyticsPayload?.anonymousId ? String(analyticsPayload.anonymousId) : null,
@@ -970,7 +1124,7 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
     }
 
     if (mode === "draft_async") {
-      const fastPathResult = getAttempt1FastPathIntelligenceResult(source);
+        const fastPathResult = getAttempt1FastPathIntelligenceResult(source);
       if (fastPathResult) {
         return res.json({
           ok: true,
@@ -988,6 +1142,7 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
           attemptId: attemptRecord?.attemptId ?? null,
           runId: attemptRecord?.runId ?? null,
           clientRunId: analyticsPayload?.clientRunId ? String(analyticsPayload.clientRunId) : null,
+          requestId: analyticsPayload?.clientRunId ? `intelligence:${String(analyticsPayload.clientRunId)}:draft_async` : null,
           attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
           triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
           anonymousId: analyticsPayload?.anonymousId ? String(analyticsPayload.anonymousId) : null,

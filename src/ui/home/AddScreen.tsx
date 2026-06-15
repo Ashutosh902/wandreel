@@ -151,6 +151,32 @@ function isUsefulStreamStage(stage: string): boolean {
   return !["connected", "started", "metadata_started", "heartbeat"].includes(stage);
 }
 
+function hashUrlForLog(input: string): string {
+  let first = 0x811c9dc5;
+  let second = 0x9e3779b9;
+  for (let index = 0; index < input.length; index += 1) {
+    const code = input.charCodeAt(index);
+    first ^= code;
+    first = Math.imul(first, 0x01000193);
+    second ^= code + index;
+    second = Math.imul(second, 0x85ebca6b);
+  }
+  return `${(first >>> 0).toString(16).padStart(8, "0")}${(second >>> 0).toString(16).padStart(8, "0")}`.slice(0, 12);
+}
+
+function buildClientUrlHash(url: string): string {
+  try {
+    const parsed = new URL(url.trim());
+    parsed.hash = "";
+    if ((parsed.protocol === "https:" && parsed.port === "443") || (parsed.protocol === "http:" && parsed.port === "80")) {
+      parsed.port = "";
+    }
+    return hashUrlForLog(parsed.toString());
+  } catch {
+    return hashUrlForLog(url.trim());
+  }
+}
+
 export function AddScreen() {
   const { isOffline, showToast, searchLocations } = useUx();
   const [linkInput, setLinkInput] = useState("");
@@ -179,6 +205,7 @@ export function AddScreen() {
   const [analysisStageCopy, setAnalysisStageCopy] = useState("Analyzing link...");
   const [analysisElapsedSeconds, setAnalysisElapsedSeconds] = useState(0);
   const analyzeRunRef = useRef(0);
+  const analyzeRunSequenceRef = useRef(0);
   const analysisTimerRef = useRef<number | null>(null);
   const analysisStartedAtRef = useRef<number | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
@@ -188,6 +215,8 @@ export function AddScreen() {
   const editingPlaceIdRef = useRef<string | null>(null);
   const detectedPlacesRef = useRef<DetectedPlace[]>([]);
   const pendingJobsRef = useRef<PendingDetectionJob[]>([]);
+  const isAnalyzingRef = useRef(false);
+  const analysisInFlightRef = useRef<{ key: string; runId: number } | null>(null);
   const getAnalyticsAnonymousId = () => {
     let existing = window.localStorage.getItem(ADD_ANALYTICS_ANONYMOUS_ID_KEY);
     if (existing) return existing;
@@ -239,6 +268,36 @@ export function AddScreen() {
       lastAnalyzedLink: window.localStorage.getItem("lastAnalyzedLink"),
       persistedDraft: window.localStorage.getItem("wr_add_detected_draft_v2"),
     });
+  };
+
+  const logExtractionClientEvent = (event: string, details: Record<string, unknown>) => {
+    console.info("[add-extraction]", {
+      event,
+      source: "AddScreen",
+      ...details,
+    });
+  };
+
+  const setAnalyzingState = (value: boolean) => {
+    isAnalyzingRef.current = value;
+    setIsAnalyzing(value);
+  };
+
+  const buildAnalysisRequestKey = (input: {
+    normalizedSourceUrl: string;
+    attemptNumber: number;
+    triggerType: "initial" | "retry";
+  }) => `${buildClientUrlHash(input.normalizedSourceUrl)}:${input.attemptNumber}:${input.triggerType}`;
+
+  const createAnalysisRunId = () => {
+    analyzeRunSequenceRef.current = (analyzeRunSequenceRef.current + 1) % 1000;
+    return (Date.now() * 1000) + analyzeRunSequenceRef.current;
+  };
+
+  const releaseAnalysisInFlight = (runId: number) => {
+    if (analysisInFlightRef.current?.runId === runId) {
+      analysisInFlightRef.current = null;
+    }
   };
 
   const clearLegacyAddStorage = () => {
@@ -345,6 +404,10 @@ export function AddScreen() {
   useEffect(() => {
     pendingJobsRef.current = pendingJobs;
   }, [pendingJobs]);
+
+  useEffect(() => {
+    isAnalyzingRef.current = isAnalyzing;
+  }, [isAnalyzing]);
 
   useEffect(() => {
     editingPlaceIdRef.current = editingPlaceId;
@@ -846,6 +909,9 @@ export function AddScreen() {
     retryCount: number;
     isRetry: boolean;
   }): Promise<ExtractionApiResponse> => {
+    const attemptNumber = input.retryCount + 1;
+    const triggerType = input.isRetry ? "retry" : "initial";
+    const urlHash = buildClientUrlHash(input.normalizedSourceUrl);
     const controller = new AbortController();
     streamAbortRef.current = controller;
     let usefulEventReceived = false;
@@ -862,6 +928,13 @@ export function AddScreen() {
       }
     };
 
+    logExtractionClientEvent("request_start", {
+      routeType: "stream",
+      clientRunId: String(input.runId),
+      urlHash,
+      attemptNumber,
+      triggerType,
+    });
     const response = await fetch(`${API_BASE_URL}/api/metadata/extract/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -871,8 +944,8 @@ export function AddScreen() {
         analytics: {
           clientRunId: String(input.runId),
           anonymousId: getAnalyticsAnonymousId(),
-          attemptNumber: input.retryCount + 1,
-          triggerType: input.isRetry ? "retry" : "initial",
+          attemptNumber,
+          triggerType,
         },
       }),
       signal: controller.signal,
@@ -960,7 +1033,13 @@ export function AddScreen() {
   };
 
   const runAnalysis = async (sourceUrl: string, options?: { runId?: number; isRetry?: boolean }) => {
-    if (isAnalyzing) return;
+    if (isAnalyzingRef.current) {
+      logExtractionClientEvent("blocked_busy", {
+        routeType: "client_guard",
+        urlHash: buildClientUrlHash(sourceUrl.trim()),
+      });
+      return;
+    }
     if (isOffline) {
       showToast({ message: "This link could not be analyzed.", variant: "error" });
       return;
@@ -989,7 +1068,7 @@ export function AddScreen() {
       return;
     }
 
-    const runId = options?.runId ?? Date.now();
+    const runId = options?.runId ?? createAnalysisRunId();
     const existingPlacesForRun = detectedPlacesRef.current.filter((item) => item.runId === runId);
     const existingPlace = existingPlacesForRun[0] ?? null;
     const existingPendingForRun = pendingJobsRef.current.find((item) => item.runId === runId) ?? null;
@@ -1003,6 +1082,30 @@ export function AddScreen() {
       showToast({ message: "Please edit the details manually from here.", variant: "info" });
       return;
     }
+    const attemptNumber = retryCount + 1;
+    const triggerType = options?.isRetry ? "retry" : "initial";
+    const requestKey = buildAnalysisRequestKey({
+      normalizedSourceUrl,
+      attemptNumber,
+      triggerType,
+    });
+    const existingInFlight = analysisInFlightRef.current;
+    if (existingInFlight?.key === requestKey) {
+      logExtractionClientEvent("duplicate_blocked", {
+        routeType: "client_guard",
+        clientRunId: String(existingInFlight.runId),
+        urlHash: buildClientUrlHash(normalizedSourceUrl),
+        attemptNumber,
+        triggerType,
+      });
+      setActivePreviewKey(`pending-${existingInFlight.runId}`);
+      showToast({ message: "This link is already being analyzed.", variant: "info" });
+      return;
+    }
+    analysisInFlightRef.current = {
+      key: requestKey,
+      runId,
+    };
     const fallbackPlace: DetectedPlace =
       existingPlace ?? {
         id: `fallback-${runId}`,
@@ -1035,12 +1138,20 @@ export function AddScreen() {
 
     analyzeRunRef.current = runId;
     window.dispatchEvent(new CustomEvent(ADD_PROCESSING_STARTED_EVENT));
-    setIsAnalyzing(true);
+    setAnalyzingState(true);
     startAnalysisProgress("Reading the link...");
     setSaveMessage("");
     setSelectedDetectedCategory("Auto-detect");
     setActivePreviewKey(`pending-${runId}`);
     setLinkInput(normalizedSourceUrl);
+
+    logExtractionClientEvent("analysis_start", {
+      routeType: "stream",
+      clientRunId: String(runId),
+      urlHash: buildClientUrlHash(normalizedSourceUrl),
+      attemptNumber,
+      triggerType,
+    });
 
     const startedAt = Date.now();
     const pendingDraft: PendingDetectionJob = {
@@ -1078,6 +1189,14 @@ export function AddScreen() {
           reason === "stream_incomplete_no_useful_event";
         if (!shouldFallbackToNonStream) throw error;
         setAnalysisStageCopy("Almost there...");
+        logExtractionClientEvent("request_start", {
+          routeType: "non_stream",
+          clientRunId: String(runId),
+          urlHash: buildClientUrlHash(normalizedSourceUrl),
+          attemptNumber,
+          triggerType,
+          fallbackReason: reason,
+        });
         const extractionResponse = await fetch(`${API_BASE_URL}/api/metadata/extract`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1087,8 +1206,8 @@ export function AddScreen() {
             analytics: {
               clientRunId: String(runId),
               anonymousId: getAnalyticsAnonymousId(),
-              attemptNumber: retryCount + 1,
-              triggerType: options?.isRetry ? "retry" : "initial",
+              attemptNumber,
+              triggerType,
             },
           }),
         });
@@ -1123,8 +1242,8 @@ export function AddScreen() {
           analytics: {
             clientRunId: String(runId),
             anonymousId: getAnalyticsAnonymousId(),
-            attemptNumber: retryCount + 1,
-            triggerType: options?.isRetry ? "retry" : "initial",
+            attemptNumber,
+            triggerType,
           },
         }),
       });
@@ -1153,7 +1272,8 @@ export function AddScreen() {
           pendingJobsRef.current.filter((item) => item.runId !== runId),
           "",
         );
-        setIsAnalyzing(false);
+        releaseAnalysisInFlight(runId);
+        setAnalyzingState(false);
         showToast({ message: "Link analyzed", variant: "success" });
         return;
       }
@@ -1169,7 +1289,8 @@ export function AddScreen() {
         upsertPendingJob(pendingJobsRef.current, queuedPendingJob),
         normalizedSourceUrl,
       );
-      setIsAnalyzing(false);
+      releaseAnalysisInFlight(runId);
+      setAnalyzingState(false);
     } catch {
       if (analyzeRunRef.current !== runId) return;
       stopAnalysisProgress();
@@ -1184,7 +1305,8 @@ export function AddScreen() {
         pendingJobsRef.current.filter((item) => item.runId !== runId),
         "",
       );
-      setIsAnalyzing(false);
+      releaseAnalysisInFlight(runId);
+      setAnalyzingState(false);
       showToast({ message: "This link could not be analyzed.", variant: "error" });
     }
   };
@@ -1308,7 +1430,7 @@ export function AddScreen() {
         return;
       }
 
-      if (isAnalyzing) {
+      if (isAnalyzingRef.current) {
         setQueuedSharedLink(sharedIntent.extractedUrl);
         return;
       }
