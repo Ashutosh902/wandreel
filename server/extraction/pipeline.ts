@@ -10,7 +10,7 @@ import { runVisualFallback } from "./visualFallback";
 import { buildCombinedText } from "./combinedText";
 import { runIntelligencePipeline, runTinyCaptionIntelligence } from "../intelligence";
 import { extractVisionOcrFromScreenshots } from "./visionOcr";
-import { extractLocalOcrFromImagePath } from "./ocr";
+import { extractImagePathOcr } from "./ocr";
 import type {
   ExtractionMode,
   ExtractionResult,
@@ -968,7 +968,7 @@ async function processRetryFramesSequentially(input: {
       });
       const ocrResult = input.includeVisual
         ? await extractVisionOcrFromScreenshots(screenshot ? [screenshot] : [])
-        : await extractLocalOcrFromImagePath(frame.sourcePath || "");
+        : await extractImagePathOcr(frame.sourcePath || "");
       const ocrDurationMs = nowMs() - ocrStartedAt;
       logFrameExtractionEvent("after_ocr_call", {
         frameLabel: frame.label,
@@ -976,6 +976,7 @@ async function processRetryFramesSequentially(input: {
         ocrDurationMs,
         ocrTextChars: ocrResult.text.trim().length,
         ocrReason: ocrResult.reason ?? null,
+        ocrProvider: input.includeVisual ? "openai_vision" : ocrResult.provider,
         includeVisual: input.includeVisual,
       });
       ocrOnlyMs += ocrDurationMs;
@@ -996,6 +997,7 @@ async function processRetryFramesSequentially(input: {
         ocrTextChars: ocrResult.text.trim().length,
         ocrUsed: Boolean(ocrResult.text.trim()),
         ocrReason: ocrResult.reason ?? null,
+        ocrProvider: input.includeVisual ? "openai_vision" : ocrResult.provider,
       });
       input.memoryTracker?.checkpoint("after_ocr_per_frame", {
         frames: [frame],
@@ -1005,6 +1007,7 @@ async function processRetryFramesSequentially(input: {
           ocrDurationMs,
           ocrTextChars: ocrResult.text.trim().length,
           ocrReason: ocrResult.reason ?? null,
+          ocrProvider: input.includeVisual ? "openai_vision" : ocrResult.provider,
         },
       });
 
