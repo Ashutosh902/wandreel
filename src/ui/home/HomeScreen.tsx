@@ -14,6 +14,7 @@ import { runHomeDataChecks } from "./home.data";
 import { LoginProfileScreen } from "../profile/LoginProfileScreen";
 import { MapScreen } from "../map/MapScreen";
 import { useUx } from "../layout/UxProvider";
+import { useAuth } from "../auth/AuthProvider";
 import {
   SHARED_INTENT_ADD_TAB_VALUE,
   SHARED_INTENT_QUERY_KEY,
@@ -34,7 +35,6 @@ import {
   type IntelligenceEntity,
 } from "./addFlowState";
 import {
-  clearSavedPlacesByCategory,
   createEmptySavedPlacesByCategory,
   flattenSavedPlaces,
   getSavedPlaceCounts,
@@ -50,7 +50,6 @@ import "./home.css";
 runHomeDataChecks();
 const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Login"];
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
-const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
 const ADD_INTELLIGENCE_TIMEOUT_MS = 120000;
 const DISMISSED_READY_NOTIFICATION_IDS_KEY = "wr_dismissed_ready_notification_ids_v1";
 
@@ -192,6 +191,7 @@ function ReadyNotificationsSheet({
 export function HomeScreen() {
   const prefersReducedMotion = useReducedMotion();
   const { showToast } = useUx();
+  const { isAuthenticated } = useAuth();
   const [activeTab, setActiveTab] = useState<NavLabel>("Discover");
   const [activeCategory, setActiveCategory] = useState<CategoryLabel | null>(null);
   const [mapEntryMode, setMapEntryMode] = useState<"global" | "category">("global");
@@ -203,7 +203,6 @@ export function HomeScreen() {
     "Explore",
   ]);
   const [savedPlacesByCategory, setSavedPlacesByCategory] = useState(createEmptySavedPlacesByCategory);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [readyNotifications, setReadyNotifications] = useState<AddReadyNotification[]>(() => readReadyNotifications());
   const [dismissedNotificationIds, setDismissedNotificationIds] = useState<string[]>(() => {
     try {
@@ -294,43 +293,6 @@ export function HomeScreen() {
     window.addEventListener(SHARED_INTENT_RECEIVED_EVENT, handleSharedIntent);
     return () => window.removeEventListener(SHARED_INTENT_RECEIVED_EVENT, handleSharedIntent);
   }, [activeTab]);
-
-  useEffect(() => {
-    const syncAuthState = () => {
-      void (async () => {
-        try {
-          const sessionResponse = await fetch(`${API_BASE_URL}/api/auth/session/me`, { credentials: "include" });
-          if (!sessionResponse.ok) {
-            setIsAuthenticated(false);
-            clearSavedPlacesByCategory();
-            setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
-            return;
-          }
-          const sessionPayload = (await sessionResponse.json()) as { ok?: boolean; user?: unknown };
-          if (!sessionPayload?.ok || !sessionPayload.user) {
-            setIsAuthenticated(false);
-            clearSavedPlacesByCategory();
-            setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
-            return;
-          }
-          setIsAuthenticated(true);
-          setSavedPlacesByCategory(readSavedPlacesByCategory());
-          const savedResponse = await fetch(`${API_BASE_URL}/api/saved-places`, { credentials: "include" });
-          if (!savedResponse.ok) return;
-          const savedPayload = (await savedResponse.json()) as { ok?: boolean; items?: SavedPlaceApiItem[] };
-          if (!savedPayload?.ok || !Array.isArray(savedPayload.items)) return;
-          mergeSavedPlacesFromApi(savedPayload.items);
-        } catch {
-          setIsAuthenticated(false);
-          clearSavedPlacesByCategory();
-          setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
-        }
-      })();
-    };
-
-    window.addEventListener(AUTH_SESSION_UPDATED_EVENT, syncAuthState);
-    return () => window.removeEventListener(AUTH_SESSION_UPDATED_EVENT, syncAuthState);
-  }, []);
 
   const openAddForReview = useCallback((runId: number) => {
     setReviewRunId(runId);
@@ -477,26 +439,16 @@ export function HomeScreen() {
   }, [refreshSavedPlaces]);
 
   useEffect(() => {
+    if (!isAuthenticated) {
+      setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
+      return;
+    }
+
     let cancelled = false;
-    const syncAuthAndSavedPlaces = async () => {
+    setSavedPlacesByCategory(readSavedPlacesByCategory());
+
+    const syncSavedPlaces = async () => {
       try {
-        const sessionResponse = await fetch(`${API_BASE_URL}/api/auth/session/me`, { credentials: "include" });
-        if (!sessionResponse.ok || cancelled) {
-          setIsAuthenticated(false);
-          clearSavedPlacesByCategory();
-          setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
-          return;
-        }
-        const sessionPayload = (await sessionResponse.json()) as { ok?: boolean; user?: unknown };
-        if (!sessionPayload?.ok || !sessionPayload.user || cancelled) {
-          setIsAuthenticated(false);
-          clearSavedPlacesByCategory();
-          setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
-          return;
-        }
-
-        setIsAuthenticated(true);
-
         const response = await fetch(`${API_BASE_URL}/api/saved-places`, { credentials: "include" });
         if (!response.ok || cancelled) return;
         const payload = (await response.json()) as { ok?: boolean; items?: SavedPlaceApiItem[] };
@@ -504,16 +456,14 @@ export function HomeScreen() {
         mergeSavedPlacesFromApi(payload.items);
       } catch {
         if (cancelled) return;
-        setIsAuthenticated(false);
-        clearSavedPlacesByCategory();
-        setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
       }
     };
-    void syncAuthAndSavedPlaces();
+
+    void syncSavedPlaces();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [isAuthenticated]);
 
   useEffect(() => {
     refreshReadyNotifications();

@@ -61,6 +61,47 @@ export type SavedPlaceApiItem = {
 
 export const SAVED_PLACES_UPDATED_EVENT = "wr:category-saved-updated";
 const categoryOrder: CategoryLabel[] = ["Taste", "Activity", "Stay", "Explore"];
+const SAVED_PLACES_ACTIVE_USER_KEY = "wr_saved_places_active_user_v1";
+
+function buildSavedPlacesStorageKey(userId: string | null) {
+  return userId ? `${CATEGORY_FEED_CACHE_KEY}:${userId}` : CATEGORY_FEED_CACHE_KEY;
+}
+
+function getActiveSavedPlacesUserId(): string | null {
+  try {
+    const raw = window.localStorage.getItem(SAVED_PLACES_ACTIVE_USER_KEY);
+    const trimmed = String(raw || "").trim();
+    return trimmed || null;
+  } catch {
+    return null;
+  }
+}
+
+function getSavedPlacesStorageKey() {
+  return buildSavedPlacesStorageKey(getActiveSavedPlacesUserId());
+}
+
+export function setSavedPlacesCacheUser(userId: string | null) {
+  try {
+    const normalizedUserId = String(userId || "").trim();
+    const legacyKey = buildSavedPlacesStorageKey(null);
+    if (!normalizedUserId) {
+      window.localStorage.removeItem(SAVED_PLACES_ACTIVE_USER_KEY);
+      return;
+    }
+
+    const nextKey = buildSavedPlacesStorageKey(normalizedUserId);
+    const hasNextKey = window.localStorage.getItem(nextKey);
+    const legacyValue = window.localStorage.getItem(legacyKey);
+    if (!hasNextKey && legacyValue) {
+      window.localStorage.setItem(nextKey, legacyValue);
+      window.localStorage.removeItem(legacyKey);
+    }
+    window.localStorage.setItem(SAVED_PLACES_ACTIVE_USER_KEY, normalizedUserId);
+  } catch {
+    // Ignore cache migration failures.
+  }
+}
 
 export function createEmptySavedPlacesByCategory(): Record<CategoryLabel, SavedPlaceRecord[]> {
   return {
@@ -73,7 +114,7 @@ export function createEmptySavedPlacesByCategory(): Record<CategoryLabel, SavedP
 
 export function readSavedPlacesByCategory(): Record<CategoryLabel, SavedPlaceRecord[]> {
   try {
-    const raw = window.localStorage.getItem(CATEGORY_FEED_CACHE_KEY);
+    const raw = window.localStorage.getItem(getSavedPlacesStorageKey());
     const parsed = raw ? JSON.parse(raw) : {};
     const next = createEmptySavedPlacesByCategory();
     for (const category of categoryOrder) {
@@ -89,7 +130,7 @@ export function readSavedPlacesByCategory(): Record<CategoryLabel, SavedPlaceRec
 }
 
 export function writeSavedPlacesByCategory(value: Record<CategoryLabel, SavedPlaceRecord[]>) {
-  window.localStorage.setItem(CATEGORY_FEED_CACHE_KEY, JSON.stringify(value));
+  window.localStorage.setItem(getSavedPlacesStorageKey(), JSON.stringify(value));
   window.dispatchEvent(new CustomEvent(SAVED_PLACES_UPDATED_EVENT));
 }
 

@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, ChevronRight, LogIn, Mail, ShieldCheck, UserRound, X } from "lucide-react";
 import { useUx } from "../layout/UxProvider";
-import { clearSavedPlacesByCategory } from "../home/savedPlaces";
+import { useAuth } from "../auth/AuthProvider";
 import {
   feedbackRows,
   legalRows,
@@ -22,22 +22,25 @@ type LoginProfileScreenProps = {
 type SheetMode = "join" | "phone" | "collectName";
 type Provider = "PHONE" | "EMAIL" | "GOOGLE" | "FACEBOOK" | "APPLE";
 type LegalDocKey = "terms" | "privacy" | "oss";
-type SessionUser = {
-  userId: string;
-  customerId: string;
-  email: string | null;
-  emailVerified: boolean;
-  phoneNumber: string | null;
-  phoneVerified: boolean;
-  displayName: string | null;
-  avatarUrl: string | null;
-  authProvider: string | null;
+type GoogleTokenClient = {
+  requestAccessToken: () => void;
+};
+type GoogleOauthClient = {
+  accounts?: {
+    oauth2?: {
+      initTokenClient?: (config: {
+        client_id: string;
+        scope: string;
+        prompt: string;
+        callback: (response: { access_token?: string; error?: string }) => void;
+      }) => GoogleTokenClient;
+    };
+  };
 };
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const GOOGLE_OAUTH_SCOPE = "openid email profile";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
-const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
 
 function GoogleBrandIcon() {
   return (
@@ -119,11 +122,10 @@ async function apiFetch(path: string, init?: RequestInit) {
 
 export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScreenProps) {
   const { isOffline, showToast } = useUx();
+  const { authStatus, sessionUser, isAuthenticated, hasSessionHint, refreshSession, setAuthenticatedUser, logout: logoutSession } = useAuth();
   const screenRef = useRef<HTMLElement | null>(null);
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean | null>(null);
-  const [sessionUser, setSessionUser] = useState<SessionUser | null>(null);
   const [showBottomSheet, setShowBottomSheet] = useState(false);
-  const [isSessionResolved, setIsSessionResolved] = useState(false);
+  const [hasDismissedAutoOpen, setHasDismissedAutoOpen] = useState(false);
   const [sheetMode, setSheetMode] = useState<SheetMode>("join");
 
   const [phoneAuthMessage, setPhoneAuthMessage] = useState("");
@@ -143,8 +145,11 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [activeLegalDoc, setActiveLegalDoc] = useState<LegalDocKey | null>(null);
   const sheetTouchStartYRef = useRef<number | null>(null);
-  const isAuthHydrating = !isSessionResolved;
-  const logLoginScreenState = (label: string) => {
+  const isLoggedIn = isAuthenticated;
+  const isSessionResolved = authStatus !== "initializing";
+  const isAuthHydrating = authStatus === "initializing" && !hasSessionHint;
+  const isBottomSheetVisible = showBottomSheet || (isSessionResolved && !isLoggedIn && openSheetOnMount && !hasDismissedAutoOpen);
+  const logLoginScreenState = useCallback((label: string) => {
     const overlayHost =
       typeof document !== "undefined" ? document.querySelector(".wr-phone-shell") ?? document.body : null;
     const serviceWorkerController =
@@ -170,7 +175,7 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
           ? window.matchMedia("(display-mode: standalone)").matches
           : null,
     });
-  };
+  }, [isLoggedIn, isSessionResolved, openSheetOnMount, sheetMode, showBottomSheet]);
 
   const greetingName = isLoggedIn ? sessionUser?.displayName || "Stroller" : "Stroller";
 
@@ -290,50 +295,27 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
 
   const closeSheet = () => {
     setShowBottomSheet(false);
+    setHasDismissedAutoOpen(true);
     resetToJoinStep();
     logLoginScreenState("LoginProfileScreen close sheet");
   };
 
   const openSheet = () => {
-    if (isLoggedIn !== false) return;
+    if (isLoggedIn) return;
+    setHasDismissedAutoOpen(false);
     setShowBottomSheet(true);
     resetToJoinStep();
     logLoginScreenState("LoginProfileScreen open sheet");
   };
 
-  const syncSession = async ({ applyLoggedOutDefault = false }: { applyLoggedOutDefault?: boolean } = {}) => {
-    try {
-      const payload = await apiFetch("/api/auth/session/me");
-      setSessionUser(payload.user as SessionUser);
-      setIsLoggedIn(true);
-      setDraftName(String(payload?.user?.displayName || "Stroller"));
-      setShowBottomSheet(false);
-      window.dispatchEvent(new CustomEvent(AUTH_SESSION_UPDATED_EVENT));
-    } catch {
-      setSessionUser(null);
-      setIsLoggedIn(false);
-      setDraftName("Stroller");
-      window.dispatchEvent(new CustomEvent(AUTH_SESSION_UPDATED_EVENT));
-      if (applyLoggedOutDefault) {
-        setShowBottomSheet(openSheetOnMount);
-      }
-    } finally {
-      setIsSessionResolved(true);
-    }
-  };
-
-  useEffect(() => {
-    void syncSession({ applyLoggedOutDefault: true });
-  }, []);
-
   useEffect(() => {
     logLoginScreenState("LoginProfileScreen mounted");
-  }, []);
+  }, [logLoginScreenState]);
 
   useEffect(() => {
     if (!isSessionResolved) return;
     logLoginScreenState("LoginProfileScreen state changed");
-  }, [isLoggedIn, isSessionResolved, showBottomSheet, sheetMode]);
+  }, [isSessionResolved, logLoginScreenState]);
 
   useEffect(() => {
     if (!activeLegalDoc) return;
@@ -383,13 +365,14 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
         });
       }
 
-      const google = (window as Window & { google?: any }).google;
-      if (!google?.accounts?.oauth2?.initTokenClient) {
+      const google = (window as Window & { google?: GoogleOauthClient }).google;
+      const initTokenClient = google?.accounts?.oauth2?.initTokenClient;
+      if (!initTokenClient) {
         throw new Error("Google login is not configured yet.");
       }
 
       const accessToken = await new Promise<string>((resolve, reject) => {
-        const tokenClient = google.accounts.oauth2.initTokenClient({
+        const tokenClient = initTokenClient({
           client_id: googleClientId,
           scope: GOOGLE_OAUTH_SCOPE,
           prompt: "select_account",
@@ -414,14 +397,15 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
         body: JSON.stringify({ accessToken }),
       });
 
-      const user = payload.user as SessionUser;
+      const user = payload.user;
+      setAuthenticatedUser(user, { reason: "google_verify" });
       if (!user.displayName) {
         setPendingProvider("GOOGLE");
         setSheetMode("collectName");
         return;
       }
 
-      await syncSession();
+      void refreshSession({ reason: "google_verify_refresh", force: true });
       closeSheet();
     } catch (error) {
       const message = toFriendlyGoogleError(error);
@@ -496,13 +480,14 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: email.trim(), otp: emailOtp.trim() }),
       });
+      setAuthenticatedUser(payload.user, { reason: "email_verify" });
       if (payload?.requiresDisplayName) {
         setPendingProvider("EMAIL");
         setDisplayNameInput("");
         setSheetMode("collectName");
         return;
       }
-      await syncSession();
+      void refreshSession({ reason: "email_verify_refresh", force: true });
       closeSheet();
     } catch (error) {
       const message = toFriendlyAuthError(error, "Invalid or expired code.");
@@ -520,12 +505,12 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
       return;
     }
     try {
-      await apiFetch("/api/auth/profile/display-name", {
+      const payload = await apiFetch("/api/auth/profile/display-name", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ displayName: name }),
       });
-      await syncSession();
+      setAuthenticatedUser(payload.user, { reason: "display_name_submit" });
       closeSheet();
     } catch (error) {
       setEmailAuthMessage(toFriendlyAuthError(error, "Could not complete profile"));
@@ -534,18 +519,18 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
 
   const saveInlineDisplayName = async () => {
     const name = draftName.trim();
-    if (!name || isLoggedIn !== true) {
+    if (!name || !isLoggedIn) {
       setIsEditingName(false);
       return;
     }
     setIsSavingName(true);
     try {
-      await apiFetch("/api/auth/profile/display-name", {
+      const payload = await apiFetch("/api/auth/profile/display-name", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ displayName: name }),
       });
-      await syncSession();
+      setAuthenticatedUser(payload.user, { reason: "display_name_inline" });
       setIsEditingName(false);
     } finally {
       setIsSavingName(false);
@@ -554,22 +539,19 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
 
   const logout = async () => {
     try {
-      await apiFetch("/api/auth/logout", { method: "POST" });
+      await logoutSession();
     } finally {
-      clearSavedPlacesByCategory();
-      window.dispatchEvent(new CustomEvent(AUTH_SESSION_UPDATED_EVENT));
-      setSessionUser(null);
-      setIsLoggedIn(false);
       setDraftName("Stroller");
       setIsEditingName(false);
       setIsSavingName(false);
-      setShowBottomSheet(openSheetOnMount);
+      setShowBottomSheet(false);
+      setHasDismissedAutoOpen(false);
       resetToJoinStep();
     }
   };
 
   useEffect(() => {
-    if (!showBottomSheet || isLoggedIn !== false) return;
+    if (!isBottomSheetVisible || isLoggedIn !== false) return;
     const previousBodyOverflow = document.body.style.overflow;
     const previousHtmlOverflow = document.documentElement.style.overflow;
     const surface = document.querySelector(".wr-home-surface") as HTMLDivElement | null;
@@ -595,9 +577,9 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
         surface.style.overscrollBehavior = previousSurfaceOverscroll || "";
       }
     };
-  }, [isLoggedIn, showBottomSheet]);
+  }, [isBottomSheetVisible, isLoggedIn]);
 
-  const loginSheetOverlay = isSessionResolved && isLoggedIn === false && showBottomSheet ? (
+  const loginSheetOverlay = isSessionResolved && isLoggedIn === false && isBottomSheetVisible ? (
     <>
       <button type="button" className="wr-login-sheet-backdrop" aria-label="Close login sheet backdrop" onClick={closeSheet} />
       <div className="wr-login-sheet-layer" role="presentation">
@@ -806,7 +788,7 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
             )}
             <p>Turn Reels, Shorts, TikToks and videos into your personal bucketlist.</p>
 
-            {isLoggedIn === false && !showBottomSheet ? (
+            {isLoggedIn === false && !isBottomSheetVisible ? (
               <button type="button" className="wr-profile-login-signup" onClick={openSheet}>
                 <LogIn size={15} />
                 Log in or sign up
@@ -814,7 +796,14 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
             ) : null}
 
             {isLoggedIn === true && !isEditingName ? (
-              <button type="button" className="wr-profile-edit-name-btn" onClick={() => setIsEditingName(true)}>
+              <button
+                type="button"
+                className="wr-profile-edit-name-btn"
+                onClick={() => {
+                  setDraftName(String(sessionUser?.displayName || "Stroller"));
+                  setIsEditingName(true);
+                }}
+              >
                 Edit name
               </button>
             ) : null}
