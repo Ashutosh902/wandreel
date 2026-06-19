@@ -22,9 +22,13 @@ import { buildIntentSubtitle, resolveEntityIntent } from "./intent";
 import { upsertSavedPlace } from "./savedPlaces";
 import {
   SHARED_INTENT_RECEIVED_EVENT,
+  clearPendingSharedIntent,
   consumePendingSharedIntent,
   getSharedIntentPrefill,
+  readPendingSharedIntent,
 } from "../../pwa/shareTarget";
+import { useAuth } from "../auth/AuthProvider";
+import { getSharedIntentPlan, shouldResetAddFlowForAuthStatus } from "./sharedIntentState";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
@@ -178,6 +182,7 @@ function buildClientUrlHash(url: string): string {
 }
 
 export function AddScreen() {
+  const { isAuthenticated } = useAuth();
   const { isOffline, showToast, searchLocations } = useUx();
   const [linkInput, setLinkInput] = useState("");
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -217,6 +222,8 @@ export function AddScreen() {
   const pendingJobsRef = useRef<PendingDetectionJob[]>([]);
   const isAnalyzingRef = useRef(false);
   const analysisInFlightRef = useRef<{ key: string; runId: number } | null>(null);
+  const prefilledSharedIntentIdRef = useRef<string | null>(null);
+  const processedSharedIntentIdRef = useRef<string | null>(null);
   const getAnalyticsAnonymousId = () => {
     let existing = window.localStorage.getItem(ADD_ANALYTICS_ANONYMOUS_ID_KEY);
     if (existing) return existing;
@@ -256,7 +263,7 @@ export function AddScreen() {
       // Analytics should never block the user flow.
     }
   };
-  const logAddScreenState = (label: string) => {
+  const logAddScreenState = (label: string, details?: Record<string, unknown>) => {
     if (!IS_DEV) return;
     console.log(label, {
       url: linkInput,
@@ -267,6 +274,7 @@ export function AddScreen() {
       storageUrl: window.localStorage.getItem("wandreel_add_url"),
       lastAnalyzedLink: window.localStorage.getItem("lastAnalyzedLink"),
       persistedDraft: window.localStorage.getItem("wr_add_detected_draft_v2"),
+      ...details,
     });
   };
 
@@ -660,9 +668,19 @@ export function AddScreen() {
   }, [pendingJobs.length]);
 
   useEffect(() => {
-    const handleAuthReset = () => {
+    const handleAuthReset = (event: Event) => {
+      const nextStatus =
+        event instanceof CustomEvent && event.detail && typeof event.detail === "object"
+          ? Reflect.get(event.detail, "status")
+          : null;
+      if (!shouldResetAddFlowForAuthStatus(typeof nextStatus === "string" ? nextStatus : null)) {
+        return;
+      }
+      prefilledSharedIntentIdRef.current = null;
       resetAddFlowState({ clearPersisted: true });
-      logAddScreenState("AddScreen auth reset");
+      logAddScreenState("AddScreen auth reset", {
+        status: typeof nextStatus === "string" ? nextStatus : null,
+      });
     };
     window.addEventListener(AUTH_SESSION_UPDATED_EVENT, handleAuthReset);
     return () => window.removeEventListener(AUTH_SESSION_UPDATED_EVENT, handleAuthReset);
@@ -1472,34 +1490,63 @@ export function AddScreen() {
     let cancelled = false;
 
     const consumeSharedIntentIntoAdd = async () => {
-      const sharedIntent = await consumePendingSharedIntent();
+      const sharedIntent = await readPendingSharedIntent();
       if (!sharedIntent || cancelled) return;
 
       const nextInput = getSharedIntentPrefill(sharedIntent);
       if (!nextInput) return;
+      const isNewSharedIntent = prefilledSharedIntentIdRef.current !== sharedIntent.intentId;
 
-      if (IS_DEV) {
-        console.debug("[share-target] Add consumed shared intent", {
+      if (isNewSharedIntent && IS_DEV) {
+        console.debug("[share-target] Add received shared intent", {
           intentId: sharedIntent.intentId,
           extractedUrl: sharedIntent.extractedUrl || null,
           prefill: nextInput,
+          isAuthenticated,
         });
       }
 
-      setLinkInput(nextInput);
-      setSelectedDetectedCategory("Auto-detect");
-      showToast({ message: "Added from share", variant: "success" });
+      if (isNewSharedIntent) {
+        prefilledSharedIntentIdRef.current = sharedIntent.intentId;
+        setLinkInput(nextInput);
+        setSelectedDetectedCategory("Auto-detect");
+        showToast({ message: "Added from share", variant: "success" });
+      }
 
       if (!sharedIntent.extractedUrl) {
-        showToast({ message: "Couldn’t find a shareable link. Check the text before analyzing.", variant: "info" });
+        if (isAuthenticated) {
+          await clearPendingSharedIntent();
+          processedSharedIntentIdRef.current = sharedIntent.intentId;
+        }
+        if (isNewSharedIntent) {
+          showToast({ message: "Couldn’t find a shareable link. Check the text before analyzing.", variant: "info" });
+        }
         return;
       }
 
-      if (isAnalyzingRef.current) {
+      const sharedIntentPlan = getSharedIntentPlan({
+        isAuthenticated,
+        isAnalyzing: isAnalyzingRef.current,
+        hasExtractedUrl: Boolean(sharedIntent.extractedUrl),
+      });
+
+      if (sharedIntentPlan === "wait_for_analysis") {
         setQueuedSharedLink(sharedIntent.extractedUrl);
         return;
       }
+      if (sharedIntentPlan === "wait_for_auth") {
+        return;
+      }
+      if (sharedIntentPlan !== "consume_and_process") {
+        return;
+      }
+      if (processedSharedIntentIdRef.current === sharedIntent.intentId) {
+        return;
+      }
 
+      const consumedIntent = await consumePendingSharedIntent();
+      if (!consumedIntent || consumedIntent.intentId !== sharedIntent.intentId || cancelled) return;
+      processedSharedIntentIdRef.current = sharedIntent.intentId;
       void runAnalysis(sharedIntent.extractedUrl);
     };
 
@@ -1514,7 +1561,7 @@ export function AddScreen() {
       cancelled = true;
       window.removeEventListener(SHARED_INTENT_RECEIVED_EVENT, handleSharedIntent);
     };
-  }, [isAnalyzing, showToast]);
+  }, [isAuthenticated, isAnalyzing, showToast]);
 
   const handleAnalyze = async () => {
     if (!linkInput.trim()) return;
