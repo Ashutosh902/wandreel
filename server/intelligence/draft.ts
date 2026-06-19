@@ -97,6 +97,40 @@ function normalizeOcrCandidateName(value: string): string {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+export function isSloganLikeText(value: string): boolean {
+  const normalized = normalizeOcrLine(value);
+  if (!normalized) return false;
+
+  const tokens = tokenizeOcrLine(normalized);
+  const alphaTokenCount = countAlphabeticTokens(tokens);
+  const uppercaseTokens = countUppercaseTokens(tokens);
+  const genericFoodOnly =
+    OCR_GENERIC_FOOD_WORDS.test(normalized) &&
+    !OCR_VENUE_TERMS.test(normalized);
+
+  return Boolean(
+    OCR_SLOGAN_PATTERNS.test(normalized) ||
+    genericFoodOnly ||
+    (alphaTokenCount >= 2 && uppercaseTokens >= Math.ceil(alphaTokenCount * 0.6)),
+  );
+}
+
+export function isVenueLikeText(value: string): boolean {
+  const normalized = normalizeOcrLine(value);
+  if (!normalized) return false;
+
+  const tokens = tokenizeOcrLine(normalized);
+  const venueTokenIndex = tokens.findIndex((token) => OCR_VENUE_TERMS.test(token));
+  if (venueTokenIndex < 0) return false;
+
+  const properNameTokenCount = getProperNameTokenCount(tokens);
+  const hasLocalityContext =
+    OCR_CONTEXT_CONNECTORS.test(normalized) ||
+    Boolean(extractLocalityFromTokens(tokens));
+
+  return properNameTokenCount >= 1 || hasLocalityContext;
+}
+
 function tokenizeOcrLine(value: string): string[] {
   return normalizeOcrLine(value)
     .split(/[^A-Za-z0-9&']+/)
@@ -125,6 +159,10 @@ function buildSupportKey(line: string): string {
 
 function extractLocalityFromParts(parts: string[]): string | null {
   if (parts.length < 2) return null;
+  const prefix = normalizeOcrLine(parts.slice(0, -1).join(", "));
+  if (!prefix || isSloganLikeText(prefix) || !isVenueLikeText(prefix)) {
+    return null;
+  }
   const candidate = normalizeOcrCandidateName(parts[parts.length - 1] || "");
   if (!candidate) return null;
   return candidate.length >= 3 && candidate.length <= 40 ? candidate : null;
@@ -312,11 +350,19 @@ function hasNonGenericMetadataCandidate(source: ExtractionResult): boolean {
   return true;
 }
 
-export function buildDraftIntelligenceOutput(source: ExtractionResult): IntelligenceOutput {
+export function shouldSuppressGenericOcrOnlyEntity(source: ExtractionResult): boolean {
   const ocrCandidate = inferOcrHeuristicCandidate(source);
-  const ocrAttemptedWithoutCandidate = Boolean(source.ocr?.attempted) && !ocrCandidate;
+  if (!source.ocr?.attempted || ocrCandidate) {
+    return false;
+  }
+
   const transcriptHasEntitySignal = hasMeaningfulText(source.transcript?.text);
   const metadataHasEntitySignal = hasNonGenericMetadataCandidate(source);
+  return !transcriptHasEntitySignal && !metadataHasEntitySignal;
+}
+
+export function buildDraftIntelligenceOutput(source: ExtractionResult): IntelligenceOutput {
+  const ocrCandidate = inferOcrHeuristicCandidate(source);
   const joinedText = [
     source.metadata?.title || "",
     source.metadata?.description || "",
@@ -325,10 +371,7 @@ export function buildDraftIntelligenceOutput(source: ExtractionResult): Intellig
   ].join(" ");
 
   const inferredName = inferName(source);
-  const shouldSuppressGenericEntity =
-    ocrAttemptedWithoutCandidate &&
-    !transcriptHasEntitySignal &&
-    !metadataHasEntitySignal;
+  const shouldSuppressGenericEntity = shouldSuppressGenericOcrOnlyEntity(source);
 
   const category = ocrCandidate?.category || inferCategory(joinedText);
   const name = shouldSuppressGenericEntity ? "Detected place" : (ocrCandidate?.name || inferredName);

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildDraftIntelligenceOutput, inferOcrHeuristicCandidate } from "../draft";
+import { prioritizeOcrVenueEntities } from "../pipeline";
 
 test("draft heuristic prefers scenic Explore places over Instagram boilerplate", () => {
   const output = buildDraftIntelligenceOutput({
@@ -95,4 +96,151 @@ test("draft heuristic returns needs_review when OCR is only slogan-like generic 
   assert.equal(output.status, "needs_review");
   assert.equal(output.structuredEntities[0].name, "Detected place");
   assert.equal(output.structuredEntities[0].evidenceText, "OCR text insufficient");
+});
+
+test("final OCR ranking keeps venue-like entity ahead of slogan-like output", () => {
+  const source = {
+    mode: "deep",
+    metadata: {
+      sourceUrl: "https://example.com/reel",
+      canonicalUrl: "https://example.com/reel",
+      platform: "instagram",
+      title: "Untitled",
+      description: "",
+      siteName: "Instagram",
+      imageUrl: null,
+      fetchedAtIso: new Date().toISOString(),
+      provider: "instagram_script",
+    },
+    transcript: null,
+    ocr: {
+      attempted: true,
+      used: true,
+      text: "YOU, ME & COFFEE: BY THE SEA Eva \" cafe Anjua\nYOU, ME & COFFEE BY THE SEA Lvatale Anjuna Ry ICE",
+      reason: null,
+    },
+    source: "https://example.com/reel",
+    platform: "instagram",
+    canonicalUrl: "https://example.com/reel",
+    combinedTextRaw: "",
+    combinedTextClean: "",
+  } as const;
+
+  const output = prioritizeOcrVenueEntities({
+    source: {
+      url: "https://example.com/reel",
+      platform: "instagram",
+      title: null,
+      creator: null,
+      sourceType: "mixed_discovery",
+    },
+    placeCollections: [],
+    categoriesPresent: ["eat"],
+    weakMentions: [],
+    showIn: { eat: true, do: false, stay: false, see: false },
+    structuredEntities: [
+      {
+        name: "YOU, ME & COFFEE: BY THE SEA",
+        category: "eat",
+        locality: null,
+        city: null,
+        state: null,
+        country: "India",
+        address: null,
+        confidence: "high",
+        googleMapsQuery: "YOU, ME & COFFEE: BY THE SEA",
+        evidenceText: "OCR line",
+      },
+      {
+        name: "Eva Cafe",
+        category: "eat",
+        locality: "Anjuna",
+        city: null,
+        state: null,
+        country: "India",
+        address: null,
+        confidence: "medium",
+        googleMapsQuery: "Eva Cafe Anjuna",
+        evidenceText: "OCR line",
+      },
+    ],
+    entities: [],
+    visibility: {
+      showIn: ["eat"],
+      doNotShowIn: ["do", "stay", "see"],
+      reason: "Model output",
+    },
+    status: "ready",
+  }, source);
+
+  assert.equal(output.structuredEntities[0]?.name, "Eva Cafe");
+  assert.equal(output.structuredEntities.some((entity) => entity.name === "YOU, ME & COFFEE: BY THE SEA"), false);
+});
+
+test("final OCR ranking suppresses slogan-only OCR entities into needs_review", () => {
+  const source = {
+    mode: "deep",
+    metadata: {
+      sourceUrl: "https://example.com/reel",
+      canonicalUrl: "https://example.com/reel",
+      platform: "instagram",
+      title: "Creator on Instagram: vibes",
+      description: "✨",
+      siteName: "Instagram",
+      imageUrl: null,
+      fetchedAtIso: new Date().toISOString(),
+      provider: "instagram_script",
+    },
+    transcript: { attempted: false, used: false, source: null, text: "", reason: "not_attempted" },
+    ocr: {
+      attempted: true,
+      used: true,
+      text: "YOU, ME & COFFEE\nMY HAPPY PLACE",
+      reason: null,
+    },
+    source: "https://example.com/reel",
+    platform: "instagram",
+    canonicalUrl: "https://example.com/reel",
+    combinedTextRaw: "",
+    combinedTextClean: "",
+  } as const;
+
+  const output = prioritizeOcrVenueEntities({
+    source: {
+      url: "https://example.com/reel",
+      platform: "instagram",
+      title: null,
+      creator: null,
+      sourceType: "mixed_discovery",
+    },
+    placeCollections: [],
+    categoriesPresent: ["eat"],
+    weakMentions: [],
+    showIn: { eat: true, do: false, stay: false, see: false },
+    structuredEntities: [
+      {
+        name: "YOU, ME & COFFEE",
+        category: "eat",
+        locality: null,
+        city: null,
+        state: null,
+        country: "India",
+        address: null,
+        confidence: "high",
+        googleMapsQuery: "YOU, ME & COFFEE",
+        evidenceText: "OCR line",
+      },
+    ],
+    entities: [],
+    visibility: {
+      showIn: ["eat"],
+      doNotShowIn: ["do", "stay", "see"],
+      reason: "Model output",
+    },
+    status: "ready",
+  }, source);
+
+  assert.equal(output.status, "needs_review");
+  assert.equal(output.structuredEntities.length, 0);
+  assert.equal(output.visibility.reason, "OCR text insufficient");
 });

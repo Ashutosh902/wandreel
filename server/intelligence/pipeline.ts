@@ -6,7 +6,7 @@ import { recordSla } from "../metrics/slaTracker";
 import { inferPlaceResolveContext, mergeResolutionIntoContext, resolveEntityLocality } from "./placeResolver";
 import type { ExtractionResult } from "../extraction/types";
 import { augmentIntelligenceOutputWithCaptionLists } from "./captionListAugment";
-import { inferOcrHeuristicCandidate } from "./draft";
+import { inferOcrHeuristicCandidate, isSloganLikeText, isVenueLikeText, shouldSuppressGenericOcrOnlyEntity } from "./draft";
 
 function buildDefaultLevel2(category: "eat" | "do" | "stay" | "see") {
   return category === "eat"
@@ -635,6 +635,220 @@ function applyOcrHeuristicPriority(output: IntelligenceOutput, source: Extractio
   };
 }
 
+function buildOcrHeuristicIntent(candidate: NonNullable<ReturnType<typeof inferOcrHeuristicCandidate>>) {
+  return candidate.category === "eat"
+    ? { l1: "taste" as const, l2: /cafe|cafÃ©|coffee/i.test(candidate.name) ? "Cafe" : "Restaurant", l3: [] }
+    : { l1: "explore" as const, l2: "Nature", l3: [] };
+}
+
+function buildStructuredKey(entity: Pick<StructuredEntity, "category" | "name">): string {
+  return `${entity.category}|${String(entity.name || "").trim().toLowerCase()}`;
+}
+
+function buildDiscoveryKey(entity: Pick<DiscoveryEntity, "category" | "name">): string {
+  return `${entity.category}|${String(entity.name || "").trim().toLowerCase()}`;
+}
+
+function matchesOcrCandidate(entity: Pick<StructuredEntity, "name" | "locality">, candidate: NonNullable<ReturnType<typeof inferOcrHeuristicCandidate>>): boolean {
+  const entityName = String(entity.name || "").trim().toLowerCase();
+  const candidateName = candidate.name.trim().toLowerCase();
+  const entityLocality = String(entity.locality || "").trim().toLowerCase();
+  const candidateLocality = String(candidate.locality || "").trim().toLowerCase();
+  return Boolean(
+    entityName === candidateName ||
+    entityName.includes(candidateName) ||
+    candidateName.includes(entityName) ||
+    (candidateLocality && entityLocality === candidateLocality),
+  );
+}
+
+function scoreStructuredEntityForOcrPriority(
+  entity: StructuredEntity,
+  candidate: NonNullable<ReturnType<typeof inferOcrHeuristicCandidate>> | null,
+): number {
+  let score = 0;
+  if (candidate && matchesOcrCandidate(entity, candidate)) score += 200;
+  if (candidate && String(entity.locality || "").trim().toLowerCase() === String(candidate.locality || "").trim().toLowerCase()) score += 25;
+  if (candidate && entity.category === candidate.category) score += 15;
+  if (isVenueLikeText(entity.name)) score += 35;
+  if (isSloganLikeText(entity.name)) score -= 90;
+  return score;
+}
+
+function filterStructuredEntitiesForOcrPriority(
+  structuredEntities: StructuredEntity[],
+  candidate: NonNullable<ReturnType<typeof inferOcrHeuristicCandidate>> | null,
+): StructuredEntity[] {
+  const sorted = [...structuredEntities].sort((left, right) => {
+    const delta = scoreStructuredEntityForOcrPriority(right, candidate) - scoreStructuredEntityForOcrPriority(left, candidate);
+    if (delta !== 0) return delta;
+    return String(left.name || "").localeCompare(String(right.name || ""));
+  });
+
+  const hasVenueLikeNonSlogan = sorted.some((entity) => isVenueLikeText(entity.name) && !isSloganLikeText(entity.name));
+  if (!hasVenueLikeNonSlogan) return sorted;
+
+  return sorted.filter((entity) => !isSloganLikeText(entity.name) || (candidate ? matchesOcrCandidate(entity, candidate) : false));
+}
+
+function buildCandidateStructuredEntity(candidate: NonNullable<ReturnType<typeof inferOcrHeuristicCandidate>>): StructuredEntity {
+  return {
+    name: candidate.name,
+    category: candidate.category,
+    locality: candidate.locality,
+    city: null,
+    state: null,
+    country: null,
+    address: null,
+    confidence: candidate.confidence,
+    googleMapsQuery: [candidate.name, candidate.locality].filter(Boolean).join(" ").trim() || candidate.name,
+    evidenceText: candidate.evidenceText,
+    intent: buildOcrHeuristicIntent(candidate),
+  };
+}
+
+function buildCandidateDiscoveryEntity(candidate: NonNullable<ReturnType<typeof inferOcrHeuristicCandidate>>): DiscoveryEntity {
+  return {
+    category: candidate.category,
+    name: candidate.name,
+    entityType: "ocr_candidate",
+    city: null,
+    state: null,
+    country: null,
+    locality: candidate.locality,
+    tags: ["ocr"],
+    details: {},
+    level2: candidate.category === "eat"
+      ? { category: "eat", cuisineType: null, mealType: null, dietaryTags: [], vibeTags: [], priceTier: null }
+      : { category: "see", placeType: null, experienceTag: null, vibeTags: [], entryFeeSignal: null },
+    googleMapsQuery: [candidate.name, candidate.locality].filter(Boolean).join(" ").trim() || candidate.name,
+    sourceEvidence: candidate.evidenceText,
+    confidence: candidate.confidence,
+    intent: buildOcrHeuristicIntent(candidate),
+  };
+}
+
+function rebuildOutputWithStructuredOrder(output: IntelligenceOutput, structuredEntities: StructuredEntity[]): IntelligenceOutput {
+  const entityByKey = new Map<string, DiscoveryEntity>();
+  for (const entity of output.entities) {
+    const key = buildDiscoveryKey(entity);
+    if (!entityByKey.has(key)) {
+      entityByKey.set(key, entity);
+    }
+  }
+
+  const entities = structuredEntities.map((entity) => {
+    const existing = entityByKey.get(buildStructuredKey(entity));
+    if (existing) return existing;
+    return {
+      category: entity.category,
+      name: entity.name,
+      entityType: "place",
+      city: entity.city,
+      state: entity.state,
+      country: entity.country,
+      locality: entity.locality,
+      tags: [],
+      details: {},
+      level2: buildDefaultLevel2(entity.category),
+      googleMapsQuery: entity.googleMapsQuery,
+      sourceEvidence: entity.evidenceText || "",
+      confidence: entity.confidence,
+      intent: entity.intent,
+    };
+  });
+
+  const categoriesPresent = (["eat", "do", "stay", "see"] as const).filter((category) =>
+    structuredEntities.some((entity) => entity.category === category),
+  );
+
+  return {
+    ...output,
+    categoriesPresent,
+    showIn: {
+      eat: categoriesPresent.includes("eat"),
+      do: categoriesPresent.includes("do"),
+      stay: categoriesPresent.includes("stay"),
+      see: categoriesPresent.includes("see"),
+    },
+    structuredEntities,
+    entities,
+    visibility: {
+      ...output.visibility,
+      showIn: categoriesPresent,
+      doNotShowIn: (["eat", "do", "stay", "see"] as const).filter((category) => !categoriesPresent.includes(category)),
+    },
+  };
+}
+
+export function prioritizeOcrVenueEntities(output: IntelligenceOutput, source: ExtractionResult): IntelligenceOutput {
+  const candidate = inferOcrHeuristicCandidate(source);
+  const structuredEntities = Array.isArray(output.structuredEntities) ? output.structuredEntities : [];
+
+  if (!candidate) {
+    const shouldSuppress = shouldSuppressGenericOcrOnlyEntity(source);
+    const allSloganLike = structuredEntities.length > 0 && structuredEntities.every((entity) => isSloganLikeText(entity.name));
+    if (!shouldSuppress || !allSloganLike) {
+      return output;
+    }
+
+    return {
+      ...output,
+      structuredEntities: [],
+      entities: [],
+      categoriesPresent: [],
+      showIn: { eat: false, do: false, stay: false, see: false },
+      visibility: {
+        showIn: [],
+        doNotShowIn: ["eat", "do", "stay", "see"],
+        reason: "OCR text insufficient",
+      },
+      status: "needs_review",
+    };
+  }
+
+  if (structuredEntities.length === 0) {
+    const candidateStructured = buildCandidateStructuredEntity(candidate);
+    return rebuildOutputWithStructuredOrder({
+      ...output,
+      entities: [buildCandidateDiscoveryEntity(candidate)],
+      structuredEntities: [candidateStructured],
+      visibility: {
+        ...output.visibility,
+        reason: "OCR heuristic candidate prioritized over generic social metadata.",
+      },
+      status: "ready",
+    }, [candidateStructured]);
+  }
+
+  const ranked = filterStructuredEntitiesForOcrPriority(structuredEntities, candidate);
+  const alreadyStrong = ranked.some((entity) => matchesOcrCandidate(entity, candidate));
+  const nextStructured = alreadyStrong
+    ? ranked
+    : [buildCandidateStructuredEntity(candidate), ...ranked.filter((entity) => !isSloganLikeText(entity.name))];
+
+  const nextOutput = rebuildOutputWithStructuredOrder(output, nextStructured);
+  if (alreadyStrong) {
+    return {
+      ...nextOutput,
+      visibility: {
+        ...nextOutput.visibility,
+        reason: "OCR-aware ranking prioritized venue-like entities over slogan-like OCR text.",
+      },
+    };
+  }
+
+  return rebuildOutputWithStructuredOrder({
+    ...nextOutput,
+    entities: [buildCandidateDiscoveryEntity(candidate), ...nextOutput.entities],
+    visibility: {
+      ...nextOutput.visibility,
+      reason: "OCR heuristic candidate prioritized over generic social metadata.",
+    },
+    status: "ready",
+  }, nextStructured);
+}
+
 export async function runIntelligencePipeline(req: IntelligenceRequest): Promise<IntelligencePipelineResult> {
   const totalStartedAt = Date.now();
   const isProbeRun = Boolean(req.analytics?.probeStage);
@@ -653,7 +867,7 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
   const firstPass = intelligenceOutputSchema.safeParse(raw);
   const schemaFirstPassMs = Date.now() - schemaFirstStartedAt;
   if (firstPass.success) {
-    const augmentedOutput = applyOcrHeuristicPriority(
+    const augmentedOutput = prioritizeOcrVenueEntities(
       augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback(firstPass.data, req), req.source),
       req.source,
     );
@@ -697,7 +911,7 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
   const schemaSecondPassMs = Date.now() - schemaSecondStartedAt;
 
   if (secondPass.success) {
-    const augmentedOutput = applyOcrHeuristicPriority(
+    const augmentedOutput = prioritizeOcrVenueEntities(
       augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback(secondPass.data, req), req.source),
       req.source,
     );
@@ -734,7 +948,7 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
   }
 
   return {
-    output: applyOcrHeuristicPriority(augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback({
+    output: prioritizeOcrVenueEntities(augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback({
       ...normalized,
       status: "needs_review",
       visibility: {
