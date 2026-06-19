@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:api": "tsx server/index.ts",
+    "start:prod": "tsx server/start.ts",
     "start:render": "tsx server/start.ts",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
