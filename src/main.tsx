@@ -9,6 +9,8 @@ import {
   isShareIntentMessage,
 } from './pwa/shareTarget'
 
+const RESOLVED_API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8787'
+
 const updateSW = registerSW({
   immediate: true,
   onNeedRefresh() {
@@ -16,8 +18,18 @@ const updateSW = registerSW({
   },
 })
 
+console.info('[wandreel-runtime]', {
+  mode: import.meta.env.MODE,
+  apiBaseUrl: RESOLVED_API_BASE_URL,
+  hasServiceWorkerSupport: typeof navigator !== 'undefined' && 'serviceWorker' in navigator,
+})
+
 if ('serviceWorker' in navigator) {
   let hasReloadedForUpdate = false
+
+  console.info('[wandreel-runtime]', {
+    serviceWorkerController: navigator.serviceWorker.controller?.scriptURL ?? null,
+  })
 
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (hasReloadedForUpdate) return
