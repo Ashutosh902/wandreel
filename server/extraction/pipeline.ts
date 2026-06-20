@@ -145,6 +145,8 @@ const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_METADATA_BUDGET_MS = 12000;
 const DEFAULT_TRANSCRIPT_BUDGET_MS = 60000;
 const ATTEMPT1_TRANSCRIPT_BUDGET_MS = 20000;
+const ATTEMPT2_TRANSCRIPT_BUDGET_MS = 30000;
+const ATTEMPT3_TRANSCRIPT_BUDGET_MS = 60000;
 const DEFAULT_COMMENT_BUDGET_MS = 1500;
 
 function getNumberEnv(name: string, fallback: number): number {
@@ -778,8 +780,10 @@ async function readTranscript(
 }
 
 export function getTranscriptTimeoutMsForAttempt(attemptNumber: number): number {
-  if (attemptNumber <= 1) return ATTEMPT1_TRANSCRIPT_BUDGET_MS;
-  return getNumberEnv("EXTRACTION_TRANSCRIPT_BUDGET_MS", DEFAULT_TRANSCRIPT_BUDGET_MS);
+  const configuredMs = getNumberEnv("EXTRACTION_TRANSCRIPT_BUDGET_MS", DEFAULT_TRANSCRIPT_BUDGET_MS);
+  if (attemptNumber <= 1) return Math.min(configuredMs, ATTEMPT1_TRANSCRIPT_BUDGET_MS);
+  if (attemptNumber === 2) return Math.min(configuredMs, ATTEMPT2_TRANSCRIPT_BUDGET_MS);
+  return Math.min(configuredMs, ATTEMPT3_TRANSCRIPT_BUDGET_MS);
 }
 
 function mergeOcrTexts(parts: string[]): string {
@@ -1955,7 +1959,7 @@ export async function runExtractionPipeline(input: {
       pushDecision(orchestration, "transcript", false, "retry_2_transcript_reused");
     } else {
       await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_started", "Reading transcript clues.");
-      const transcriptRead = await readTranscript(metadata, { memoryTracker });
+      const transcriptRead = await readTranscript(metadata, { memoryTracker, transcriptTimeoutMs });
       transcript = mergeTranscriptResults(inheritedTranscript, transcriptRead.transcript) ?? {
         attempted: true,
         used: false,
@@ -2018,7 +2022,7 @@ export async function runExtractionPipeline(input: {
       pushDecision(orchestration, "transcript", false, "retry_1_refinement_transcript_reused");
     } else {
       await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_started", "Reading transcript clues.");
-      const transcriptRead = await readTranscript(metadata, { memoryTracker });
+      const transcriptRead = await readTranscript(metadata, { memoryTracker, transcriptTimeoutMs });
       transcript = mergeTranscriptResults(reusedTranscript ?? null, transcriptRead.transcript) ?? {
         attempted: true,
         used: false,
@@ -2057,7 +2061,7 @@ export async function runExtractionPipeline(input: {
       ocrAttempts: [],
     };
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_started", "Reading transcript clues.");
-    const transcriptRead = await readTranscript(metadata, { memoryTracker });
+    const transcriptRead = await readTranscript(metadata, { memoryTracker, transcriptTimeoutMs });
     transcript = transcriptRead.transcript;
     transcriptMs = transcriptRead.transcriptMs;
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_done", "Transcript step finished.");
