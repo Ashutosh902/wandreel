@@ -21,6 +21,7 @@ import {
 import { shouldApplyResolvedPlacesUpdate, summarizePlacesForLog } from "./addAsyncResolution";
 import { createRunToastDeduper, type AddToastReason } from "./addToastDeduper";
 import { isPlaceNeedsManualReview, shouldShowImmediateDraftPlaces } from "./addDraftVisibility";
+import { isValidDetectedPlaceName, sanitizeDetectedPlace, sanitizeDetectedPlaces } from "./addEntitySanitizer";
 import { buildIntentSubtitle, resolveEntityIntent } from "./intent";
 import { upsertSavedPlace } from "./savedPlaces";
 import {
@@ -353,21 +354,33 @@ export function AddScreen() {
     linkInput: string;
     pendingJobs: PendingDetectionJob[];
   }, options?: { preserveAnalyzing?: boolean; reason?: string }) => {
+    const sanitizedDetectedPlaces = sanitizeDetectedPlaces(Array.isArray(draft.detectedPlaces) ? draft.detectedPlaces : []);
+    const sanitizedPendingJobs = (Array.isArray(draft.pendingJobs) ? draft.pendingJobs : []).map((pending) => ({
+      ...pending,
+      fallbackPlace: sanitizeDetectedPlace(pending.fallbackPlace).place,
+      draftPlaces: sanitizeDetectedPlaces(pending.draftPlaces || []).places,
+    }));
+    if (sanitizedDetectedPlaces.sanitizedCount > 0) {
+      logAddFlowEvent("add_frontend_entity_sanitized", {
+        reason: options?.reason || "restore_draft_state",
+        count: sanitizedDetectedPlaces.sanitizedCount,
+      });
+    }
     setLinkInput(draft.linkInput || "");
-    setHasAnalyzed(draft.detectedPlaces.length > 0 || draft.pendingJobs.length > 0);
-    setSelectedDetectedCategory(draft.pendingJobs.length > 0 ? "Auto-detect" : draft.selectedDetectedCategory || "Auto-detect");
-    setDetectedPlaces(Array.isArray(draft.detectedPlaces) ? draft.detectedPlaces : []);
+    setHasAnalyzed(sanitizedDetectedPlaces.places.length > 0 || sanitizedPendingJobs.length > 0);
+    setSelectedDetectedCategory(sanitizedPendingJobs.length > 0 ? "Auto-detect" : draft.selectedDetectedCategory || "Auto-detect");
+    setDetectedPlaces(sanitizedDetectedPlaces.places);
     setActivePreviewKey(
-      draft.pendingJobs[0] ? `pending-${draft.pendingJobs[0].runId}` : draft.detectedPlaces[0]?.id ?? null,
+      sanitizedPendingJobs[0] ? `pending-${sanitizedPendingJobs[0].runId}` : sanitizedDetectedPlaces.places[0]?.id ?? null,
     );
-    setPendingJobs(Array.isArray(draft.pendingJobs) ? draft.pendingJobs : []);
+    setPendingJobs(sanitizedPendingJobs);
     if (!(options?.preserveAnalyzing ?? false)) {
       setAnalyzingState(false);
     }
     logAddFlowEvent("add_cards_set", {
       reason: options?.reason || "restore_draft_state",
-      count: draft.detectedPlaces.length,
-      pendingCount: draft.pendingJobs.length,
+      count: sanitizedDetectedPlaces.places.length,
+      pendingCount: sanitizedPendingJobs.length,
       preserveAnalyzing: options?.preserveAnalyzing ?? false,
     });
   };
@@ -920,22 +933,34 @@ export function AddScreen() {
     nextLinkInput: string,
     reason = "sync_draft_state",
   ) => {
-    setDetectedPlaces(nextPlaces);
-    setPendingJobs(nextPendingJobs);
-    setHasAnalyzed(nextPlaces.length > 0 || nextPendingJobs.length > 0);
-    logAddFlowEvent(nextPlaces.length > 0 || nextPendingJobs.length > 0 ? "add_cards_set" : "add_cards_cleared", {
+    const sanitizedPlaces = sanitizeDetectedPlaces(nextPlaces);
+    const sanitizedPendingJobs = nextPendingJobs.map((pending) => ({
+      ...pending,
+      fallbackPlace: sanitizeDetectedPlace(pending.fallbackPlace).place,
+      draftPlaces: sanitizeDetectedPlaces(pending.draftPlaces || []).places,
+    }));
+    if (sanitizedPlaces.sanitizedCount > 0) {
+      logAddFlowEvent("add_frontend_entity_sanitized", {
+        reason,
+        count: sanitizedPlaces.sanitizedCount,
+      });
+    }
+    setDetectedPlaces(sanitizedPlaces.places);
+    setPendingJobs(sanitizedPendingJobs);
+    setHasAnalyzed(sanitizedPlaces.places.length > 0 || sanitizedPendingJobs.length > 0);
+    logAddFlowEvent(sanitizedPlaces.places.length > 0 || sanitizedPendingJobs.length > 0 ? "add_cards_set" : "add_cards_cleared", {
       reason,
-      count: nextPlaces.length,
-      pendingCount: nextPendingJobs.length,
+      count: sanitizedPlaces.places.length,
+      pendingCount: sanitizedPendingJobs.length,
     });
-    if (nextPlaces.length > 0 || nextPendingJobs.length > 0 || nextLinkInput.trim()) {
+    if (sanitizedPlaces.places.length > 0 || sanitizedPendingJobs.length > 0 || nextLinkInput.trim()) {
       writePersistedAddDraft({
-        detectedPlaces: nextPlaces,
+        detectedPlaces: sanitizedPlaces.places,
         selectedDetectedCategory: "Auto-detect",
         selectedPreviewIndex: 0,
         isPreviewVisible: true,
         linkInput: nextLinkInput,
-        pendingJobs: nextPendingJobs,
+        pendingJobs: sanitizedPendingJobs,
       });
       return;
     }
@@ -954,9 +979,9 @@ export function AddScreen() {
 
   const getPreservedRunPlaces = (places: DetectedPlace[], pendingJob: PendingDetectionJob) => {
     const currentRunPlaces = places.filter((item) => item.runId === pendingJob.runId);
-    if (currentRunPlaces.length) return currentRunPlaces;
-    if (pendingJob.draftPlaces?.length) return pendingJob.draftPlaces;
-    return [pendingJob.fallbackPlace];
+    if (currentRunPlaces.length) return sanitizeDetectedPlaces(currentRunPlaces).places;
+    if (pendingJob.draftPlaces?.length) return sanitizeDetectedPlaces(pendingJob.draftPlaces).places;
+    return [sanitizeDetectedPlace(pendingJob.fallbackPlace).place];
   };
 
   const publishSavedToCategoryFeed = (place: DetectedPlace) => {
@@ -1575,8 +1600,27 @@ export function AddScreen() {
               const currentRunPlaces = nextPlaces.filter((place) => place.runId === pending.runId);
               const applyDecision = shouldApplyResolvedPlacesUpdate(currentRunPlaces, resolvedPlaces);
               const replacementPlaces = applyDecision.apply
-                ? resolvedPlaces
+                ? (
+                  resolvedPlaces.length > 0
+                    ? resolvedPlaces
+                    : [sanitizeDetectedPlace(pending.fallbackPlace).place]
+                )
                 : getPreservedRunPlaces(nextPlaces, pending);
+              if (applyDecision.reason === "incoming_empty_replace_junk_with_placeholder") {
+                logAddFlowEvent("add_final_empty_replaced_junk_with_placeholder", {
+                  clientRunId: String(pending.runId),
+                  jobId: pending.jobId,
+                });
+              } else if (
+                applyDecision.apply &&
+                resolvedPlaces.some((place) => place.name === "Detected place") &&
+                currentRunPlaces.some((place) => !isValidDetectedPlaceName(place.name))
+              ) {
+                logAddFlowEvent("add_stale_junk_card_replaced", {
+                  clientRunId: String(pending.runId),
+                  jobId: pending.jobId,
+                });
+              }
               logAddFlowEvent("add_async_apply_decision", {
                 sourceKind: "job_poll",
                 clientRunId: String(pending.runId),

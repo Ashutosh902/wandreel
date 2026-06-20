@@ -1,5 +1,6 @@
 import type { EntityIntent } from "./intent";
 import { resolveEntityIntent } from "./intent";
+import { sanitizeDetectedPlace } from "./addEntitySanitizer";
 
 export type DetectedCategory = "Taste" | "Activity" | "Stay" | "Explore";
 
@@ -103,8 +104,10 @@ export function readPersistedAddDraft(): PersistedAddDraft | null {
     return {
       detectedPlaces: Array.isArray(parsed.detectedPlaces)
         ? parsed.detectedPlaces.map((item) => ({
-            ...item,
-            sourceUrl: item.sourceUrl || item.videoUrl || "",
+            ...sanitizeDetectedPlace({
+              ...item,
+              sourceUrl: item.sourceUrl || item.videoUrl || "",
+            }).place,
           }))
         : [],
       selectedDetectedCategory: parsed.selectedDetectedCategory || "Auto-detect",
@@ -121,17 +124,19 @@ export function readPersistedAddDraft(): PersistedAddDraft | null {
               isRetrying: Boolean(item.isRetrying),
               draftPlaces: Array.isArray(item.draftPlaces)
                 ? item.draftPlaces.map((place) => ({
-                    ...place,
-                    sourceUrl: place.sourceUrl || item.sourceUrl || item.videoUrl || "",
-                    retryCount: Number.isFinite(place.retryCount) ? place.retryCount : item.retryCount || 0,
+                    ...sanitizeDetectedPlace({
+                      ...place,
+                      sourceUrl: place.sourceUrl || item.sourceUrl || item.videoUrl || "",
+                      retryCount: Number.isFinite(place.retryCount) ? place.retryCount : item.retryCount || 0,
+                    }).place,
                   }))
                 : [],
               fallbackPlace: item.fallbackPlace
-                ? {
+                ? sanitizeDetectedPlace({
                     ...item.fallbackPlace,
                     sourceUrl: item.fallbackPlace.sourceUrl || item.videoUrl || "",
                     retryCount: Number.isFinite(item.fallbackPlace.retryCount) ? item.fallbackPlace.retryCount : item.retryCount || 0,
-                  }
+                  }).place
                 : {
                     id: `fallback-${item.runId}`,
                     runId: item.runId,
@@ -238,7 +243,7 @@ export function mapEntitiesToPlaces(
       if (!mapped || !entity.name) return null;
       const locality = entity.locality || entity.city || entity.state || "Unknown locality";
       const fullAddress = entity.address || [entity.locality, entity.city, entity.state, entity.country].filter(Boolean).join(", ") || locality;
-      return {
+      return sanitizeDetectedPlace({
         id: `${mapped}-${entity.name}-${index}`.toLowerCase().replace(/\s+/g, "-"),
         runId,
         sourceUrl: defaults.sourceUrl,
@@ -265,7 +270,7 @@ export function mapEntitiesToPlaces(
         city: entity.city ?? null,
         state: entity.state ?? null,
         country: entity.country ?? null,
-      };
+      }).place;
     })
     .filter((value): value is DetectedPlace => value !== null);
 }

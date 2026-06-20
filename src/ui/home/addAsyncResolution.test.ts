@@ -56,3 +56,15 @@ test("empty async result preserves current card", () => {
     reason: "incoming_empty_preserve_current",
   });
 });
+
+test("empty async result does not preserve junk card", () => {
+  const current = [createPlace({
+    name: "8,043 likes, 29 comments - rishikarajputchaudhary on April 19, 2026...",
+    confidence: "low",
+    placeId: null,
+  })];
+  assert.deepEqual(shouldApplyResolvedPlacesUpdate(current, []), {
+    apply: true,
+    reason: "incoming_empty_replace_junk_with_placeholder",
+  });
+});
