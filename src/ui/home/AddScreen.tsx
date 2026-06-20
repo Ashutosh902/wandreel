@@ -18,6 +18,7 @@ import {
   type IntelligenceEntity,
   type PendingDetectionJob,
 } from "./addFlowState";
+import { shouldApplyResolvedPlacesUpdate, summarizePlacesForLog } from "./addAsyncResolution";
 import { createRunToastDeduper, type AddToastReason } from "./addToastDeduper";
 import { isPlaceNeedsManualReview, shouldShowImmediateDraftPlaces } from "./addDraftVisibility";
 import { buildIntentSubtitle, resolveEntityIntent } from "./intent";
@@ -693,7 +694,29 @@ export function AddScreen() {
 
   useEffect(() => {
     const syncFromStorage = () => {
-      if (isAnalyzingRef.current || detectedPlacesRef.current.length > 0 || pendingJobsRef.current.length > 0) {
+      const draft = readPersistedAddDraft();
+      if (!draft) return;
+      const hasLiveState = isAnalyzingRef.current || detectedPlacesRef.current.length > 0 || pendingJobsRef.current.length > 0;
+      if (hasLiveState) {
+        const incomingRunIds = Array.from(new Set(draft.detectedPlaces.map((place) => place.runId)));
+        const shouldApplyBetterIncomingDraft = incomingRunIds.some((runId) => {
+          const currentRunPlaces = detectedPlacesRef.current.filter((place) => place.runId === runId);
+          const incomingRunPlaces = draft.detectedPlaces.filter((place) => place.runId === runId);
+          return shouldApplyResolvedPlacesUpdate(currentRunPlaces, incomingRunPlaces).apply;
+        });
+        if (shouldApplyBetterIncomingDraft) {
+          logAddFlowEvent("add_async_apply_decision", {
+            sourceKind: "storage_sync",
+            reason: "incoming_storage_result_better_than_current",
+            currentVisible: summarizePlacesForLog(detectedPlacesRef.current),
+            incoming: summarizePlacesForLog(draft.detectedPlaces),
+          });
+          restoreDraftState(draft, {
+            reason: "storage_sync_better_async_result",
+            preserveAnalyzing: isAnalyzingRef.current,
+          });
+          return;
+        }
         logAddFlowEvent("add_stale_event_ignored", {
           reason: "storage_update_while_live_state_present",
           activeRunId: analyzeRunRef.current || null,
@@ -702,8 +725,6 @@ export function AddScreen() {
         });
         return;
       }
-      const draft = readPersistedAddDraft();
-      if (!draft) return;
       const shouldApply = draft.detectedPlaces.length > 0 || draft.pendingJobs.length > 0 || pendingJobs.length > 0 || peekReviewRunId() !== null;
       if (!shouldApply) return;
       restoreDraftState(draft, { reason: "storage_sync" });
@@ -1537,9 +1558,20 @@ export function AddScreen() {
                 },
                 pending.runId,
               );
-              const replacementPlaces = resolvedPlaces.length
+              const currentRunPlaces = nextPlaces.filter((place) => place.runId === pending.runId);
+              const applyDecision = shouldApplyResolvedPlacesUpdate(currentRunPlaces, resolvedPlaces);
+              const replacementPlaces = applyDecision.apply
                 ? resolvedPlaces
                 : getPreservedRunPlaces(nextPlaces, pending);
+              logAddFlowEvent("add_async_apply_decision", {
+                sourceKind: "job_poll",
+                clientRunId: String(pending.runId),
+                jobId: pending.jobId,
+                currentVisible: summarizePlacesForLog(currentRunPlaces),
+                incoming: summarizePlacesForLog(resolvedPlaces),
+                applied: applyDecision.apply,
+                reason: applyDecision.reason,
+              });
               logCardSourceEvent("async_intelligence_completed", {
                 clientRunId: String(pending.runId),
                 jobId: pending.jobId,
