@@ -278,9 +278,9 @@ Examples:
 - "Periyar Reserve boat ride" -> usually one see/explore entity, with "boat ride" in intent.l3.`;
 }
 
-export function buildTinyCaptionUserPrompt(source: ExtractionResult, analytics?: IntelligenceRequest["analytics"]): string {
+export function buildTinyCaptionPromptPayload(source: ExtractionResult, analytics?: IntelligenceRequest["analytics"]) {
   const comments = source.metadata.commentEvidence;
-  const payload = {
+  return {
     sourceUrl: source.metadata.canonicalUrl || source.metadata.sourceUrl,
     platform: source.metadata.platform,
     title: trimText(source.metadata.title, 300) || null,
@@ -295,9 +295,12 @@ export function buildTinyCaptionUserPrompt(source: ExtractionResult, analytics?:
       : {
           pinnedComment: null,
           topComments: [],
-        },
+    },
     attemptNumber: Number(analytics?.attemptNumber ?? source.attemptInfo?.attemptNumber ?? 1) || 1,
   };
+}
 
+export function buildTinyCaptionUserPrompt(source: ExtractionResult, analytics?: IntelligenceRequest["analytics"]): string {
+  const payload = buildTinyCaptionPromptPayload(source, analytics);
   return `Extract Wandreel entities from this caption evidence only. Return JSON only.\n\nInput:\n${JSON.stringify(payload, null, 2)}`;
 }

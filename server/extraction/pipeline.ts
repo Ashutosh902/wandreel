@@ -9,6 +9,7 @@ import { enrichWithTranscript } from "./transcript";
 import { runVisualFallback } from "./visualFallback";
 import { buildCombinedText } from "./combinedText";
 import { runIntelligencePipeline, runTinyCaptionIntelligence } from "../intelligence";
+import { buildTinyCaptionPromptPayload } from "../intelligence/prompts";
 import { extractVisionOcrFromScreenshots } from "./visionOcr";
 import { extractImagePathOcr } from "./ocr";
 import type {
@@ -293,6 +294,18 @@ function hasMeaningfulTranscript(transcript: TranscriptResult | null): boolean {
   return Boolean(String(transcript?.text || "").trim().length >= 12);
 }
 
+export function shouldAcceptTranscriptProbe(transcript: TranscriptResult | null, probe: LlmConfidenceProbe | null): boolean {
+  if (!probe?.accepted) return false;
+  if (!transcript?.attempted) return false;
+  if (!hasMeaningfulTranscript(transcript)) return false;
+  if (String(transcript.reason || "").trim().toLowerCase() === "timeout") return false;
+  return true;
+}
+
+export function shouldSkipOcrAfterTranscriptProbe(transcript: TranscriptResult | null, probe: LlmConfidenceProbe | null): boolean {
+  return shouldAcceptTranscriptProbe(transcript, probe);
+}
+
 function getBestEntityConfidence(source: {
   output?: {
     structuredEntities?: Array<{ confidence?: string | null }>;
@@ -532,6 +545,7 @@ function buildExtractionDebug(input: {
     tinyFastExtractorRejectedReason?: string | null;
     modelUsedForTinyExtractor?: string | null;
     fullPromptSkipped?: boolean;
+    tinyCaptionPromptInput?: Record<string, unknown> | null;
   };
 }): Record<string, unknown> {
   const selectedCandidate = input.visualFallback?.selectedCandidate || null;
@@ -598,6 +612,7 @@ function buildExtractionDebug(input: {
     tinyFastExtractorRejectedReason: input.fastPath?.tinyFastExtractorRejectedReason ?? null,
     modelUsedForTinyExtractor: input.fastPath?.modelUsedForTinyExtractor ?? null,
     fullPromptSkipped: Boolean(input.fastPath?.fullPromptSkipped),
+    tinyCaptionPromptInput: input.fastPath?.tinyCaptionPromptInput ?? null,
     finalOutput: {
       selectedCandidate,
       possibleMatches:
@@ -1677,9 +1692,37 @@ export async function runExtractionPipeline(input: {
   let descriptionProbeMs = 0;
   let tinyFastExtractorAccepted = false;
   let tinyFastExtractorRejectedReason: string | null = descriptionWeak ? "missing_or_weak_description" : null;
+  let tinyCaptionPromptInput: Record<string, unknown> | null = null;
   let transcriptProbeMs = 0;
   let llmCallsBeforeResponse = 0;
   if (attemptNumber === 1 && !descriptionWeak) {
+    tinyCaptionPromptInput = buildTinyCaptionPromptPayload(
+      {
+        mode: input.mode,
+        metadata,
+        transcript: { attempted: false, used: false, source: null, text: "", reason: "not_attempted" },
+        ocr: { attempted: false, used: false, text: "", reason: "not_attempted" },
+        visualFallback: null,
+        attemptInfo: {
+          attemptNumber,
+          triggerType,
+        },
+        source: metadata.sourceUrl,
+        platform: metadata.platform,
+        canonicalUrl: metadata.canonicalUrl,
+        ...buildCombinedText({
+          metadata,
+          transcript: null,
+          ocr: null,
+        }),
+      },
+      {
+        clientRunId: input.clientRunId ?? null,
+        requestId: input.clientRunId || null,
+        attemptNumber,
+        triggerType,
+      },
+    ) as Record<string, unknown>;
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "tiny_extractor_started", "Running tiny caption extractor.");
     const descriptionProbeResult = await safeRunTinyFastExtractor(
       {
@@ -1795,6 +1838,7 @@ export async function runExtractionPipeline(input: {
         tinyFastExtractorRejectedReason: null,
         modelUsedForTinyExtractor: descriptionFastModel,
         fullPromptSkipped: true,
+        tinyCaptionPromptInput,
       },
     });
     if (traceEnabled) {
@@ -2060,7 +2104,7 @@ export async function runExtractionPipeline(input: {
       transcriptProbeFailureReason || `transcript_probe_${transcriptProbe?.confidence || "low"}`,
     );
 
-    if (transcriptProbe?.accepted) {
+    if (shouldSkipOcrAfterTranscriptProbe(transcript, transcriptProbe)) {
       pushDecision(orchestration, "ocr", false, "transcript_confidence_sufficient");
       pushDecision(orchestration, "visualFallback", false, "initial_attempt_only");
       finalizeTrace(orchestration, "transcript");
@@ -2104,6 +2148,7 @@ export async function runExtractionPipeline(input: {
           tinyFastExtractorRejectedReason,
           modelUsedForTinyExtractor: descriptionFastModel,
           fullPromptSkipped: false,
+          tinyCaptionPromptInput,
         },
       });
       if (traceEnabled) {
@@ -2199,6 +2244,7 @@ export async function runExtractionPipeline(input: {
       tinyFastExtractorRejectedReason,
       modelUsedForTinyExtractor: descriptionFastModel,
       fullPromptSkipped: false,
+      tinyCaptionPromptInput,
     },
   });
 
