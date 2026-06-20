@@ -212,7 +212,7 @@ export function AddScreen() {
   const [removingPlaceId, setRemovingPlaceId] = useState<string | null>(null);
   const [autoSelectFirstSuggestion, setAutoSelectFirstSuggestion] = useState(true);
   const [analysisStageCopy, setAnalysisStageCopy] = useState("Analyzing link...");
-  const [analysisElapsedSeconds, setAnalysisElapsedSeconds] = useState(0);
+  const [cardProgressNowMs, setCardProgressNowMs] = useState(() => Date.now());
   const analyzeRunRef = useRef(0);
   const analyzeRunSequenceRef = useRef(0);
   const analysisTimerRef = useRef<number | null>(null);
@@ -385,7 +385,6 @@ export function AddScreen() {
     setLinkInput("");
     setIsAnalyzing(false);
     setAnalysisStageCopy("Analyzing link...");
-    setAnalysisElapsedSeconds(0);
     setHasAnalyzed(false);
     setSelectedDetectedCategory("Auto-detect");
     setDetectedPlaces([]);
@@ -427,11 +426,9 @@ export function AddScreen() {
     }
     analysisStartedAtRef.current = Date.now();
     setAnalysisStageCopy(message);
-    setAnalysisElapsedSeconds(0);
     analysisTimerRef.current = window.setInterval(() => {
       const startedAt = analysisStartedAtRef.current;
       if (!startedAt) return;
-      setAnalysisElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
     }, 1000);
   };
 
@@ -445,9 +442,6 @@ export function AddScreen() {
 
   const syncAnalysisProgressFromEvent = (event: ExtractionStreamEvent) => {
     setAnalysisStageCopy(STREAM_STAGE_COPY[event.stage] || "Analyzing link...");
-    if (typeof event.elapsedMs === "number") {
-      setAnalysisElapsedSeconds(Math.max(0, Math.floor(event.elapsedMs / 1000)));
-    }
   };
 
   useEffect(() => {
@@ -476,6 +470,22 @@ export function AddScreen() {
     const timer = window.setTimeout(() => setSaveMessage(""), 1800);
     return () => window.clearTimeout(timer);
   }, [saveMessage]);
+
+  useEffect(() => {
+    if (!pendingJobs.length) return;
+    setCardProgressNowMs(Date.now());
+    const intervalId = window.setInterval(() => {
+      const nextNow = Date.now();
+      setCardProgressNowMs(nextNow);
+      logAddFlowEvent("add_card_progress_tick", {
+        runs: pendingJobsRef.current.map((pending) => ({
+          clientRunId: String(pending.runId),
+          elapsedSeconds: Math.max(0, Math.floor((nextNow - pending.startedAtMs) / 1000)),
+        })),
+      });
+    }, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [pendingJobs.length]);
 
   const categoryCounts = useMemo(() => {
     const base: Record<DetectedCategory, number> = { Taste: 0, Activity: 0, Stay: 0, Explore: 0 };
@@ -891,7 +901,7 @@ export function AddScreen() {
       source: platformSource,
       imageUrl,
       fullAddress: "Resolving full address...",
-      videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || linkInput.trim(),
+      videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || sourceUrl,
       confidence: null,
       evidenceText: null,
       intent: null,
@@ -1268,7 +1278,6 @@ export function AddScreen() {
     setSaveMessage("");
     setSelectedDetectedCategory("Auto-detect");
     setActivePreviewKey(`pending-${runId}`);
-    setLinkInput(normalizedSourceUrl);
 
     logExtractionClientEvent("analysis_start", {
       routeType: "stream",
@@ -1301,7 +1310,12 @@ export function AddScreen() {
 
     const nextDraftPlaces = replaceRunPlaces(detectedPlacesRef.current, runId);
     const nextDraftPendingJobs = upsertPendingJob(pendingJobsRef.current, pendingDraft);
-    syncDraftState(nextDraftPlaces, nextDraftPendingJobs, normalizedSourceUrl, "analysis_start_pending");
+    syncDraftState(nextDraftPlaces, nextDraftPendingJobs, "", "analysis_start_pending");
+    setLinkInput("");
+    logAddFlowEvent("add_input_cleared_after_analyze", {
+      clientRunId: String(runId),
+      sourceUrl: normalizedSourceUrl,
+    });
 
     try {
       let extraction: ExtractionApiResponse;
@@ -1369,7 +1383,7 @@ export function AddScreen() {
       syncDraftState(
         replaceRunPlaces(detectedPlacesRef.current, runId),
         upsertPendingJob(pendingJobsRef.current, extractionPendingJob),
-        normalizedSourceUrl,
+        "",
         "metadata_placeholder_ready",
       );
       logCardSourceEvent("placeholder_metadata", {
@@ -1470,7 +1484,7 @@ export function AddScreen() {
       syncDraftState(
         replaceRunPlaces(detectedPlacesRef.current, runId, nextVisiblePlaces),
         upsertPendingJob(pendingJobsRef.current, queuedPendingJob),
-        normalizedSourceUrl,
+        "",
         "async_job_queued",
       );
       releaseAnalysisInFlight(runId);
@@ -1900,17 +1914,16 @@ export function AddScreen() {
     };
 
   const handleRefreshInput = () => {
-    if (activePreviewCard) {
-      void runAnalysis(activePreviewCard.sourceUrl, { runId: activePreviewCard.runId, isRetry: true });
-      logAddScreenState("AddScreen refresh reset");
-      return;
-    }
-    if (!linkInput.trim()) {
-      showToast({ message: "Paste a link to analyze", variant: "info" });
-      return;
-    }
-    void runAnalysis(linkInput.trim());
-    logAddScreenState("AddScreen refresh reset");
+    const hadValue = Boolean(linkInput.trim());
+    logAddFlowEvent("add_input_refresh_clicked", {
+      hadValue,
+      hasActivePreview: Boolean(activePreviewCard),
+      pendingCount: pendingJobsRef.current.length,
+    });
+    setLinkInput("");
+    logAddFlowEvent("add_input_refresh_cleared_only", {
+      hadValue,
+    });
   };
 
   const handleRetryPreview = (card: PreviewCard) => {
@@ -2008,16 +2021,8 @@ export function AddScreen() {
           />
         </label>
 
-        <button type="button" className={`wr-add-analyze-btn ${isAnalyzing ? "is-loading" : ""}`} disabled={isAnalyzing || !linkInput.trim()} onClick={handleAnalyze}>
-          {isAnalyzing ? (
-            <>
-              <span>{`Analyzing link... ${analysisElapsedSeconds}s`}</span>
-              <small>{analysisStageCopy}</small>
-            </>
-          ) : (
-            <span>Analyze link</span>
-          )}
-          {isAnalyzing ? <span className="wr-add-stroll-loader" aria-hidden="true"><span /><span /><span /><span /></span> : null}
+        <button type="button" className="wr-add-analyze-btn" disabled={!linkInput.trim()} onClick={handleAnalyze}>
+          <span>Analyze link</span>
         </button>
       </article>
 
@@ -2073,6 +2078,7 @@ export function AddScreen() {
                       const isRetrying = card.pending.isRetrying;
                       const isRetryDisabled = true;
                       const isAwaitingAsyncFinal = Boolean(card.pending.jobId);
+                      const elapsedSeconds = Math.max(0, Math.floor((cardProgressNowMs - card.pending.startedAtMs) / 1000));
                       const pendingMessage = getRetryStatusMessage({
                         isLoading: true,
                         nextAttemptNumber: retryCount + 2,
@@ -2096,8 +2102,8 @@ export function AddScreen() {
                           <div className="wr-add-preview-topline">
                             <p className="wr-add-preview-kicker">{index + 1} of {previewCards.length}</p>
                           </div>
-                        <h4>{isAwaitingAsyncFinal ? "Still analyzing..." : "Finding place details..."}</h4>
-                        <p>{isAwaitingAsyncFinal ? "We found a possible clue, but we’re confirming the place before showing it." : (pendingMessage || (isRetrying ? "We’re taking another look." : "We’re reading the link for you."))}</p>
+                        <h4>{`Finding place details... ${elapsedSeconds}s`}</h4>
+                        <p>{isAwaitingAsyncFinal ? "Checking deeper evidence..." : (pendingMessage || (isRetrying ? "We’re taking another look." : analysisStageCopy))}</p>
                         <p className="wr-add-preview-supporting">Keep scrolling. You can come back anytime.</p>
                         {retryCountLabel ? <p className="wr-add-preview-retry-note">{retryCountLabel}</p> : null}
                         <div className="wr-add-preview-actions">
