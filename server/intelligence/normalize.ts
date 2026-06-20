@@ -147,6 +147,121 @@ function normalizeLooseLabel(input: unknown): string {
     .toLowerCase();
 }
 
+export type EntityNameSanitizeEvent = {
+  finalEntitySanitized: true;
+  finalEntitySanitizeReason: "instagram_metadata_boilerplate";
+  rejectedEntityNamePreview: string;
+  replacementName: "Detected place";
+};
+
+const MONTH_PATTERN = "january|february|march|april|may|june|july|august|september|october|november|december";
+
+export function isInstagramMetadataBoilerplateName(input: unknown): boolean {
+  const raw = String(input || "").trim();
+  if (!raw) return false;
+  const normalized = raw.toLowerCase();
+  const commaCount = (raw.match(/,/g) || []).length;
+  const htmlEntityCount = (raw.match(/&[a-z#0-9]+;/gi) || []).length;
+
+  if (/\blikes?\b/.test(normalized)) return true;
+  if (/\bcomments?\b/.test(normalized)) return true;
+  if (/\bview all comments\b/.test(normalized)) return true;
+  if (/\badd a comment\b/.test(normalized)) return true;
+  if (/\bfollow\b/.test(normalized)) return true;
+  if (/\binstagram\b/.test(normalized)) return true;
+  if (/&quot;|&#0*39;|&amp;|&#064;|&[a-z#0-9]+;/i.test(raw) && htmlEntityCount >= 1) return true;
+  if (new RegExp(`\\bon\\s+(${MONTH_PATTERN})\\b`, "i").test(normalized)) return true;
+  if (new RegExp(`\\b[a-z0-9._]{3,}\\s+on\\s+(${MONTH_PATTERN})\\b`, "i").test(normalized)) return true;
+  if (/^\s*[\d,]+\b/.test(raw)) return true;
+  if (/#\w+/.test(raw)) return true;
+  if (/\blikes?\s*,?\s*\d|\d[\d,]*\s+likes?\b/.test(normalized)) return true;
+  if (/\bcomments?\s*,?\s*\d|\d[\d,]*\s+comments?\b/.test(normalized)) return true;
+  if (/:\s*["“”']/.test(raw) && new RegExp(`\\bon\\s+(${MONTH_PATTERN})\\b`, "i").test(normalized)) return true;
+  if (raw.length > 80 && (commaCount >= 1 || htmlEntityCount >= 1)) return true;
+  if (raw.length > 80 && /\b(on|likes?|comments?|instagram|follow)\b/i.test(raw)) return true;
+
+  return false;
+}
+
+function previewRejectedName(input: string): string {
+  return input.replace(/\s+/g, " ").trim().slice(0, 80);
+}
+
+export function sanitizeIntelligenceOutputEntityNames(output: IntelligenceOutput): {
+  output: IntelligenceOutput;
+  events: EntityNameSanitizeEvent[];
+} {
+  const events: EntityNameSanitizeEvent[] = [];
+  let sanitizedPrimary = false;
+
+  const structuredEntities = output.structuredEntities.map((entity, index) => {
+    if (!isInstagramMetadataBoilerplateName(entity.name)) return entity;
+    const rejectedEntityNamePreview = previewRejectedName(entity.name);
+    events.push({
+      finalEntitySanitized: true,
+      finalEntitySanitizeReason: "instagram_metadata_boilerplate",
+      rejectedEntityNamePreview,
+      replacementName: "Detected place",
+    });
+    if (index === 0) sanitizedPrimary = true;
+    return {
+      ...entity,
+      name: "Detected place",
+      confidence: "low" as const,
+      googleMapsQuery: buildMapsQuery({
+        name: "Detected place",
+        locality: entity.locality,
+        city: entity.city,
+        state: entity.state,
+        country: entity.country,
+      }),
+      evidenceText: entity.evidenceText || "instagram_metadata_boilerplate",
+    };
+  });
+
+  const entities = output.entities.map((entity, index) => {
+    if (!isInstagramMetadataBoilerplateName(entity.name)) return entity;
+    if (index === 0) sanitizedPrimary = true;
+    return {
+      ...entity,
+      name: "Detected place",
+      confidence: "low" as const,
+      googleMapsQuery: buildMapsQuery({
+        name: "Detected place",
+        locality: entity.locality,
+        city: entity.city,
+        state: entity.state,
+        country: entity.country,
+      }),
+      sourceEvidence: entity.sourceEvidence || "instagram_metadata_boilerplate",
+      details: {
+        ...entity.details,
+        needsReview: true,
+      },
+    };
+  });
+
+  if (events.length === 0) {
+    return { output, events };
+  }
+
+  return {
+    output: {
+      ...output,
+      structuredEntities,
+      entities,
+      status: sanitizedPrimary ? "needs_review" : output.status,
+      visibility: sanitizedPrimary
+        ? {
+            ...output.visibility,
+            reason: "instagram_metadata_boilerplate",
+          }
+        : output.visibility,
+    },
+    events,
+  };
+}
+
 function asIntentL1(input: unknown): IntentL1 | null {
   const value = normalizeLooseLabel(input);
   if (value === "taste" || value === "activity" || value === "stay" || value === "explore") return value;

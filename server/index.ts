@@ -2,7 +2,7 @@ import "dotenv/config";
 import { createHash } from "node:crypto";
 import express from "express";
 import { extractionJobStore, runExtractionPipeline, type ExtractionMode } from "./extraction";
-import { intelligenceJobStore, runIntelligencePipeline, type IntelligenceMode } from "./intelligence";
+import { intelligenceJobStore, runIntelligencePipeline, sanitizeIntelligenceOutputEntityNames, type IntelligenceMode } from "./intelligence";
 import { buildDraftIntelligenceOutput } from "./intelligence/draft";
 import { phoneOtpStore } from "./auth/phoneOtpStore";
 import {
@@ -1082,7 +1082,17 @@ function getAttempt1FastPathIntelligenceResult(source: any): IntelligencePipelin
   const fastPath = source?.debug?.fastPathIntelligence;
   if (attemptNumber !== 1 || acceptedAfter !== "description") return null;
   if (!fastPath || fastPath.accepted !== true || !fastPath.result) return null;
-  return fastPath.result as IntelligencePipelineResult;
+  const result = fastPath.result as IntelligencePipelineResult;
+  const sanitized = sanitizeIntelligenceOutputEntityNames(result.output);
+  for (const event of sanitized.events) {
+    console.info("[draft-async]", event);
+  }
+  return sanitized.events.length > 0
+    ? {
+        ...result,
+        output: sanitized.output,
+      }
+    : result;
 }
 
 app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
@@ -1181,27 +1191,30 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
           console.error("create reel job failed", jobError);
         }
       }
-      const draftOutput = buildDraftIntelligenceOutput(source);
+      const draftOutput = sanitizeIntelligenceOutputEntityNames(buildDraftIntelligenceOutput(source));
+      for (const event of draftOutput.events) {
+        console.info("[draft-async]", event);
+      }
       console.info("[draft-async]", {
         event: "draft_output",
         clientRunId: analyticsPayload?.clientRunId ? String(analyticsPayload.clientRunId) : null,
         attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
         acceptedAfter: String(source?.debug?.orchestration?.acceptedAfter || ""),
         ocrChars: String(source?.ocr?.text || "").trim().length,
-        entityCount: Array.isArray(draftOutput.structuredEntities) ? draftOutput.structuredEntities.length : 0,
-        entities: (draftOutput.structuredEntities || []).map((entity) => ({
+        entityCount: Array.isArray(draftOutput.output.structuredEntities) ? draftOutput.output.structuredEntities.length : 0,
+        entities: (draftOutput.output.structuredEntities || []).map((entity) => ({
           name: entity.name,
           category: entity.category,
           locality: entity.locality,
           confidence: entity.confidence,
         })),
-        status: draftOutput.status,
+        status: draftOutput.output.status,
       });
       return res.status(202).json({
         ok: true,
         mode,
         draft: true,
-        output: draftOutput,
+        output: draftOutput.output,
         validationErrors: [],
         fixed: false,
         timingsMs: {
@@ -1221,11 +1234,14 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
     }
 
     if (!featureFlags.intelligenceStructured) {
-      const draftOutput = buildDraftIntelligenceOutput(source);
+      const draftOutput = sanitizeIntelligenceOutputEntityNames(buildDraftIntelligenceOutput(source));
+      for (const event of draftOutput.events) {
+        console.info("[draft-output]", event);
+      }
       return res.json({
         ok: true,
         mode,
-        output: draftOutput,
+        output: draftOutput.output,
         validationErrors: [],
         fixed: false,
         timingsMs: {

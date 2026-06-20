@@ -1,6 +1,6 @@
 import { intelligenceOutputSchema, formatZodErrors, tinyCaptionOutputSchema } from "./schema";
 import type { DiscoveryEntity, IntelligenceOutput, IntelligencePipelineResult, IntelligenceRequest, StructuredEntity } from "./types";
-import { normalizeEntityIntent, normalizeIntelligenceOutput } from "./normalize";
+import { normalizeEntityIntent, normalizeIntelligenceOutput, sanitizeIntelligenceOutputEntityNames } from "./normalize";
 import { callOpenAiStructuredExtraction, callOpenAiTinyCaptionExtraction } from "./providers/openai";
 import { recordSla } from "../metrics/slaTracker";
 import { inferPlaceResolveContext, mergeResolutionIntoContext, resolveEntityLocality } from "./placeResolver";
@@ -567,6 +567,21 @@ function logIntelligenceDecision(event: string, details: Record<string, unknown>
   });
 }
 
+function finalizeOutputForUi(
+  output: IntelligenceOutput,
+  req: IntelligenceRequest,
+  event: "final_output" | "probe_output" | "tiny_caption_output",
+): IntelligenceOutput {
+  const sanitized = sanitizeIntelligenceOutputEntityNames(output);
+  for (const sanitizeEvent of sanitized.events) {
+    logIntelligenceDecision(event, {
+      clientRunId: req.analytics?.clientRunId ?? null,
+      ...sanitizeEvent,
+    });
+  }
+  return sanitized.output;
+}
+
 function applyOcrHeuristicPriority(output: IntelligenceOutput, source: ExtractionResult): IntelligenceOutput {
   const candidate = inferOcrHeuristicCandidate(source);
   if (!candidate) return output;
@@ -871,7 +886,11 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
       augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback(firstPass.data, req), req.source),
       req.source,
     );
-    const enrichedOutput = await enrichWithResolvedLocations(augmentedOutput, req.source);
+    const enrichedOutput = finalizeOutputForUi(
+      await enrichWithResolvedLocations(augmentedOutput, req.source),
+      req,
+      isProbeRun ? "probe_output" : "final_output",
+    );
     logIntelligenceDecision(isProbeRun ? "probe_output" : "final_output", {
       clientRunId: req.analytics?.clientRunId ?? null,
       entityCount: enrichedOutput.structuredEntities.length,
@@ -915,7 +934,11 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
       augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback(secondPass.data, req), req.source),
       req.source,
     );
-    const enrichedOutput = await enrichWithResolvedLocations(augmentedOutput, req.source);
+    const enrichedOutput = finalizeOutputForUi(
+      await enrichWithResolvedLocations(augmentedOutput, req.source),
+      req,
+      isProbeRun ? "probe_output" : "final_output",
+    );
     logIntelligenceDecision(isProbeRun ? "probe_output" : "final_output", {
       clientRunId: req.analytics?.clientRunId ?? null,
       entityCount: enrichedOutput.structuredEntities.length,
@@ -947,8 +970,8 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
     };
   }
 
-  return {
-    output: prioritizeOcrVenueEntities(augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback({
+  const fallbackOutput = finalizeOutputForUi(
+    prioritizeOcrVenueEntities(augmentIntelligenceOutputWithCaptionLists(applyVisualEntityFallback({
       ...normalized,
       status: "needs_review",
       visibility: {
@@ -956,6 +979,12 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
         reason: "Schema validation failed after auto-fix. Manual review required.",
       },
     }, req), req.source), req.source),
+    req,
+    isProbeRun ? "probe_output" : "final_output",
+  );
+
+  return {
+    output: fallbackOutput,
     validationErrors: [
       ...formatZodErrors(firstPass.error),
       ...formatZodErrors(secondPass.error),
@@ -982,7 +1011,11 @@ export async function runTinyCaptionIntelligence(req: IntelligenceRequest): Prom
   const schemaFirstPassMs = Date.now() - schemaFirstStartedAt;
 
   if (firstPass.success) {
-    const enrichedOutput = await enrichWithResolvedLocations(postProcessTinyCaptionOutput(firstPass.data, req), req.source);
+    const enrichedOutput = finalizeOutputForUi(
+      await enrichWithResolvedLocations(postProcessTinyCaptionOutput(firstPass.data, req), req.source),
+      req,
+      "tiny_caption_output",
+    );
     const agg = recordSla("intelligence.total", Date.now() - totalStartedAt);
     if (Number(process.env.INTELLIGENCE_SLA_LOG_EVERY || 0) > 0 && agg.sampleSize % Number(process.env.INTELLIGENCE_SLA_LOG_EVERY) === 0) {
       console.info("[sla][intelligence.total]", { p50: agg.p50, p95: agg.p95, sampleSize: agg.sampleSize });
@@ -1008,7 +1041,11 @@ export async function runTinyCaptionIntelligence(req: IntelligenceRequest): Prom
   const secondPass = intelligenceOutputSchema.safeParse(normalized);
   const schemaSecondPassMs = Date.now() - schemaSecondStartedAt;
   if (secondPass.success) {
-    const enrichedOutput = await enrichWithResolvedLocations(postProcessTinyCaptionOutput(secondPass.data, req), req.source);
+    const enrichedOutput = finalizeOutputForUi(
+      await enrichWithResolvedLocations(postProcessTinyCaptionOutput(secondPass.data, req), req.source),
+      req,
+      "tiny_caption_output",
+    );
     return {
       output: enrichedOutput,
       validationErrors: formatZodErrors(firstPass.error),
@@ -1026,14 +1063,14 @@ export async function runTinyCaptionIntelligence(req: IntelligenceRequest): Prom
   }
 
   return {
-    output: postProcessTinyCaptionOutput({
+    output: finalizeOutputForUi(postProcessTinyCaptionOutput({
       ...normalized,
       status: "needs_review",
       visibility: {
         ...normalized.visibility,
         reason: "Tiny caption schema validation failed. Manual review required.",
       },
-    }, req),
+    }, req), req, "tiny_caption_output"),
     validationErrors: [
       ...formatZodErrors(firstPass.error),
       ...formatZodErrors(secondPass.error),

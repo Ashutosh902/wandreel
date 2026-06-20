@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeIntelligenceOutput } from "../normalize";
+import { isInstagramMetadataBoilerplateName, normalizeIntelligenceOutput, sanitizeIntelligenceOutputEntityNames } from "../normalize";
 
 test("normalizer maps aliases, dedupes, clamps confidence and sets categoriesPresent", () => {
   const out = normalizeIntelligenceOutput({
@@ -135,4 +135,81 @@ test("normalizer repairs invalid l2 and removes saved visited from intent", () =
   assert.equal(out.entities[0]?.intent?.l1, "taste");
   assert.equal(out.entities[0]?.intent?.l2, "Cafe");
   assert.deepEqual(out.entities[0]?.intent?.l3, ["Coffee spot", "Marathahalli hangout"]);
+});
+
+test("sanitizer rejects instagram metadata boilerplate place names", () => {
+  assert.equal(
+    isInstagramMetadataBoilerplateName("8,041 likes, 29 comments - rishikarajputchaudhary on April 19, 2026: \"Cutes"),
+    true,
+  );
+  assert.equal(
+    isInstagramMetadataBoilerplateName("&quot;8,041 likes, 29 comments - creator on April 19, 2026&quot;"),
+    true,
+  );
+});
+
+test("sanitizer keeps normal venue names", () => {
+  assert.equal(isInstagramMetadataBoilerplateName("Queen's Pod"), false);
+  assert.equal(isInstagramMetadataBoilerplateName("Eva Cafe"), false);
+  assert.equal(isInstagramMetadataBoilerplateName("The Travel Cafe Gangtok"), false);
+});
+
+test("sanitizer replaces rejected only entity with safe placeholder", () => {
+  const sanitized = sanitizeIntelligenceOutputEntityNames({
+    source: {
+      url: "https://www.instagram.com/p/test",
+      platform: "instagram",
+      title: "Untitled",
+      creator: null,
+      sourceType: "mixed_discovery",
+    },
+    placeCollections: [],
+    categoriesPresent: ["eat"],
+    weakMentions: [],
+    showIn: { eat: true, do: false, stay: false, see: false },
+    structuredEntities: [
+      {
+        name: "8,041 likes, 29 comments - rishikarajputchaudhary on April 19, 2026: \"Cutes",
+        category: "eat",
+        locality: "Tadong",
+        city: "Gangtok",
+        state: "Sikkim",
+        country: "India",
+        address: null,
+        confidence: "medium",
+        googleMapsQuery: "bad query",
+        evidenceText: "metadata",
+      },
+    ],
+    entities: [
+      {
+        category: "eat",
+        name: "8,041 likes, 29 comments - rishikarajputchaudhary on April 19, 2026: \"Cutes",
+        entityType: "place",
+        city: "Gangtok",
+        state: "Sikkim",
+        country: "India",
+        locality: "Tadong",
+        tags: [],
+        details: {},
+        level2: { category: "eat", cuisineType: null, mealType: null, dietaryTags: [], vibeTags: [], priceTier: null },
+        googleMapsQuery: "bad query",
+        sourceEvidence: "metadata",
+        confidence: "medium",
+      },
+    ],
+    visibility: {
+      showIn: ["eat"],
+      doNotShowIn: ["do", "stay", "see"],
+      reason: "Original reason",
+    },
+    status: "ready",
+  });
+
+  assert.equal(sanitized.events.length, 1);
+  assert.equal(sanitized.output.structuredEntities[0]?.name, "Detected place");
+  assert.equal(sanitized.output.structuredEntities[0]?.confidence, "low");
+  assert.equal(sanitized.output.entities[0]?.name, "Detected place");
+  assert.equal(sanitized.output.status, "needs_review");
+  assert.equal(sanitized.output.visibility.reason, "instagram_metadata_boilerplate");
 });
