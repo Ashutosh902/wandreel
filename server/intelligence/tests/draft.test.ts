@@ -98,6 +98,123 @@ test("draft heuristic returns needs_review when OCR is only slogan-like generic 
   assert.equal(output.structuredEntities[0].evidenceText, "OCR text insufficient");
 });
 
+test("generic caption phrase must not become entity name", () => {
+  const output = buildDraftIntelligenceOutput({
+    mode: "deep",
+    metadata: {
+      sourceUrl: "https://example.com/reel",
+      canonicalUrl: "https://example.com/reel",
+      platform: "instagram",
+      title: "Untitled",
+      description: "Cutest pinteresty cafe in Sikkim",
+      siteName: "Instagram",
+      imageUrl: null,
+      fetchedAtIso: new Date().toISOString(),
+      provider: "instagram_script",
+      commentEvidence: {
+        attempted: true,
+        timedOut: false,
+        pinnedComment: null,
+        topComments: [],
+        creatorReplies: [],
+        commentsFetchedCount: 0,
+        commentRepliesFetchedCount: 0,
+        creatorReplyCount: 0,
+        provider: "instagram_script",
+        reason: null,
+      },
+    },
+    transcript: null,
+    ocr: null,
+    source: "https://example.com/reel",
+    platform: "instagram",
+    canonicalUrl: "https://example.com/reel",
+    combinedTextRaw: "",
+    combinedTextClean: "",
+  });
+
+  assert.equal(output.structuredEntities[0].name, "Detected place");
+  assert.equal(output.visibility.reason, "caption_has_category_no_venue_name");
+});
+
+test("metadata boilerplate must not become entity name", () => {
+  const output = buildDraftIntelligenceOutput({
+    mode: "deep",
+    metadata: {
+      sourceUrl: "https://example.com/reel",
+      canonicalUrl: "https://example.com/reel",
+      platform: "instagram",
+      title: "8041 likes, 29 comments - rishikarajputchaudhary on April 19, 2026",
+      description: "",
+      siteName: "Instagram",
+      imageUrl: null,
+      fetchedAtIso: new Date().toISOString(),
+      provider: "instagram_script",
+      commentEvidence: {
+        attempted: false,
+        timedOut: false,
+        pinnedComment: null,
+        topComments: [],
+        creatorReplies: [],
+        commentsFetchedCount: 0,
+        commentRepliesFetchedCount: 0,
+        creatorReplyCount: 0,
+        provider: "instagram_script",
+        reason: null,
+      },
+    },
+    transcript: null,
+    ocr: null,
+    source: "https://example.com/reel",
+    platform: "instagram",
+    canonicalUrl: "https://example.com/reel",
+    combinedTextRaw: "",
+    combinedTextClean: "",
+  });
+
+  assert.equal(output.structuredEntities[0].name, "Detected place");
+});
+
+test("creator reply venue address outranks generic caption text", () => {
+  const output = buildDraftIntelligenceOutput({
+    mode: "deep",
+    metadata: {
+      sourceUrl: "https://example.com/reel",
+      canonicalUrl: "https://example.com/reel",
+      platform: "instagram",
+      title: "Untitled",
+      description: "Cutest pinteresty cafe in Sikkim",
+      siteName: "Instagram",
+      imageUrl: null,
+      fetchedAtIso: new Date().toISOString(),
+      provider: "instagram_script",
+      commentEvidence: {
+        attempted: true,
+        timedOut: false,
+        pinnedComment: null,
+        topComments: [],
+        creatorReplies: ["Queen's Pod, 16 Adampool, Lumsey, Tadong, Gangtok, Sikkim 737102"],
+        commentsFetchedCount: 1,
+        commentRepliesFetchedCount: 1,
+        creatorReplyCount: 1,
+        provider: "instagram_script",
+        reason: null,
+      },
+    },
+    transcript: null,
+    ocr: null,
+    source: "https://example.com/reel",
+    platform: "instagram",
+    canonicalUrl: "https://example.com/reel",
+    combinedTextRaw: "",
+    combinedTextClean: "",
+  });
+
+  assert.equal(output.structuredEntities[0].name, "Queen's Pod");
+  assert.equal(output.structuredEntities[0].locality, "Tadong");
+  assert.equal(output.status, "ready");
+});
+
 test("final OCR ranking keeps venue-like entity ahead of slogan-like output", () => {
   const source = {
     mode: "deep",

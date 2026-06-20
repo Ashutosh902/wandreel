@@ -68,6 +68,13 @@ type AttemptExecutionProfile = {
   ocrAttempted: boolean;
 };
 
+type RetryCacheDecision = {
+  bypass: boolean;
+  reason: string | null;
+  cachedStatus: string | null;
+  cachedAcceptedAfter: OrchestrationTrace["acceptedAfter"] | null;
+};
+
 type AttemptExecutionProfileEntry = {
   expiresAt: number;
   profile: AttemptExecutionProfile;
@@ -216,6 +223,88 @@ function buildAttemptCacheKey(mode: ExtractionMode, url: string, attemptNumber: 
 
 function buildSharedCacheKey(mode: ExtractionMode, url: string): string {
   return `${mode}:${canonicalizeUrl(url)}`;
+}
+
+function getCachedResultStatus(result: ExtractionResult | null): string | null {
+  if (!result) return null;
+  const debug = result.debug && typeof result.debug === "object"
+    ? (result.debug as Record<string, any>)
+    : null;
+  const explicitStatusRaw =
+    debug?.fastPathIntelligence?.result?.output?.status ??
+    debug?.fastPath?.result?.output?.status ??
+    null;
+  if (typeof explicitStatusRaw === "string" && explicitStatusRaw.trim()) {
+    return explicitStatusRaw;
+  }
+  const acceptedAfterRaw = debug
+    ? debug?.orchestration?.acceptedAfter
+    : null;
+  return typeof acceptedAfterRaw === "string" ? acceptedAfterRaw : null;
+}
+
+function cachedResultLooksGenericPlaceholder(result: ExtractionResult | null): boolean {
+  if (!result) return false;
+  const transcriptText = String(result.transcript?.text || "").trim();
+  const ocrText = String(result.ocr?.text || "").trim();
+  const hasVisualCandidate = Boolean(result.visualFallback?.selectedCandidate);
+  if (transcriptText.length >= 12 || ocrText.length >= 12 || hasVisualCandidate) {
+    return false;
+  }
+
+  const metadataText = `${String(result.metadata?.title || "")}\n${String(result.metadata?.description || "")}`.toLowerCase();
+  if (!metadataText.trim()) return false;
+
+  const looksLikeBoilerplate =
+    /\blikes?\b/.test(metadataText) ||
+    /\bcomments?\b/.test(metadataText) ||
+    /\bon instagram:/.test(metadataText) ||
+    /@\w+/.test(metadataText) ||
+    /\bon (january|february|march|april|may|june|july|august|september|october|november|december)\b/.test(metadataText);
+  const looksLikeGenericCaption =
+    /\bpinteresty\s+caf[eé]\b/.test(metadataText) ||
+    /\bcute\s+caf[eé]\b/.test(metadataText) ||
+    /\bcute\s+aesthetic\b/.test(metadataText) ||
+    /\baesthetic\s+caf[eé]\b/.test(metadataText) ||
+    /\bhidden\s+gem\s+caf[eé]\b/.test(metadataText) ||
+    /\bcutest\s+caf[eé]\b/.test(metadataText) ||
+    /\bmust\s+visit\s+place\b/.test(metadataText);
+
+  return looksLikeBoilerplate || looksLikeGenericCaption;
+}
+
+export function getRetryCacheDecision(input: {
+  attemptNumber: number;
+  triggerType: ExtractionTriggerType;
+  cachedResult: ExtractionResult | null;
+}): RetryCacheDecision {
+  const cachedAcceptedAfterRaw = input.cachedResult?.debug && typeof input.cachedResult.debug === "object"
+    ? (input.cachedResult.debug as Record<string, any>)?.orchestration?.acceptedAfter
+    : null;
+  const cachedAcceptedAfter =
+    cachedAcceptedAfterRaw === "description" ||
+    cachedAcceptedAfterRaw === "transcript" ||
+    cachedAcceptedAfterRaw === "ocr" ||
+    cachedAcceptedAfterRaw === "visualFallback" ||
+    cachedAcceptedAfterRaw === "manual_review"
+      ? cachedAcceptedAfterRaw
+      : null;
+  const cachedStatus = getCachedResultStatus(input.cachedResult);
+  const cachedLooksGenericPlaceholder = cachedResultLooksGenericPlaceholder(input.cachedResult);
+  const shouldBypass =
+    input.attemptNumber >= 2 &&
+    input.triggerType === "retry" &&
+    (
+      cachedAcceptedAfter === "manual_review" ||
+      cachedStatus === "needs_review" ||
+      cachedLooksGenericPlaceholder
+    );
+  return {
+    bypass: shouldBypass,
+    reason: shouldBypass ? "manual_review_retry_requires_deeper_evidence" : null,
+    cachedStatus,
+    cachedAcceptedAfter,
+  };
 }
 
 export function getAttemptVisualFallbackPolicy(attemptNumber: number): AttemptVisualFallbackPolicy {
@@ -572,10 +661,21 @@ function buildExtractionDebug(input: {
       timedOut: Boolean(input.metadata.commentEvidence?.timedOut),
       provider: input.metadata.commentEvidence?.provider || null,
       reason: input.metadata.commentEvidence?.reason || null,
+      commentsFetchedCount: input.metadata.commentEvidence?.commentsFetchedCount ?? 0,
+      commentRepliesFetchedCount: input.metadata.commentEvidence?.commentRepliesFetchedCount ?? 0,
+      creatorReplyCount: input.metadata.commentEvidence?.creatorReplyCount ?? 0,
       pinnedCommentIncluded: Boolean(input.metadata.commentEvidence?.pinnedComment),
       topCommentCount: Array.isArray(input.metadata.commentEvidence?.topComments)
         ? input.metadata.commentEvidence?.topComments.length
         : 0,
+      commentsUsedInPrompt:
+        (input.metadata.commentEvidence?.pinnedComment ? 1 : 0) +
+        (Array.isArray(input.metadata.commentEvidence?.topComments) ? input.metadata.commentEvidence.topComments.length : 0),
+      commentEvidenceSnippet:
+        input.metadata.commentEvidence?.pinnedComment ||
+        input.metadata.commentEvidence?.creatorReplies?.[0] ||
+        input.metadata.commentEvidence?.topComments?.[0] ||
+        null,
     },
     frameExtraction: input.screenshotsDebug?.frameExtraction || {
       didRun: false,
@@ -1551,7 +1651,28 @@ export async function runExtractionPipeline(input: {
     priorAttempt1Profile,
   });
   const cached = extractionCache.get(cacheKey) || extractionCache.get(sharedCacheKey);
-  if (!debugEnabled && cached && cached.expiresAt > nowMs()) {
+  const retryCacheDecision = cached && cached.expiresAt > nowMs()
+    ? getRetryCacheDecision({
+        attemptNumber,
+        triggerType,
+        cachedResult: cached.result,
+      })
+    : {
+        bypass: false,
+        reason: null,
+        cachedStatus: null,
+        cachedAcceptedAfter: null,
+      };
+  console.info("[extraction-cache]", {
+    attemptNumber,
+    triggerType,
+    cacheAvailable: Boolean(cached && cached.expiresAt > nowMs()),
+    cacheBypassedForRetry: retryCacheDecision.bypass,
+    cacheBypassReason: retryCacheDecision.reason,
+    cachedStatus: retryCacheDecision.cachedStatus,
+    cachedAcceptedAfter: retryCacheDecision.cachedAcceptedAfter,
+  });
+  if (!debugEnabled && cached && cached.expiresAt > nowMs() && !retryCacheDecision.bypass) {
     const cachedResult = cloneResult(cached.result);
     const priorAttemptHypotheses = attemptNumber >= 2
       ? Array.from({ length: attemptNumber - 1 }, (_, index) => index + 1)

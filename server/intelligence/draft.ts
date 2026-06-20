@@ -27,6 +27,48 @@ function titleLooksLikeSocialBoilerplate(title: string): boolean {
   return / on instagram:/i.test(title) || /follow\s+@/i.test(title) || /&quot;/i.test(title);
 }
 
+const GENERIC_CAPTION_NAME_PATTERNS = [
+  /\bpinteresty\s+caf[eé]\b/i,
+  /\bcute\s+caf[eé]\b/i,
+  /\bcute\s+aesthetic\b/i,
+  /\baesthetic\s+caf[eé]\b/i,
+  /\bhidden\s+gem\s+caf[eé]\b/i,
+  /\bcutest\s+caf[eé]\b/i,
+  /\bmust\s+visit\s+place\b/i,
+];
+
+function normalizeVenueName(value: string): string {
+  return value
+    .replace(/[\u2018\u2019]/g, "'")
+    .replace(/[\u201C\u201D]/g, "\"")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isMetadataBoilerplateName(value: string): boolean {
+  const normalized = normalizeVenueName(decodeEntities(value)).toLowerCase();
+  if (!normalized) return false;
+  return (
+    /\blikes?\b/.test(normalized) ||
+    /\bcomments?\b/.test(normalized) ||
+    /\bon instagram:/.test(normalized) ||
+    /@\w+/.test(normalized) ||
+    /\bon april\b|\bon may\b|\bon june\b|\bon july\b|\bon august\b|\bon september\b|\bon october\b|\bon november\b|\bon december\b|\bon january\b|\bon february\b|\bon march\b/.test(normalized)
+  );
+}
+
+function isGenericCaptionName(value: string): boolean {
+  const normalized = normalizeVenueName(decodeEntities(value));
+  if (!normalized) return false;
+  return GENERIC_CAPTION_NAME_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function isRejectedEntityName(value: string): "rejected_metadata_boilerplate_name" | "rejected_generic_caption_name" | null {
+  if (isMetadataBoilerplateName(value)) return "rejected_metadata_boilerplate_name";
+  if (isGenericCaptionName(value)) return "rejected_generic_caption_name";
+  return null;
+}
+
 function decodeEntities(input: string): string {
   return input
     .replace(/&quot;/gi, "\"")
@@ -57,6 +99,40 @@ function extractHashtags(text: string): string[] {
   return Array.from(text.matchAll(/#([a-z0-9_]+)/gi))
     .map((match) => String(match[1] || "").trim())
     .filter(Boolean);
+}
+
+type CommentVenueCandidate = {
+  name: string;
+  locality: string | null;
+  evidenceText: string;
+  reason: "comment_reply_address";
+};
+
+function scoreCommentLocalityPart(part: string, index: number, totalParts: number): number {
+  const normalized = normalizeVenueName(part).toLowerCase();
+  if (!normalized) return Number.NEGATIVE_INFINITY;
+
+  let score = index / Math.max(totalParts, 1);
+  if (/\d/.test(normalized)) score -= 6;
+  if (/\b(sikkim|india)\b/.test(normalized) || /\b\d{6}\b/.test(normalized)) score -= 4;
+  if (/\b(gangtok|city)\b/.test(normalized)) score -= 2;
+  if (/\b(road|rd|street|st|market|pool)\b/.test(normalized)) score -= 1;
+  if (/^[a-z][a-z\s-]{2,}$/.test(normalized)) score += 3;
+  if (/\b(nagar|layout|colony|beach|village)\b/.test(normalized)) score += 1;
+  return score;
+}
+
+function pickCommentLocality(parts: string[]): string | null {
+  let best: { value: string; score: number } | null = null;
+  for (let index = 1; index < parts.length; index += 1) {
+    const value = parts[index] || "";
+    const score = scoreCommentLocalityPart(value, index, parts.length);
+    if (!Number.isFinite(score)) continue;
+    if (!best || score > best.score) {
+      best = { value, score };
+    }
+  }
+  return best?.value || null;
 }
 
 function inferCategory(text: string): SupportedCategory {
@@ -313,14 +389,19 @@ export function inferOcrHeuristicCandidate(source: ExtractionResult): OcrHeurist
 
 function inferName(source: ExtractionResult): string {
   const title = decodeEntities(String(source.metadata?.title || "").trim());
-  if (title && title.toLowerCase() !== "untitled" && !titleLooksLikeSocialBoilerplate(title)) return title.slice(0, 80);
+  if (
+    title &&
+    title.toLowerCase() !== "untitled" &&
+    !titleLooksLikeSocialBoilerplate(title) &&
+    !isRejectedEntityName(title)
+  ) return title.slice(0, 80);
   const description = decodeEntities(String(source.metadata?.description || ""));
   const firstLine = description.split(/\r?\n/).map((s) => s.trim()).find(Boolean) || "";
   if (firstLine) {
     const cleaned = firstLine.replace(/^location\s*:\s*/i, "").trim();
     const scenicName = cleaned.match(/^([A-Z][A-Za-z0-9&' -]{2,60}?)(?:\s+is\b|\s+-\s+|\s+offers\b|\s+has\b)/)?.[1]?.trim();
-    if (scenicName) return scenicName.slice(0, 80);
-    if (cleaned && !titleLooksLikeSocialBoilerplate(cleaned)) return cleaned.slice(0, 80);
+    if (scenicName && !isRejectedEntityName(scenicName)) return scenicName.slice(0, 80);
+    if (cleaned && !titleLooksLikeSocialBoilerplate(cleaned) && !isRejectedEntityName(cleaned)) return cleaned.slice(0, 80);
   }
   const hashtags = extractHashtags(description);
   const scenicTag = hashtags.find((tag) => !GENERIC_HASHTAG_BLACKLIST.has(tag.toLowerCase()) && /(hill|hills|fort|falls|waterfall|lake|beach|temple|park|palace|museum|garden|viewpoint)/i.test(tag));
@@ -331,13 +412,42 @@ function inferName(source: ExtractionResult): string {
   return "Detected place";
 }
 
+function inferCommentVenueCandidate(source: ExtractionResult): CommentVenueCandidate | null {
+  const comments = source.metadata?.commentEvidence;
+  const commentPool = [
+    ...(comments?.creatorReplies || []),
+    comments?.pinnedComment || "",
+    ...(comments?.topComments || []),
+  ]
+    .map((item) => normalizeVenueName(decodeEntities(String(item || ""))))
+    .filter(Boolean);
+
+  for (const comment of commentPool) {
+    const parts = comment.split(",").map((item) => item.trim()).filter(Boolean);
+    if (parts.length < 2) continue;
+    const candidateName = parts[0] || "";
+    if (!candidateName || candidateName.length < 3 || isRejectedEntityName(candidateName)) continue;
+    const hasAddressSignal = /\d/.test(comment) || /\btadong\b|\bgangtok\b|\bsikkim\b|\broad\b|\bpool\b|\bmarket\b/i.test(comment);
+    if (!hasAddressSignal) continue;
+    const locality = pickCommentLocality(parts);
+    return {
+      name: candidateName.slice(0, 80),
+      locality: locality?.slice(0, 80) || null,
+      evidenceText: `Comment evidence: ${comment.slice(0, 220)}`,
+      reason: "comment_reply_address",
+    };
+  }
+
+  return null;
+}
+
 function hasMeaningfulText(input: string | null | undefined, minChars = 12): boolean {
   return String(input || "").trim().length >= minChars;
 }
 
 function hasNonGenericMetadataCandidate(source: ExtractionResult): boolean {
   const title = decodeEntities(String(source.metadata?.title || "").trim());
-  if (title && title.toLowerCase() !== "untitled" && !titleLooksLikeSocialBoilerplate(title)) {
+  if (title && title.toLowerCase() !== "untitled" && !titleLooksLikeSocialBoilerplate(title) && !isRejectedEntityName(title)) {
     return true;
   }
 
@@ -347,6 +457,7 @@ function hasNonGenericMetadataCandidate(source: ExtractionResult): boolean {
   if (firstLine.length < 4) return false;
   if (!/[A-Za-z]{3,}/.test(firstLine)) return false;
   if (titleLooksLikeSocialBoilerplate(firstLine)) return false;
+  if (isRejectedEntityName(firstLine)) return false;
   return true;
 }
 
@@ -363,6 +474,7 @@ export function shouldSuppressGenericOcrOnlyEntity(source: ExtractionResult): bo
 
 export function buildDraftIntelligenceOutput(source: ExtractionResult): IntelligenceOutput {
   const ocrCandidate = inferOcrHeuristicCandidate(source);
+  const commentCandidate = inferCommentVenueCandidate(source);
   const joinedText = [
     source.metadata?.title || "",
     source.metadata?.description || "",
@@ -372,14 +484,27 @@ export function buildDraftIntelligenceOutput(source: ExtractionResult): Intellig
 
   const inferredName = inferName(source);
   const shouldSuppressGenericEntity = shouldSuppressGenericOcrOnlyEntity(source);
+  const rejectedInferredReason = isRejectedEntityName(inferredName);
+  const captionHasCategoryNoVenueName =
+    !commentCandidate &&
+    !ocrCandidate &&
+    inferredName === "Detected place" &&
+    !hasNonGenericMetadataCandidate(source) &&
+    /\b(cafe|café|restaurant|food|coffee|hotel|stay|hostel|resort|activity|adventure|waterfall|beach|temple|fort|park|museum)\b/i.test(joinedText);
+  const rejectedOrPlaceholderReason =
+    rejectedInferredReason || captionHasCategoryNoVenueName
+      ? "caption_has_category_no_venue_name"
+      : null;
 
-  const category = ocrCandidate?.category || inferCategory(joinedText);
-  const name = shouldSuppressGenericEntity ? "Detected place" : (ocrCandidate?.name || inferredName);
+  const category = commentCandidate ? "eat" : (ocrCandidate?.category || inferCategory(joinedText));
+  const name = shouldSuppressGenericEntity
+    ? "Detected place"
+    : (commentCandidate?.name || ocrCandidate?.name || (rejectedInferredReason ? "Detected place" : inferredName));
   const localityCandidate = decodeEntities(String(source.metadata?.description || ""))
     .split(",")
     .map((s) => s.trim())
     .find((s) => /road|city|nagar|karnataka|bihar|india|mangalore|patna/i.test(s)) || null;
-  const locality = ocrCandidate?.locality || (localityCandidate && localityCandidate.length <= 60 ? localityCandidate : null);
+  const locality = commentCandidate?.locality || ocrCandidate?.locality || (localityCandidate && localityCandidate.length <= 60 ? localityCandidate : null);
   const intent =
     category === "eat"
       ? { l1: "taste" as const, l2: /cafe|café|coffee/i.test(joinedText) ? "Cafe" : "Restaurant", l3: [] }
@@ -419,11 +544,11 @@ export function buildDraftIntelligenceOutput(source: ExtractionResult): Intellig
         state: null,
         country: "India",
         address: null,
-        confidence: shouldSuppressGenericEntity ? "low" : (ocrCandidate?.confidence || "low"),
+        confidence: commentCandidate ? "high" : (shouldSuppressGenericEntity ? "low" : (ocrCandidate?.confidence || "low")),
         googleMapsQuery: [name, locality].filter(Boolean).join(" ").trim() || name,
         evidenceText: shouldSuppressGenericEntity
-          ? "OCR text insufficient"
-          : (ocrCandidate?.evidenceText || "Draft heuristic inference from extracted metadata"),
+          ? (rejectedInferredReason ? rejectedInferredReason : "OCR text insufficient")
+          : (commentCandidate?.evidenceText || ocrCandidate?.evidenceText || rejectedOrPlaceholderReason || "Draft heuristic inference from extracted metadata"),
         intent,
       },
     ],
@@ -448,9 +573,9 @@ export function buildDraftIntelligenceOutput(source: ExtractionResult): Intellig
                 : { category: "see", placeType: null, experienceTag: null, vibeTags: [], entryFeeSignal: null },
         googleMapsQuery: [name, locality].filter(Boolean).join(" ").trim() || name,
         sourceEvidence: shouldSuppressGenericEntity
-          ? "OCR text insufficient"
-          : (ocrCandidate?.evidenceText || "Draft heuristic inference from extracted metadata"),
-        confidence: shouldSuppressGenericEntity ? "low" : (ocrCandidate?.confidence || "low"),
+          ? (rejectedInferredReason ? rejectedInferredReason : "OCR text insufficient")
+          : (commentCandidate?.evidenceText || ocrCandidate?.evidenceText || rejectedOrPlaceholderReason || "Draft heuristic inference from extracted metadata"),
+        confidence: commentCandidate ? "high" : (shouldSuppressGenericEntity ? "low" : (ocrCandidate?.confidence || "low")),
         intent,
       },
     ],
@@ -458,11 +583,15 @@ export function buildDraftIntelligenceOutput(source: ExtractionResult): Intellig
       showIn: [category],
       doNotShowIn: ["eat", "do", "stay", "see"].filter((v) => v !== category),
       reason: shouldSuppressGenericEntity
-        ? "OCR text insufficient"
-        : ocrCandidate
+        ? (rejectedInferredReason ? "caption_has_category_no_venue_name" : "OCR text insufficient")
+        : rejectedOrPlaceholderReason
+          ? rejectedOrPlaceholderReason
+        : commentCandidate
+          ? "Draft response generated from creator comment/reply evidence. Async job provides final model output."
+          : ocrCandidate
           ? "Draft response generated from OCR evidence. Async job provides final model output."
           : "Draft response generated for fast UX. Async job provides final model output.",
     },
-    status: ocrCandidate ? "ready" : "needs_review",
+    status: commentCandidate || ocrCandidate ? "ready" : "needs_review",
   };
 }

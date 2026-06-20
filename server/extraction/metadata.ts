@@ -135,6 +135,10 @@ function emptyCommentEvidence(overrides?: Partial<MetadataCommentEvidence>): Met
     timedOut: false,
     pinnedComment: null,
     topComments: [],
+    creatorReplies: [],
+    commentsFetchedCount: 0,
+    commentRepliesFetchedCount: 0,
+    creatorReplyCount: 0,
     provider: null,
     reason: null,
     ...overrides,
@@ -237,7 +241,8 @@ function fromYoutubeScript(parsed: any, sourceUrl: string, canonicalUrl: string)
 function fromInstagramScript(parsed: any, sourceUrl: string, canonicalUrl: string): ExtractedMetadata | null {
   if (!parsed?.ok) return null;
   const pinnedComment = sanitizeCommentText(parsed?.pinnedComment);
-  const topComments = sanitizeCommentList(parsed?.topComments ?? parsed?.comments, 3).filter(
+  const creatorReplies = sanitizeCommentList(parsed?.creatorReplies, 3);
+  const topComments = sanitizeCommentList([...(parsed?.creatorReplies ?? []), ...(parsed?.topComments ?? parsed?.comments ?? [])], 5).filter(
     (item) => item.toLowerCase() !== String(pinnedComment || "").toLowerCase(),
   );
   const commentFetchAttempted = Boolean(parsed?.commentFetchAttempted);
@@ -255,6 +260,10 @@ function fromInstagramScript(parsed: any, sourceUrl: string, canonicalUrl: strin
       attempted: commentFetchAttempted,
       pinnedComment,
       topComments,
+      creatorReplies,
+      commentsFetchedCount: Number(parsed?.commentsFetchedCount) || topComments.length,
+      commentRepliesFetchedCount: Number(parsed?.commentRepliesFetchedCount) || creatorReplies.length,
+      creatorReplyCount: Number(parsed?.creatorReplyCount) || creatorReplies.length,
       provider: "instagram_script",
       reason: commentFetchAttempted && !pinnedComment && topComments.length === 0 ? "comments_not_available" : null,
     }),
@@ -280,13 +289,18 @@ export async function extractInstagramCommentEvidence(sourceUrl: string): Promis
   }
 
   const pinnedComment = sanitizeCommentText(parsed.pinnedComment);
-  const topComments = sanitizeCommentList(parsed.topComments ?? parsed.comments, 3).filter(
+  const creatorReplies = sanitizeCommentList(parsed.creatorReplies, 3);
+  const topComments = sanitizeCommentList([...(parsed.creatorReplies ?? []), ...(parsed.topComments ?? parsed.comments ?? [])], 5).filter(
     (item) => item.toLowerCase() !== String(pinnedComment || "").toLowerCase(),
   );
   return emptyCommentEvidence({
     attempted: true,
     pinnedComment,
     topComments,
+    creatorReplies,
+    commentsFetchedCount: Number(parsed.commentsFetchedCount) || topComments.length,
+    commentRepliesFetchedCount: Number(parsed.commentRepliesFetchedCount) || creatorReplies.length,
+    creatorReplyCount: Number(parsed.creatorReplyCount) || creatorReplies.length,
     provider: "instagram_script",
     reason: pinnedComment || topComments.length > 0 ? null : "comments_not_available",
   });

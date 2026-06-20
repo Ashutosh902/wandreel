@@ -12,6 +12,10 @@ export type MetadataCommentEvidence = {
   timedOut: boolean;
   pinnedComment: string | null;
   topComments: string[];
+  creatorReplies?: string[];
+  commentsFetchedCount?: number;
+  commentRepliesFetchedCount?: number;
+  creatorReplyCount?: number;
   provider: "instagram_script" | "public_meta" | "fallback" | null;
   reason: string | null;
 };

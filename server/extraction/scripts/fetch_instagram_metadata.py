@@ -108,18 +108,37 @@ def fetch_authenticated(shortcode: str, comments_limit: int, include_comments: b
         owner = str(getattr(post, "owner_username", "") or "").strip()
         pinned_comment = ""
         top_comments: list[str] = []
+        creator_replies: list[str] = []
+        comments_fetched_count = 0
+        comment_replies_fetched_count = 0
+        creator_reply_count = 0
         if include_comments and comments_limit > 0:
             try:
                 for c in post.get_comments():
                     text = str(getattr(c, "text", "") or "").strip()
                     if not text:
                         continue
+                    comments_fetched_count += 1
                     is_pinned = bool(getattr(c, "is_pinned", False) or getattr(c, "pinned", False))
                     if is_pinned and not pinned_comment:
                         pinned_comment = text
-                        continue
-                    top_comments.append(text)
-                    if len(top_comments) >= comments_limit:
+                    elif len(top_comments) < comments_limit:
+                        top_comments.append(text)
+                    answers = getattr(c, "answers", None)
+                    if answers:
+                        for answer in answers:
+                            reply_text = str(getattr(answer, "text", "") or "").strip()
+                            if not reply_text:
+                                continue
+                            comment_replies_fetched_count += 1
+                            reply_owner = str(getattr(getattr(answer, "owner", None), "username", "") or "").strip()
+                            if owner and reply_owner.lower() == owner.lower():
+                                creator_reply_count += 1
+                                if len(creator_replies) < comments_limit:
+                                    creator_replies.append(reply_text)
+                            elif len(top_comments) < comments_limit:
+                                top_comments.append(reply_text)
+                    if len(top_comments) >= comments_limit and len(creator_replies) >= comments_limit:
                         break
             except Exception:
                 # Comments often fail due to privacy/rate limits; keep caption if available.
@@ -134,7 +153,11 @@ def fetch_authenticated(shortcode: str, comments_limit: int, include_comments: b
             "comments": top_comments,
             "pinnedComment": pinned_comment,
             "topComments": top_comments,
+            "creatorReplies": creator_replies,
             "commentFetchAttempted": include_comments,
+            "commentsFetchedCount": comments_fetched_count,
+            "commentRepliesFetchedCount": comment_replies_fetched_count,
+            "creatorReplyCount": creator_reply_count,
             "source": "instaloader_auth",
             "authenticated": True,
         }
