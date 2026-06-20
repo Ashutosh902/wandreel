@@ -114,6 +114,7 @@ type ExtractionDebugTimings = {
   commentsMs: number;
   descriptionFastExtractorMs: number;
   descriptionProbeMs: number;
+  transcriptTimeoutMs: number;
   transcriptProbeMs: number;
   transcriptMs: number;
   frameExtractionMs: number;
@@ -143,6 +144,7 @@ const attemptExecutionProfileCache = new Map<string, AttemptExecutionProfileEntr
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_METADATA_BUDGET_MS = 12000;
 const DEFAULT_TRANSCRIPT_BUDGET_MS = 60000;
+const ATTEMPT1_TRANSCRIPT_BUDGET_MS = 20000;
 const DEFAULT_COMMENT_BUDGET_MS = 1500;
 
 function getNumberEnv(name: string, fallback: number): number {
@@ -745,18 +747,20 @@ async function readMetadata(
 
 async function readTranscript(
   metadata: ExtractionResult["metadata"],
-  options?: { memoryTracker?: ReturnType<typeof createMemoryTracker> },
-): Promise<{ transcript: TranscriptResult; transcriptMs: number }> {
+  options?: { memoryTracker?: ReturnType<typeof createMemoryTracker>; transcriptTimeoutMs?: number },
+): Promise<{ transcript: TranscriptResult; transcriptMs: number; transcriptTimeoutMs: number }> {
   const transcriptStartedAt = nowMs();
+  const transcriptTimeoutMs = options?.transcriptTimeoutMs ?? getNumberEnv("EXTRACTION_TRANSCRIPT_BUDGET_MS", DEFAULT_TRANSCRIPT_BUDGET_MS);
   options?.memoryTracker?.checkpoint("before_transcript_whisper", {
     extra: {
       platform: metadata.platform,
       metadataProvider: metadata.provider,
+      transcriptTimeoutMs,
     },
   });
   const transcript = await withBudget(
     enrichWithTranscript(metadata),
-    getNumberEnv("EXTRACTION_TRANSCRIPT_BUDGET_MS", DEFAULT_TRANSCRIPT_BUDGET_MS),
+    transcriptTimeoutMs,
     () => ({ attempted: true, used: false, source: null, text: "", reason: "timeout" }),
   );
   const transcriptMs = nowMs() - transcriptStartedAt;
@@ -767,9 +771,15 @@ async function readTranscript(
       transcriptSource: transcript.source ?? null,
       transcriptChars: String(transcript.text || "").trim().length,
       transcriptReason: transcript.reason ?? null,
+      transcriptTimeoutMs,
     },
   });
-  return { transcript, transcriptMs };
+  return { transcript, transcriptMs, transcriptTimeoutMs };
+}
+
+export function getTranscriptTimeoutMsForAttempt(attemptNumber: number): number {
+  if (attemptNumber <= 1) return ATTEMPT1_TRANSCRIPT_BUDGET_MS;
+  return getNumberEnv("EXTRACTION_TRANSCRIPT_BUDGET_MS", DEFAULT_TRANSCRIPT_BUDGET_MS);
 }
 
 function mergeOcrTexts(parts: string[]): string {
@@ -1342,6 +1352,7 @@ function buildResult(input: {
   llmCallsBeforeResponse?: number;
   transcript: TranscriptResult | null;
   transcriptMs: number;
+  transcriptTimeoutMs?: number;
   descriptionProbeMs?: number;
   transcriptProbeMs?: number;
   ocr: OcrResult | null;
@@ -1486,6 +1497,7 @@ function buildResult(input: {
         commentsMs: input.commentsMs ?? 0,
         descriptionFastExtractorMs: input.descriptionProbeMs ?? 0,
         descriptionProbeMs: input.descriptionProbeMs ?? 0,
+        transcriptTimeoutMs: input.transcriptTimeoutMs ?? getTranscriptTimeoutMsForAttempt(input.attemptNumber),
         transcriptProbeMs: input.transcriptProbeMs ?? 0,
         transcriptMs: input.transcriptMs,
         frameExtractionMs: input.frameExtractionMs ?? 0,
@@ -1595,6 +1607,7 @@ export async function runExtractionPipeline(input: {
     memoryTracker,
   });
   await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "metadata_done", "Metadata fetched.");
+  const transcriptTimeoutMs = getTranscriptTimeoutMsForAttempt(attemptNumber);
 
   if (input.mode === "quick") {
     const orchestration = createTrace({
@@ -1620,6 +1633,7 @@ export async function runExtractionPipeline(input: {
       llmCallsBeforeResponse: 0,
       transcript: { attempted: false, used: false, source: null, text: "", reason: "quick_mode" },
       transcriptMs: 0,
+      transcriptTimeoutMs,
       descriptionProbeMs: 0,
       transcriptProbeMs: 0,
       ocr: { attempted: false, used: false, text: "", reason: "quick_mode" },
@@ -1798,6 +1812,7 @@ export async function runExtractionPipeline(input: {
       llmCallsBeforeResponse,
       transcript,
       transcriptMs,
+      transcriptTimeoutMs,
       descriptionProbeMs,
       transcriptProbeMs,
       ocr: { attempted: false, used: false, text: "", reason: "skipped_description_accepted" },
@@ -2070,7 +2085,7 @@ export async function runExtractionPipeline(input: {
     orchestration.visualFrameCount = 0;
   } else {
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_started", "Reading transcript clues.");
-    const transcriptRead = await readTranscript(metadata, { memoryTracker });
+    const transcriptRead = await readTranscript(metadata, { memoryTracker, transcriptTimeoutMs });
     transcript = transcriptRead.transcript;
     transcriptMs = transcriptRead.transcriptMs;
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "transcript_done", "Transcript step finished.");
@@ -2120,6 +2135,7 @@ export async function runExtractionPipeline(input: {
       llmCallsBeforeResponse,
       transcript,
       transcriptMs,
+      transcriptTimeoutMs,
       descriptionProbeMs,
       transcriptProbeMs,
       ocr: { attempted: false, used: false, text: "", reason: "skipped_after_transcript" },
@@ -2216,6 +2232,7 @@ export async function runExtractionPipeline(input: {
     llmCallsBeforeResponse,
     transcript,
     transcriptMs,
+    transcriptTimeoutMs,
     descriptionProbeMs,
     transcriptProbeMs,
     ocr,
