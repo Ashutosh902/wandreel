@@ -18,6 +18,8 @@ import {
   type IntelligenceEntity,
   type PendingDetectionJob,
 } from "./addFlowState";
+import { createRunToastDeduper, type AddToastReason } from "./addToastDeduper";
+import { isPlaceNeedsManualReview, shouldShowImmediateDraftPlaces } from "./addDraftVisibility";
 import { buildIntentSubtitle, resolveEntityIntent } from "./intent";
 import { upsertSavedPlace } from "./savedPlaces";
 import {
@@ -70,6 +72,7 @@ type IntelligenceApiResponse = {
   ok: boolean;
   jobId?: string;
   output?: {
+    status?: "ready" | "needs_review" | "no_supported_entity_found";
     structuredEntities?: IntelligenceEntity[];
   };
 };
@@ -222,6 +225,7 @@ export function AddScreen() {
   const pendingJobsRef = useRef<PendingDetectionJob[]>([]);
   const isAnalyzingRef = useRef(false);
   const analysisInFlightRef = useRef<{ key: string; runId: number } | null>(null);
+  const runToastDeduperRef = useRef(createRunToastDeduper());
   const prefilledSharedIntentIdRef = useRef<string | null>(null);
   const processedSharedIntentIdRef = useRef<string | null>(null);
   const getAnalyticsAnonymousId = () => {
@@ -294,6 +298,25 @@ export function AddScreen() {
     });
   };
 
+  const logAddFlowEvent = (event: string, details?: Record<string, unknown>) => {
+    console.info("[add-flow]", {
+      event,
+      source: "AddScreen",
+      ...details,
+    });
+  };
+
+  const showToastOnceForRun = (
+    clientRunId: string | number,
+    reason: AddToastReason,
+    toast: { message: string; variant: "info" | "error" | "success" },
+  ) => {
+    if (!runToastDeduperRef.current.shouldShow(clientRunId, reason)) {
+      return;
+    }
+    showToast(toast);
+  };
+
   const setAnalyzingState = (value: boolean) => {
     isAnalyzingRef.current = value;
     setIsAnalyzing(value);
@@ -327,8 +350,8 @@ export function AddScreen() {
     selectedDetectedCategory: "Auto-detect" | DetectedCategory;
     isPreviewVisible: boolean;
     linkInput: string;
-      pendingJobs: PendingDetectionJob[];
-  }) => {
+    pendingJobs: PendingDetectionJob[];
+  }, options?: { preserveAnalyzing?: boolean; reason?: string }) => {
     setLinkInput(draft.linkInput || "");
     setHasAnalyzed(draft.detectedPlaces.length > 0 || draft.pendingJobs.length > 0);
     setSelectedDetectedCategory(draft.pendingJobs.length > 0 ? "Auto-detect" : draft.selectedDetectedCategory || "Auto-detect");
@@ -337,10 +360,19 @@ export function AddScreen() {
       draft.pendingJobs[0] ? `pending-${draft.pendingJobs[0].runId}` : draft.detectedPlaces[0]?.id ?? null,
     );
     setPendingJobs(Array.isArray(draft.pendingJobs) ? draft.pendingJobs : []);
-    setIsAnalyzing(false);
+    if (!(options?.preserveAnalyzing ?? false)) {
+      setAnalyzingState(false);
+    }
+    logAddFlowEvent("add_cards_set", {
+      reason: options?.reason || "restore_draft_state",
+      count: draft.detectedPlaces.length,
+      pendingCount: draft.pendingJobs.length,
+      preserveAnalyzing: options?.preserveAnalyzing ?? false,
+    });
   };
 
-  const resetAddFlowState = (options?: { clearPersisted?: boolean }) => {
+  const resetAddFlowState = (options?: { clearPersisted?: boolean; reason?: string }) => {
+    runToastDeduperRef.current.resetAll();
     analyzeRunRef.current = Date.now();
     if (analysisTimerRef.current) {
       window.clearInterval(analysisTimerRef.current);
@@ -382,6 +414,10 @@ export function AddScreen() {
       clearPersistedAddDraft();
       clearLegacyAddStorage();
     }
+    logAddFlowEvent("add_cards_cleared", {
+      reason: options?.reason || "reset_add_flow_state",
+      clearPersisted: options?.clearPersisted ?? true,
+    });
   };
 
   const startAnalysisProgress = (message = "Reading the link...") => {
@@ -632,9 +668,9 @@ export function AddScreen() {
     const draft = readPersistedAddDraft();
     const shouldRestore = Boolean(draft && (draft.detectedPlaces.length > 0 || draft.pendingJobs.length > 0 || peekReviewRunId() !== null));
     if (draft && shouldRestore) {
-      restoreDraftState(draft);
+      restoreDraftState(draft, { reason: "mount_restore" });
     } else {
-      resetAddFlowState({ clearPersisted: true });
+      resetAddFlowState({ clearPersisted: true, reason: "mount_no_draft" });
     }
     if (IS_DEV) {
       console.debug("AddScreen mounted", {
@@ -657,11 +693,20 @@ export function AddScreen() {
 
   useEffect(() => {
     const syncFromStorage = () => {
+      if (isAnalyzingRef.current || detectedPlacesRef.current.length > 0 || pendingJobsRef.current.length > 0) {
+        logAddFlowEvent("add_stale_event_ignored", {
+          reason: "storage_update_while_live_state_present",
+          activeRunId: analyzeRunRef.current || null,
+          detectedCount: detectedPlacesRef.current.length,
+          pendingCount: pendingJobsRef.current.length,
+        });
+        return;
+      }
       const draft = readPersistedAddDraft();
       if (!draft) return;
       const shouldApply = draft.detectedPlaces.length > 0 || draft.pendingJobs.length > 0 || pendingJobs.length > 0 || peekReviewRunId() !== null;
       if (!shouldApply) return;
-      restoreDraftState(draft);
+      restoreDraftState(draft, { reason: "storage_sync" });
     };
     window.addEventListener(ADD_DRAFT_UPDATED_EVENT, syncFromStorage);
     return () => window.removeEventListener(ADD_DRAFT_UPDATED_EVENT, syncFromStorage);
@@ -677,8 +722,11 @@ export function AddScreen() {
         return;
       }
       prefilledSharedIntentIdRef.current = null;
-      resetAddFlowState({ clearPersisted: true });
-      logAddScreenState("AddScreen auth reset", {
+      logAddFlowEvent("add_stale_event_ignored", {
+        reason: "auth_reset_ignored_to_preserve_cards",
+        status: typeof nextStatus === "string" ? nextStatus : null,
+      });
+      logAddScreenState("AddScreen auth reset ignored", {
         status: typeof nextStatus === "string" ? nextStatus : null,
       });
     };
@@ -740,14 +788,7 @@ export function AddScreen() {
   };
 
   const isNeedsManualReview = (place: DetectedPlace) => {
-    const normalizedName = place.name.trim().toLowerCase();
-    const normalizedLocality = place.locality.trim().toLowerCase();
-    const hasEvidence = Boolean(String(place.evidenceText || "").trim());
-    return (
-      normalizedName === "detected place" ||
-      normalizedLocality === "unknown locality" ||
-      (!place.placeId && !hasEvidence)
-    );
+    return isPlaceNeedsManualReview(place);
   };
 
   const getRetryCountLabel = (retryCount: number) => {
@@ -846,10 +887,16 @@ export function AddScreen() {
     nextPlaces: DetectedPlace[],
     nextPendingJobs: PendingDetectionJob[],
     nextLinkInput: string,
+    reason = "sync_draft_state",
   ) => {
     setDetectedPlaces(nextPlaces);
     setPendingJobs(nextPendingJobs);
     setHasAnalyzed(nextPlaces.length > 0 || nextPendingJobs.length > 0);
+    logAddFlowEvent(nextPlaces.length > 0 || nextPendingJobs.length > 0 ? "add_cards_set" : "add_cards_cleared", {
+      reason,
+      count: nextPlaces.length,
+      pendingCount: nextPendingJobs.length,
+    });
     if (nextPlaces.length > 0 || nextPendingJobs.length > 0 || nextLinkInput.trim()) {
       writePersistedAddDraft({
         detectedPlaces: nextPlaces,
@@ -985,6 +1032,11 @@ export function AddScreen() {
     if (!response.ok || !response.body || !String(response.headers.get("content-type") || "").includes("text/event-stream")) {
       throw new Error("stream_unavailable");
     }
+    logAddFlowEvent("add_sse_connected", {
+      clientRunId: String(input.runId),
+      attemptNumber,
+      triggerType,
+    });
 
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
@@ -1008,6 +1060,12 @@ export function AddScreen() {
         if (!dataLines.length) continue;
         const payload = JSON.parse(dataLines.join("\n")) as ExtractionStreamEvent;
         if (analyzeRunRef.current !== input.runId) {
+          logAddFlowEvent("add_stale_event_ignored", {
+            reason: "stream_event_run_mismatch",
+            clientRunId: String(input.runId),
+            activeRunId: analyzeRunRef.current || null,
+            stage: payload.stage,
+          });
           clearUsefulEventTimer();
           controller.abort();
           return;
@@ -1031,13 +1089,25 @@ export function AddScreen() {
     try {
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          logAddFlowEvent("add_sse_closed", {
+            clientRunId: String(input.runId),
+            reason: finalResult ? "completed" : "reader_done",
+            usefulEventReceived,
+          });
+          break;
+        }
         processChunk(decoder.decode(value, { stream: true }));
         if (finalResult) {
           break;
         }
       }
     } catch (error) {
+      logAddFlowEvent("add_sse_error", {
+        clientRunId: String(input.runId),
+        reason: error instanceof Error ? error.message : "stream_error",
+        stalled,
+      });
       if (stalled) {
         throw new Error("stream_stalled");
       }
@@ -1100,6 +1170,9 @@ export function AddScreen() {
     }
 
     const runId = options?.runId ?? createAnalysisRunId();
+    if (!options?.runId) {
+      runToastDeduperRef.current.resetAll();
+    }
     const existingPlacesForRun = detectedPlacesRef.current.filter((item) => item.runId === runId);
     const existingPlace = existingPlacesForRun[0] ?? null;
     const existingPendingForRun = pendingJobsRef.current.find((item) => item.runId === runId) ?? null;
@@ -1183,6 +1256,12 @@ export function AddScreen() {
       attemptNumber,
       triggerType,
     });
+    logAddFlowEvent("add_analyze_start", {
+      clientRunId: String(runId),
+      attemptNumber,
+      triggerType,
+      urlHash: buildClientUrlHash(normalizedSourceUrl),
+    });
 
     const startedAt = Date.now();
     const pendingDraft: PendingDetectionJob = {
@@ -1201,7 +1280,7 @@ export function AddScreen() {
 
     const nextDraftPlaces = replaceRunPlaces(detectedPlacesRef.current, runId);
     const nextDraftPendingJobs = upsertPendingJob(pendingJobsRef.current, pendingDraft);
-    syncDraftState(nextDraftPlaces, nextDraftPendingJobs, normalizedSourceUrl);
+    syncDraftState(nextDraftPlaces, nextDraftPendingJobs, normalizedSourceUrl, "analysis_start_pending");
 
     try {
       let extraction: ExtractionApiResponse;
@@ -1217,7 +1296,8 @@ export function AddScreen() {
         const shouldFallbackToNonStream =
           reason === "stream_unavailable" ||
           reason === "stream_stalled" ||
-          reason === "stream_incomplete_no_useful_event";
+          reason === "stream_incomplete_no_useful_event" ||
+          reason === "stream_incomplete";
         if (!shouldFallbackToNonStream) throw error;
         setAnalysisStageCopy("Almost there...");
         logExtractionClientEvent("request_start", {
@@ -1246,7 +1326,14 @@ export function AddScreen() {
         if (!extractionResponse.ok || !extraction?.ok) throw new Error("extraction_failed");
       }
 
-      if (analyzeRunRef.current !== runId) return;
+      if (analyzeRunRef.current !== runId) {
+        logAddFlowEvent("add_stale_event_ignored", {
+          reason: "extraction_result_run_mismatch",
+          clientRunId: String(runId),
+          activeRunId: analyzeRunRef.current || null,
+        });
+        return;
+      }
       stopAnalysisProgress();
 
       const draftPlace = toDraftPlace(extraction, runId, normalizedSourceUrl, retryCount);
@@ -1262,6 +1349,7 @@ export function AddScreen() {
         replaceRunPlaces(detectedPlacesRef.current, runId),
         upsertPendingJob(pendingJobsRef.current, extractionPendingJob),
         normalizedSourceUrl,
+        "metadata_placeholder_ready",
       );
       logCardSourceEvent("placeholder_metadata", {
         clientRunId: String(runId),
@@ -1287,7 +1375,14 @@ export function AddScreen() {
         }),
       });
       const intelligence = (await intelligenceResponse.json()) as IntelligenceApiResponse;
-      if (analyzeRunRef.current !== runId) return;
+      if (analyzeRunRef.current !== runId) {
+        logAddFlowEvent("add_stale_event_ignored", {
+          reason: "draft_async_response_run_mismatch",
+          clientRunId: String(runId),
+          activeRunId: analyzeRunRef.current || null,
+        });
+        return;
+      }
       if (!intelligenceResponse.ok || !intelligence?.ok) throw new Error("intelligence_failed");
 
       const entities = intelligence.output?.structuredEntities ?? [];
@@ -1302,10 +1397,16 @@ export function AddScreen() {
         },
         runId,
       );
+      const visibleImmediatePlaces = shouldShowImmediateDraftPlaces(
+        resolvedPlaces,
+        intelligence.output?.status ?? null,
+      );
       logCardSourceEvent("draft_async_immediate", {
         clientRunId: String(runId),
         attemptNumber,
         entityCount: entities.length,
+        visibleEntityCount: visibleImmediatePlaces.length,
+        status: intelligence.output?.status ?? null,
         entities: entities.map((entity) => ({
           name: entity.name ?? null,
           category: entity.category ?? null,
@@ -1321,6 +1422,7 @@ export function AddScreen() {
           replaceRunPlaces(detectedPlacesRef.current, runId, finalizedPlaces),
           pendingJobsRef.current.filter((item) => item.runId !== runId),
           "",
+          "final_sync_result",
         );
         logCardSourceEvent("final_sync_result", {
           clientRunId: String(runId),
@@ -1341,18 +1443,26 @@ export function AddScreen() {
       const queuedPendingJob: PendingDetectionJob = {
         ...extractionPendingJob,
         jobId,
-        draftPlaces: resolvedPlaces,
+        draftPlaces: visibleImmediatePlaces,
       };
-      const nextVisiblePlaces = resolvedPlaces.length ? resolvedPlaces : [];
+      const nextVisiblePlaces = visibleImmediatePlaces.length ? visibleImmediatePlaces : [];
       syncDraftState(
         replaceRunPlaces(detectedPlacesRef.current, runId, nextVisiblePlaces),
         upsertPendingJob(pendingJobsRef.current, queuedPendingJob),
         normalizedSourceUrl,
+        "async_job_queued",
       );
       releaseAnalysisInFlight(runId);
       setAnalyzingState(false);
-    } catch {
-      if (analyzeRunRef.current !== runId) return;
+    } catch (error) {
+      if (analyzeRunRef.current !== runId) {
+        logAddFlowEvent("add_stale_event_ignored", {
+          reason: "analysis_error_run_mismatch",
+          clientRunId: String(runId),
+          activeRunId: analyzeRunRef.current || null,
+        });
+        return;
+      }
       stopAnalysisProgress();
       streamAbortRef.current?.abort();
       streamAbortRef.current = null;
@@ -1360,14 +1470,29 @@ export function AddScreen() {
       const preservedRunPlaces = pendingForRun
         ? getPreservedRunPlaces(detectedPlacesRef.current, pendingForRun)
         : [fallbackPlace];
+      const nextPendingJobs = pendingJobsRef.current.filter((item) => item.runId !== runId);
       syncDraftState(
         replaceRunPlaces(detectedPlacesRef.current, runId, preservedRunPlaces),
-        pendingJobsRef.current.filter((item) => item.runId !== runId),
+        nextPendingJobs,
         "",
+        "analysis_error_preserve_visible",
       );
       releaseAnalysisInFlight(runId);
       setAnalyzingState(false);
-      showToast({ message: "This link could not be analyzed.", variant: "error" });
+      if (preservedRunPlaces.length > 0) {
+        showToastOnceForRun(runId, "stream_incomplete", {
+          message: "Live updates disconnected. Keeping the latest card while analysis continues.",
+          variant: "info",
+        });
+      } else {
+        showToast({ message: "This link could not be analyzed.", variant: "error" });
+      }
+      logAddFlowEvent("add_sse_error", {
+        clientRunId: String(runId),
+        reason: error instanceof Error ? error.message : "analysis_failed",
+        preservedCount: preservedRunPlaces.length,
+        pendingCount: nextPendingJobs.length,
+      });
     }
   };
 
@@ -1392,6 +1517,12 @@ export function AddScreen() {
             const payload = await response.json();
             const job = payload?.job;
             if (!response.ok || !job) continue;
+            logAddFlowEvent("add_async_result_received", {
+              clientRunId: String(pending.runId),
+              jobId: pending.jobId,
+              status: job.status ?? null,
+              entityCount: Array.isArray(job.result?.output?.structuredEntities) ? job.result.output.structuredEntities.length : 0,
+            });
 
             if (job.status === "completed") {
               const entities = (job.result?.output?.structuredEntities || []) as IntelligenceEntity[];
@@ -1447,6 +1578,12 @@ export function AddScreen() {
               nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, getPreservedRunPlaces(nextPlaces, pending));
               nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
               didChange = true;
+              if (getPreservedRunPlaces(detectedPlacesRef.current, pending).length > 0) {
+                showToastOnceForRun(pending.runId, "async_failure_preserved_card", {
+                  message: "We couldn’t confirm the place yet. Keeping the latest card for review.",
+                  variant: "info",
+                });
+              }
             }
           } catch {
             if (Date.now() - pending.startedAtMs >= ADD_INTELLIGENCE_TIMEOUT_MS) {
@@ -1459,12 +1596,18 @@ export function AddScreen() {
               nextPlaces = replaceRunPlaces(nextPlaces, pending.runId, getPreservedRunPlaces(nextPlaces, pending));
               nextPendingJobs = nextPendingJobs.filter((item) => item.jobId !== pending.jobId);
               didChange = true;
+              if (getPreservedRunPlaces(detectedPlacesRef.current, pending).length > 0) {
+                showToastOnceForRun(pending.runId, "poll_failed", {
+                  message: "We couldn’t confirm the place yet. Keeping the latest card for review.",
+                  variant: "info",
+                });
+              }
             }
           }
         }
 
         if (!cancelled && didChange) {
-          syncDraftState(nextPlaces, nextPendingJobs, nextPendingJobs.length ? linkInput : "");
+          syncDraftState(nextPlaces, nextPendingJobs, nextPendingJobs.length ? linkInput : "", "async_poll_update");
           setSelectedDetectedCategory("Auto-detect");
         }
       } finally {
@@ -1897,6 +2040,7 @@ export function AddScreen() {
                       const retryCountLabel = getRetryCountLabel(retryCount);
                       const isRetrying = card.pending.isRetrying;
                       const isRetryDisabled = true;
+                      const isAwaitingAsyncFinal = Boolean(card.pending.jobId);
                       const pendingMessage = getRetryStatusMessage({
                         isLoading: true,
                         nextAttemptNumber: retryCount + 2,
@@ -1916,12 +2060,12 @@ export function AddScreen() {
                         <span className="wr-add-preview-loading-ring" />
                         <span className="wr-add-preview-loading-core" />
                       </div>
-                      <div className="wr-add-preview-body">
-                        <div className="wr-add-preview-topline">
-                          <p className="wr-add-preview-kicker">{index + 1} of {previewCards.length}</p>
-                        </div>
-                        <h4>Finding place details...</h4>
-                        <p>{pendingMessage || (isRetrying ? "We’re taking another look." : "We’re reading the link for you.")}</p>
+                        <div className="wr-add-preview-body">
+                          <div className="wr-add-preview-topline">
+                            <p className="wr-add-preview-kicker">{index + 1} of {previewCards.length}</p>
+                          </div>
+                        <h4>{isAwaitingAsyncFinal ? "Still analyzing..." : "Finding place details..."}</h4>
+                        <p>{isAwaitingAsyncFinal ? "We found a possible clue, but we’re confirming the place before showing it." : (pendingMessage || (isRetrying ? "We’re taking another look." : "We’re reading the link for you."))}</p>
                         <p className="wr-add-preview-supporting">Keep scrolling. You can come back anytime.</p>
                         {retryCountLabel ? <p className="wr-add-preview-retry-note">{retryCountLabel}</p> : null}
                         <div className="wr-add-preview-actions">
