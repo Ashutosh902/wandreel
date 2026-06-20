@@ -205,12 +205,9 @@ export function summarizeAttempt3ContextUsage(output: { structuredEntities?: Arr
   const entity = Array.isArray(output.structuredEntities) ? output.structuredEntities[0] : null;
   if (!entity) {
     return {
-      used: [],
-      ignored: [
-        ...priorContext.priorRejectedOrGenericNames,
-        ...priorContext.priorCategoryGuesses,
-        ...priorContext.priorLocalityCityStateGuesses,
-      ].slice(0, 10),
+      priorNamesIgnored: priorContext.priorRejectedOrGenericNames.slice(0, 8),
+      geoContextUsed: [],
+      categoryContextUsed: [],
       candidateReasoning: "No final entity selected. Prior context remained non-binding.",
     };
   }
@@ -218,22 +215,18 @@ export function summarizeAttempt3ContextUsage(output: { structuredEntities?: Arr
   const entityText = [entity.name, entity.category, entity.locality, entity.city, entity.state, entity.country, entity.evidenceText]
     .map((value) => String(value || "").toLowerCase())
     .join(" ");
-  const used = uniqueStrings([
-    ...priorContext.priorCategoryGuesses.filter((value) => entityText.includes(value.toLowerCase())),
-    ...priorContext.priorLocalityCityStateGuesses.filter((value) => entityText.includes(value.toLowerCase())),
-    ...priorContext.priorCommentReplyEvidence.filter((value) => entityText.includes(String(entity.locality || "").toLowerCase()) || entityText.includes(String(entity.name || "").toLowerCase())),
+  const geoContextUsed = uniqueStrings([
+    ...priorContext.priorLocalityCityStateGuesses.filter((value) => entityText.includes(value.toLowerCase()) || value.toLowerCase().split(",").some((part) => entityText.includes(part.trim()))),
+    ...priorContext.priorCommentReplyEvidence.filter((value) => entityText.includes(String(entity.locality || "").toLowerCase()) || entityText.includes(String(entity.city || "").toLowerCase()) || entityText.includes(String(entity.state || "").toLowerCase())),
   ], 8);
-  const ignored = uniqueStrings([
-    ...priorContext.priorRejectedOrGenericNames,
-    ...priorContext.priorAttemptHypotheses.flatMap((item) =>
-      item.possibleMatches
-        .map((match) => match.name && !entityText.includes(String(match.name).toLowerCase()) ? String(match.name) : null)
-        .filter(Boolean),
-    ),
-  ], 8);
+  const categoryContextUsed = uniqueStrings(
+    priorContext.priorCategoryGuesses.filter((value) => entityText.includes(value.toLowerCase())),
+    4,
+  );
   return {
-    used,
-    ignored,
+    priorNamesIgnored: priorContext.priorRejectedOrGenericNames.slice(0, 8),
+    geoContextUsed,
+    categoryContextUsed,
     candidateReasoning: trimText(entity.evidenceText, 240) || "Final entity derived from Attempt 3 evidence.",
   };
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildCombinedText } from "../combinedText";
-import { assessVerificationCandidate, classifyQueryShape, isSemanticMismatch, runVisualFallback, shouldTriggerVisualFallback } from "../visualFallback";
+import { assessVerificationCandidate, buildAttempt3SoftContext, classifyQueryShape, isSemanticMismatch, runVisualFallback, scoreAttempt3SoftConstraints, shouldTriggerVisualFallback } from "../visualFallback";
 import { getAttemptVisualFallbackPolicy, resolveAttemptRoute } from "../pipeline";
 
 test("combined text includes pinned and top comments before first intelligence pass", () => {
@@ -206,6 +206,76 @@ test("attempt 3 forced visual fallback does not stop on generic OCR when a frame
   assert.equal(result.attempted, true);
   assert.equal(result.triggered, true);
   assert.notEqual(result.reason, "sufficient_upstream_signal");
+});
+
+test("attempt 3 soft context ignores rejected generic prior names", () => {
+  const context = buildAttempt3SoftContext([
+    {
+      attemptNumber: 1,
+      categoryGuesses: ["eat"],
+      locationHints: ["Gangtok, Sikkim"],
+      possibleMatches: [
+        {
+          name: "pinteresty cafe",
+          categoryGuess: "eat",
+          locationHint: "Gangtok, Sikkim",
+        },
+      ],
+    },
+  ]);
+
+  assert.deepEqual(context.geoHints, ["Gangtok, Sikkim"]);
+  assert.deepEqual(context.categoryHints, ["eat"]);
+  assert.equal(context.ignoredPriorNames[0]?.reason, "rejected_generic_caption_name");
+});
+
+test("attempt 3 soft context boosts candidate inside geo context", () => {
+  const score = scoreAttempt3SoftConstraints({
+    candidate: {
+      query: "Hill Cafe Gangtok",
+      candidateName: "Hill Cafe",
+      categoryHint: "eat",
+      city: "Gangtok",
+      state: "Sikkim",
+      country: "India",
+      locationHint: "Gangtok, Sikkim, India",
+    },
+    priorAttemptHypotheses: [
+      {
+        categoryGuesses: ["eat"],
+        locationHints: ["Sikkim", "Gangtok"],
+      },
+    ],
+  });
+
+  assert.equal(score.geoContextBoostApplied > 0, true);
+  assert.equal(score.geoContextMismatchPenalty, 0);
+  assert.equal(score.categoryContextBoostApplied > 0, true);
+  assert.deepEqual(score.geoContextUsed.includes("Sikkim") || score.geoContextUsed.includes("Gangtok"), true);
+});
+
+test("attempt 3 soft context downranks candidate outside geo context", () => {
+  const score = scoreAttempt3SoftConstraints({
+    candidate: {
+      query: "Hill Cafe Shillong",
+      candidateName: "Hill Cafe",
+      categoryHint: "eat",
+      city: "Shillong",
+      state: "Meghalaya",
+      country: "India",
+      locationHint: "Shillong, Meghalaya, India",
+    },
+    priorAttemptHypotheses: [
+      {
+        categoryGuesses: ["eat"],
+        locationHints: ["Sikkim", "Gangtok"],
+      },
+    ],
+  });
+
+  assert.equal(score.geoContextBoostApplied, 0);
+  assert.equal(score.geoContextMismatchPenalty > 0, true);
+  assert.equal(score.categoryContextBoostApplied > 0, true);
 });
 
 test("attempt 2 uses long lane when attempt 1 accepted on fast path", () => {

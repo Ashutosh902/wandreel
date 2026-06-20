@@ -50,6 +50,22 @@ type VerificationAssessment = {
   hasPlaceLikeTextSignal: boolean;
 };
 
+type Attempt3SoftContext = {
+  geoHints: string[];
+  categoryHints: Array<"eat" | "do" | "stay" | "see">;
+  ignoredPriorNames: Array<{ name: string; reason: string }>;
+};
+
+type Attempt3SoftConstraintScore = {
+  geoContextBoostApplied: number;
+  geoContextMismatchPenalty: number;
+  categoryContextBoostApplied: number;
+  categoryContextMismatchPenalty: number;
+  geoContextUsed: string[];
+  categoryContextUsed: string[];
+  priorNamesIgnored: string[];
+};
+
 function getApiKey() {
   return String(
     process.env.GOOGLE_MAPS_API_KEY ||
@@ -106,6 +122,149 @@ function isNoiseLine(line: string): boolean {
 
 function sanitizeText(input: string): string {
   return normalizeWhitespace(String(input || "").replace(/[^\p{L}\p{N}\s,&'/-]/gu, " "));
+}
+
+function normalizeSimple(input: string): string {
+  return String(input || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function classifyRejectedPriorName(name: string): string | null {
+  const normalized = normalizeSimple(name);
+  if (!normalized) return null;
+  if (/\blikes?\b/.test(normalized) || /\bcomments?\b/.test(normalized) || /\bon (january|february|march|april|may|june|july|august|september|october|november|december)\b/.test(normalized)) {
+    return "rejected_metadata_boilerplate_name";
+  }
+  if (/\bpinteresty\s+caf(?:e)?\b/.test(normalized) || /\bcute\s+caf(?:e)?\b/.test(normalized) || /\bcute\s+aesthetic\b/.test(normalized) || /\baesthetic\s+caf(?:e)?\b/.test(normalized) || /\bhidden\s+gem\s+caf(?:e)?\b/.test(normalized) || /\bcutest\s+caf(?:e)?\b/.test(normalized) || /\bmust\s+visit\s+place\b/.test(normalized)) {
+    return "rejected_generic_caption_name";
+  }
+  return null;
+}
+
+function dedupeStrings(values: string[], max = 8): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const clean = value.replace(/\s+/g, " ").trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(clean);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+export function buildAttempt3SoftContext(priorAttemptHypotheses: unknown[] | null | undefined): Attempt3SoftContext {
+  const items = Array.isArray(priorAttemptHypotheses) ? priorAttemptHypotheses : [];
+  const geoHints = dedupeStrings(
+    items.flatMap((item: any) => [
+      ...(Array.isArray(item?.locationHints) ? item.locationHints.map((value: unknown) => String(value || "").trim()) : []),
+      ...(Array.isArray(item?.possibleMatches)
+        ? item.possibleMatches.flatMap((match: any) => [match?.locality, match?.city, match?.state, match?.country, match?.locationHint].map((value) => String(value || "").trim()))
+        : []),
+    ]),
+    10,
+  );
+  const categoryHints = Array.from(new Set(
+    items.flatMap((item: any) => [
+      ...(Array.isArray(item?.categoryGuesses) ? item.categoryGuesses : []),
+      ...(Array.isArray(item?.possibleMatches) ? item.possibleMatches.map((match: any) => match?.categoryGuess) : []),
+    ])
+      .map((value) => String(value || "").trim().toLowerCase())
+      .filter((value): value is "eat" | "do" | "stay" | "see" => value === "eat" || value === "do" || value === "stay" || value === "see"),
+  ));
+  const ignoredPriorNames = dedupeStrings(
+    items.flatMap((item: any) =>
+      Array.isArray(item?.possibleMatches)
+        ? item.possibleMatches.map((match: any) => {
+            const name = String(match?.name || "").trim();
+            const reason = classifyRejectedPriorName(name);
+            return reason ? `${name} [${reason}]` : "";
+          })
+        : [],
+    ),
+    10,
+  ).map((value) => {
+    const bracketIndex = value.lastIndexOf(" [");
+    return bracketIndex > 0
+      ? { name: value.slice(0, bracketIndex), reason: value.slice(bracketIndex + 2, -1) }
+      : { name: value, reason: "rejected_generic_caption_name" };
+  });
+  return {
+    geoHints,
+    categoryHints,
+    ignoredPriorNames,
+  };
+}
+
+function classifyCategoryFromCandidate(input: {
+  query: string;
+  categoryHint?: string | null;
+  candidateName?: string | null;
+}): "eat" | "do" | "stay" | "see" | null {
+  const explicit = String(input.categoryHint || "").trim().toLowerCase();
+  if (explicit === "eat" || explicit === "do" || explicit === "stay" || explicit === "see") return explicit;
+  const text = `${input.query} ${input.candidateName || ""}`.toLowerCase();
+  if (/\b(cafe|café|restaurant|bakery|bar|food|bistro|hotel restaurant)\b/.test(text)) return "eat";
+  if (/\b(hotel|resort|hostel|villa|homestay|stay)\b/.test(text)) return "stay";
+  if (/\b(workshop|adventure|event|sports|activity|boating|zipline)\b/.test(text)) return "do";
+  if (/\b(waterfall|temple|fort|museum|monument|viewpoint|bridge|ghat|lake|beach|park|palace|hill)\b/.test(text)) return "see";
+  return null;
+}
+
+function findGeoMatches(geoHints: string[], candidateParts: string[]): { matches: string[]; mismatch: boolean } {
+  const candidateText = normalizeSimple(candidateParts.filter(Boolean).join(" "));
+  if (!candidateText) return { matches: [], mismatch: false };
+  const matches = geoHints.filter((hint) => {
+    const hintTokens = tokenize(hint);
+    return hintTokens.length > 0 && hintTokens.some((token) => candidateText.includes(token));
+  });
+  const strongGeoHints = geoHints.filter((hint) => tokenize(hint).some((token) => token.length >= 5));
+  const mismatch = strongGeoHints.length > 0 && matches.length === 0 && candidateText.length > 0;
+  return {
+    matches: dedupeStrings(matches, 4),
+    mismatch,
+  };
+}
+
+export function scoreAttempt3SoftConstraints(input: {
+  candidate: {
+    query: string;
+    candidateName?: string | null;
+    categoryHint?: string | null;
+    locality?: string | null;
+    city?: string | null;
+    state?: string | null;
+    country?: string | null;
+    locationHint?: string | null;
+  };
+  priorAttemptHypotheses?: unknown[] | null;
+}): Attempt3SoftConstraintScore {
+  const context = buildAttempt3SoftContext(input.priorAttemptHypotheses);
+  const candidateParts = [
+    input.candidate.locationHint,
+    input.candidate.locality,
+    input.candidate.city,
+    input.candidate.state,
+    input.candidate.country,
+  ].filter(Boolean) as string[];
+  const geo = findGeoMatches(context.geoHints, candidateParts);
+  const category = classifyCategoryFromCandidate(input.candidate);
+  const categoryMatches = category && context.categoryHints.includes(category) ? [category] : [];
+  return {
+    geoContextBoostApplied: geo.matches.length > 0 ? Number(Math.min(0.12, 0.04 * geo.matches.length).toFixed(3)) : 0,
+    geoContextMismatchPenalty: geo.mismatch ? 0.1 : 0,
+    categoryContextBoostApplied: categoryMatches.length > 0 ? 0.04 : 0,
+    categoryContextMismatchPenalty: context.categoryHints.length > 0 && category && categoryMatches.length === 0 ? 0.03 : 0,
+    geoContextUsed: geo.matches,
+    categoryContextUsed: categoryMatches,
+    priorNamesIgnored: context.ignoredPriorNames.map((item) => `${item.name} [${item.reason}]`),
+  };
 }
 
 function dedupeQueries(queries: string[]): string[] {
@@ -450,6 +609,7 @@ export async function runVisualFallback(input: {
   screenshots?: ScreenshotAsset[];
   forceTrigger?: boolean;
   forceTriggerReason?: string | null;
+  priorAttemptHypotheses?: unknown[] | null;
 }): Promise<VisualFallbackResult> {
   const screenshots = input.screenshots ?? (await selectSourceScreenshots(input.metadata));
   const shouldTrigger = shouldTriggerVisualFallback({
@@ -515,6 +675,7 @@ export async function runVisualFallback(input: {
   const visualQueries = dedupeQueries((visualSearch.candidates || []).map((candidate) => candidate.query)).slice(0, 5);
   const combinedQueries = dedupeQueries([...textQueries, ...visualQueries]).slice(0, 8);
   const contextText = buildContextText(input.metadata, input.transcript, input.ocr);
+  const attempt3SoftContext = buildAttempt3SoftContext(input.priorAttemptHypotheses);
 
   const candidates = await Promise.all(
     combinedQueries.map(async (query) => {
@@ -570,6 +731,19 @@ export async function runVisualFallback(input: {
         : Number(Math.min(1, matchedSignals.length / 6).toFixed(3));
       const frameAgreementScore = visualMeta ? scoreFrameAgreement(visualMeta.supportFrameLabels, screenshots.length) : 0;
       const searchVerificationScore = verificationAssessment.searchVerificationScore;
+      const attempt3SoftScore = scoreAttempt3SoftConstraints({
+        candidate: {
+          query,
+          candidateName: verified.candidateName || visualMeta?.name || null,
+          categoryHint: visualMeta?.category || null,
+          locality: verified.locality,
+          city: verified.city,
+          state: verified.state,
+          country: verified.country || visualMeta?.countryOrRegion || null,
+          locationHint: [visualMeta?.locationHint, visualMeta?.countryOrRegion].filter(Boolean).join(", ") || null,
+        },
+        priorAttemptHypotheses: input.priorAttemptHypotheses,
+      });
       const specificLandmarkBoost =
         visualMeta?.name &&
         visualMeta?.confidence &&
@@ -593,6 +767,10 @@ export async function runVisualFallback(input: {
               textSupportScore * 0.2 +
               frameAgreementScore * 0.1 +
               overlapWeight +
+              attempt3SoftScore.geoContextBoostApplied +
+              attempt3SoftScore.categoryContextBoostApplied -
+              attempt3SoftScore.geoContextMismatchPenalty -
+              attempt3SoftScore.categoryContextMismatchPenalty +
               specificLandmarkBoost +
               categoryBoost +
               (verificationAssessment.allowSearchUpgrade && verified.placeId ? 0.05 : 0) -
@@ -653,6 +831,12 @@ export async function runVisualFallback(input: {
         textSupportScore,
         frameAgreementScore,
         searchVerificationScore,
+        geoContextBoostApplied: attempt3SoftScore.geoContextBoostApplied,
+        geoContextMismatchPenalty: attempt3SoftScore.geoContextMismatchPenalty,
+        categoryContextBoostApplied: attempt3SoftScore.categoryContextBoostApplied,
+        categoryContextMismatchPenalty: attempt3SoftScore.categoryContextMismatchPenalty,
+        geoContextUsed: attempt3SoftScore.geoContextUsed,
+        categoryContextUsed: attempt3SoftScore.categoryContextUsed,
         finalConfidence,
         reason: supportReason,
         verificationConfidence: verified.verificationConfidence,
@@ -763,10 +947,16 @@ export async function runVisualFallback(input: {
       reason: candidate.reason || null,
       locationVerified: candidate.locationVerified ?? false,
       verificationConfidence: candidate.verificationConfidence,
-      semanticMismatch: candidate.semanticMismatch ?? false,
-      corroborationCount: candidate.corroborationCount ?? null,
-      matchedSignals: candidate.matchedSignals,
-    })),
+        semanticMismatch: candidate.semanticMismatch ?? false,
+        corroborationCount: candidate.corroborationCount ?? null,
+        matchedSignals: candidate.matchedSignals,
+        geoContextBoostApplied: (candidate as any).geoContextBoostApplied ?? null,
+        geoContextMismatchPenalty: (candidate as any).geoContextMismatchPenalty ?? null,
+        categoryContextBoostApplied: (candidate as any).categoryContextBoostApplied ?? null,
+        categoryContextMismatchPenalty: (candidate as any).categoryContextMismatchPenalty ?? null,
+        geoContextUsed: (candidate as any).geoContextUsed ?? [],
+        categoryContextUsed: (candidate as any).categoryContextUsed ?? [],
+      })),
     selection: {
       selectedCandidate: finalSelectedCandidate,
       possibleMatches: [primaryVisionCandidate, competingVisionCandidate].filter(Boolean),
@@ -782,6 +972,11 @@ export async function runVisualFallback(input: {
             ? primaryVisionCandidate.reason || "unverified_possible_match"
             : visualSearch.reason || "no_visual_candidates",
     },
+    attempt3PriorContext: {
+      geoHints: attempt3SoftContext.geoHints,
+      categoryHints: attempt3SoftContext.categoryHints,
+    },
+    attempt3PriorNamesIgnored: attempt3SoftContext.ignoredPriorNames,
   };
   console.info("[visual-fallback-debug]", debug);
 

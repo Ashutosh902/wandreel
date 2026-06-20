@@ -976,6 +976,7 @@ async function processRetryFramesSequentially(input: {
   includeVisual: boolean;
   visualForceReason?: string | null;
   memoryTracker?: ReturnType<typeof createMemoryTracker>;
+  priorAttemptHypotheses?: unknown[] | null;
 }): Promise<{
   screenshots: ScreenshotAsset[];
   screenshotsDebug: Record<string, unknown>;
@@ -1165,6 +1166,7 @@ async function processRetryFramesSequentially(input: {
           screenshots: screenshot ? [screenshot] : [],
           forceTrigger: Boolean(input.visualForceReason),
           forceTriggerReason: input.visualForceReason ?? null,
+          priorAttemptHypotheses: input.priorAttemptHypotheses ?? null,
         });
         visualFallbackOnlyMs += nowMs() - visualStartedAt;
         input.memoryTracker?.checkpoint("after_visual_fallback", {
@@ -2106,6 +2108,7 @@ export async function runExtractionPipeline(input: {
       includeVisual: visualFallbackPolicy.includeVisual,
       visualForceReason: visualFallbackPolicy.includeVisual ? visualFallbackPolicy.decisionReason : null,
       memoryTracker,
+      priorAttemptHypotheses,
     });
     screenshots = sequential.screenshots;
     screenshotsDebug = sequential.screenshotsDebug;
@@ -2165,6 +2168,7 @@ export async function runExtractionPipeline(input: {
       selectionMode: "anchors",
       includeVisual: false,
       memoryTracker,
+      priorAttemptHypotheses,
     });
     screenshots = sequential.screenshots;
     screenshotsDebug = sequential.screenshotsDebug;
@@ -2197,6 +2201,7 @@ export async function runExtractionPipeline(input: {
       selectionMode: "anchors",
       includeVisual: false,
       memoryTracker,
+      priorAttemptHypotheses,
     });
     screenshots = sequential.screenshots;
     screenshotsDebug = sequential.screenshotsDebug;
@@ -2323,6 +2328,7 @@ export async function runExtractionPipeline(input: {
       selectionMode: "anchors",
       includeVisual: false,
       memoryTracker,
+      priorAttemptHypotheses,
     });
     screenshots = sequential.screenshots;
     screenshotsDebug = sequential.screenshotsDebug;

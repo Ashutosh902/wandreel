@@ -907,8 +907,9 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
       const attempt3Usage = summarizeAttempt3ContextUsage(enrichedOutput, req.source);
       logIntelligenceDecision(isProbeRun ? "probe_output" : "final_output", {
         clientRunId: req.analytics?.clientRunId ?? null,
-        attempt3PriorContextUsed: attempt3Usage.used,
-        attempt3PriorContextIgnored: attempt3Usage.ignored,
+        attempt3PriorNamesIgnored: attempt3Usage.priorNamesIgnored,
+        attempt3GeoContextUsed: attempt3Usage.geoContextUsed,
+        attempt3CategoryContextUsed: attempt3Usage.categoryContextUsed,
         attempt3CandidateReasoning: attempt3Usage.candidateReasoning,
       });
     }
@@ -964,8 +965,9 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
       const attempt3Usage = summarizeAttempt3ContextUsage(enrichedOutput, req.source);
       logIntelligenceDecision(isProbeRun ? "probe_output" : "final_output", {
         clientRunId: req.analytics?.clientRunId ?? null,
-        attempt3PriorContextUsed: attempt3Usage.used,
-        attempt3PriorContextIgnored: attempt3Usage.ignored,
+        attempt3PriorNamesIgnored: attempt3Usage.priorNamesIgnored,
+        attempt3GeoContextUsed: attempt3Usage.geoContextUsed,
+        attempt3CategoryContextUsed: attempt3Usage.categoryContextUsed,
         attempt3CandidateReasoning: attempt3Usage.candidateReasoning,
       });
     }
@@ -1016,8 +1018,9 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
     const attempt3Usage = summarizeAttempt3ContextUsage(fallbackOutput, req.source);
     logIntelligenceDecision(isProbeRun ? "probe_output" : "final_output", {
       clientRunId: req.analytics?.clientRunId ?? null,
-      attempt3PriorContextUsed: attempt3Usage.used,
-      attempt3PriorContextIgnored: attempt3Usage.ignored,
+      attempt3PriorNamesIgnored: attempt3Usage.priorNamesIgnored,
+      attempt3GeoContextUsed: attempt3Usage.geoContextUsed,
+      attempt3CategoryContextUsed: attempt3Usage.categoryContextUsed,
       attempt3CandidateReasoning: attempt3Usage.candidateReasoning,
     });
   }

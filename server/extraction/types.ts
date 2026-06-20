@@ -105,6 +105,12 @@ export type VisualSearchCandidate = {
   textSupportScore?: number;
   frameAgreementScore?: number;
   searchVerificationScore?: number;
+  geoContextBoostApplied?: number;
+  geoContextMismatchPenalty?: number;
+  categoryContextBoostApplied?: number;
+  categoryContextMismatchPenalty?: number;
+  geoContextUsed?: string[];
+  categoryContextUsed?: string[];
   finalConfidence?: ConfidenceLabel;
   reason?: string | null;
   verificationConfidence: ConfidenceLabel;
