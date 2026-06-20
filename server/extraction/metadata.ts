@@ -1,5 +1,6 @@
 import type { ExtractedMetadata, MetadataCommentEvidence } from "./types";
 import { runPythonJsonScript, runPythonJsonScriptWithArgs } from "./pythonRunner";
+import { getPythonCommands } from "./pythonRuntime";
 import { assertSafeHost, canonicalizeUrl, detectSourcePlatform } from "./url";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -80,16 +81,10 @@ async function probeYtDlpInstagramMetadata(canonicalUrl: string): Promise<YtDlpM
     "  'webpage_url': info.get('webpage_url')",
     "}))",
   ].join("\n");
-  const commands: Array<{ cmd: string; args: string[] }> = [
-    {
-      cmd: "python",
-      args: ["-c", probeScript, canonicalUrl],
-    },
-    {
-      cmd: "py",
-      args: ["-3", "-c", probeScript, canonicalUrl],
-    },
-  ];
+  const commands = getPythonCommands().map((command) => ({
+    cmd: command.cmd,
+    args: [...command.argsPrefix, "-c", probeScript, canonicalUrl],
+  }));
 
   let lastError: unknown = null;
   for (const command of commands) {

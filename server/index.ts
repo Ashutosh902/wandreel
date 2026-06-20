@@ -40,11 +40,28 @@ import { canonicalizeUrl } from "./extraction/url";
 
 const app = express();
 const clientOrigin = process.env.CLIENT_ORIGIN || "http://localhost:5173";
+const allowedOrigins = Array.from(
+  new Set(
+    [
+      ...String(process.env.CORS_ALLOWED_ORIGINS || "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean),
+      clientOrigin,
+    ].filter(Boolean),
+  ),
+);
 app.use((req, res, next) => {
-  res.header("Access-Control-Allow-Origin", clientOrigin);
+  const requestOrigin = String(req.headers.origin || "").trim();
+  const resolvedOrigin =
+    requestOrigin && allowedOrigins.includes(requestOrigin)
+      ? requestOrigin
+      : allowedOrigins[0] || clientOrigin;
+  res.header("Access-Control-Allow-Origin", resolvedOrigin);
   res.header("Access-Control-Allow-Headers", "Content-Type");
   res.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   res.header("Access-Control-Allow-Credentials", "true");
+  res.header("Vary", "Origin");
   if (req.method === "OPTIONS") {
     return res.sendStatus(204);
   }

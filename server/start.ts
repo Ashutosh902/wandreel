@@ -7,6 +7,7 @@ import {
   ensurePythonRuntimeProfiles,
   getConfiguredRuntimePydepsPath,
 } from "./extraction/pythonRunner";
+import { getPythonCommands } from "./extraction/pythonRuntime";
 
 const execFileAsync = promisify(execFile);
 
@@ -50,12 +51,12 @@ async function createFfmpegShim(ffmpegExecutable: string): Promise<string> {
 
 async function readRuntimeHealth(pydepsPath: string): Promise<RuntimeHealthPayload | null> {
   const scriptPath = path.resolve(import.meta.dirname, "extraction", "scripts", "check_runtime_health.py");
-  const commands = ["python", "py"];
+  const commands = getPythonCommands();
 
   for (const command of commands) {
     try {
-      const commandArgs = command === "py" ? ["-3", scriptPath] : [scriptPath];
-      const { stdout } = await execFileAsync(command, commandArgs, {
+      const commandArgs = [...command.argsPrefix, scriptPath];
+      const { stdout } = await execFileAsync(command.cmd, commandArgs, {
         env: {
           ...process.env,
           PYTHONUNBUFFERED: "1",

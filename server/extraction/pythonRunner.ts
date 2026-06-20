@@ -2,6 +2,7 @@ import { execFile, spawn } from "node:child_process";
 import os from "node:os";
 import { promisify } from "node:util";
 import path from "node:path";
+import { getPythonCommands } from "./pythonRuntime";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_BOOTSTRAP_TIMEOUT_MS = 10 * 60 * 1000;
@@ -92,13 +93,13 @@ function shortPreview(value: string | undefined, maxLines = 4): string | undefin
 }
 
 async function executePythonScript(scriptPath: string, args: string[], timeoutMs: number, pydepsPath: string): Promise<any | null> {
-  const commands = ["python", "py"];
+  const commands = getPythonCommands();
   let lastError: unknown = null;
 
   for (const cmd of commands) {
     try {
-      const commandArgs = cmd === "py" ? ["-3", scriptPath, ...args] : [scriptPath, ...args];
-      const { stdout } = await execFileAsync(cmd, commandArgs, {
+      const commandArgs = [...cmd.argsPrefix, scriptPath, ...args];
+      const { stdout } = await execFileAsync(cmd.cmd, commandArgs, {
         timeout: timeoutMs,
         env: buildPythonEnv(pydepsPath),
         maxBuffer: 4 * 1024 * 1024,
@@ -144,14 +145,14 @@ async function executePythonScriptStreaming(
   timeoutMs: number,
   pydepsPath: string,
 ): Promise<any | null> {
-  const commands = ["python", "py"];
+  const commands = getPythonCommands();
   let lastError: unknown = null;
 
   for (const cmd of commands) {
     try {
-      const commandArgs = cmd === "py" ? ["-3", scriptPath, ...args] : [scriptPath, ...args];
+      const commandArgs = [...cmd.argsPrefix, scriptPath, ...args];
       const parsed = await new Promise<any | null>((resolve, reject) => {
-        const child = spawn(cmd, commandArgs, {
+        const child = spawn(cmd.cmd, commandArgs, {
           env: buildPythonEnv(pydepsPath),
           stdio: ["ignore", "pipe", "pipe"],
         });
@@ -281,16 +282,13 @@ async function ensureRuntimeProfileInstalled(profile: RuntimeProfile, pydepsPath
   if (existing) return existing;
 
   const promise = (async () => {
-    const commands = ["python", "py"];
+    const commands = getPythonCommands();
     let lastError: unknown = null;
 
     for (const cmd of commands) {
       try {
-        const args =
-          cmd === "py"
-            ? ["-3", "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--upgrade", "--target", pydepsPath, "-r", requirementFile]
-            : ["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--upgrade", "--target", pydepsPath, "-r", requirementFile];
-        await execFileAsync(cmd, args, {
+        const args = [...cmd.argsPrefix, "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--upgrade", "--target", pydepsPath, "-r", requirementFile];
+        await execFileAsync(cmd.cmd, args, {
           timeout: DEFAULT_BOOTSTRAP_TIMEOUT_MS,
           env: buildPythonEnv(pydepsPath),
           maxBuffer: 20 * 1024 * 1024,
@@ -329,11 +327,11 @@ async function isRuntimeProfileAvailable(profile: RuntimeProfile, pydepsPath: st
     "print(json.dumps({'ok': len(missing) == 0, 'missing': missing}))",
   ].join("; ");
 
-  const commands = ["python", "py"];
+  const commands = getPythonCommands();
   for (const cmd of commands) {
     try {
-      const args = cmd === "py" ? ["-3", "-c", probeScript] : ["-c", probeScript];
-      const { stdout } = await execFileAsync(cmd, args, {
+      const args = [...cmd.argsPrefix, "-c", probeScript];
+      const { stdout } = await execFileAsync(cmd.cmd, args, {
         timeout: 15000,
         env: buildPythonEnv(pydepsPath),
         maxBuffer: 2 * 1024 * 1024,
