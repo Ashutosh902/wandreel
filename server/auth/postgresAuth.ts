@@ -690,15 +690,23 @@ export function getSessionCookieName() {
   return SESSION_COOKIE_NAME;
 }
 
+function isProductionCookieContext() {
+  return process.env.NODE_ENV === "production";
+}
+
+function buildSessionCookieAttributes(maxAgeSeconds: number) {
+  const secure = isProductionCookieContext();
+  const sameSite = secure ? "None" : "Lax";
+  return `Path=/; HttpOnly; SameSite=${sameSite}; Max-Age=${maxAgeSeconds}${secure ? "; Secure" : ""}`;
+}
+
 export function buildSessionCookie(token: string) {
   const maxAge = Math.floor(SESSION_TTL_MS / 1000);
-  const secure = process.env.NODE_ENV === "production";
-  return `${SESSION_COOKIE_NAME}=${token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${secure ? "; Secure" : ""}`;
+  return `${SESSION_COOKIE_NAME}=${token}; ${buildSessionCookieAttributes(maxAge)}`;
 }
 
 export function buildClearSessionCookie() {
-  const secure = process.env.NODE_ENV === "production";
-  return `${SESSION_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? "; Secure" : ""}`;
+  return `${SESSION_COOKIE_NAME}=; ${buildSessionCookieAttributes(0)}`;
 }
 
 function toSavedPlaceDTO(row: SavedPlaceRecord) {
