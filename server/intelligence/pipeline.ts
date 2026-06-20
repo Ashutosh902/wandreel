@@ -7,6 +7,7 @@ import { inferPlaceResolveContext, mergeResolutionIntoContext, resolveEntityLoca
 import type { ExtractionResult } from "../extraction/types";
 import { augmentIntelligenceOutputWithCaptionLists } from "./captionListAugment";
 import { inferOcrHeuristicCandidate, isSloganLikeText, isVenueLikeText, shouldSuppressGenericOcrOnlyEntity } from "./draft";
+import { buildAttempt3EvidenceWeights, buildAttempt3PriorContext, summarizeAttempt3ContextUsage } from "./prompts";
 
 function buildDefaultLevel2(category: "eat" | "do" | "stay" | "see") {
   return category === "eat"
@@ -867,6 +868,17 @@ export function prioritizeOcrVenueEntities(output: IntelligenceOutput, source: E
 export async function runIntelligencePipeline(req: IntelligenceRequest): Promise<IntelligencePipelineResult> {
   const totalStartedAt = Date.now();
   const isProbeRun = Boolean(req.analytics?.probeStage);
+  if ((req.analytics?.attemptNumber ?? req.source.attemptInfo?.attemptNumber ?? 1) >= 3) {
+    logIntelligenceDecision("attempt3_context", {
+      clientRunId: req.analytics?.clientRunId ?? null,
+      attempt3PriorContext: buildAttempt3PriorContext(req.source),
+      attempt3PrimaryVisualEvidence: req.source.visualFallback ? {
+        selectedCandidate: req.source.visualFallback.selectedCandidate?.candidateName || null,
+        summaryText: req.source.visualFallback.summaryText || null,
+      } : null,
+      attempt3EvidenceWeights: buildAttempt3EvidenceWeights(),
+    });
+  }
   logIntelligenceDecision(isProbeRun ? "before_probe_prompt" : "before_final_prompt", {
     clientRunId: req.analytics?.clientRunId ?? null,
     attemptNumber: req.analytics?.attemptNumber ?? req.source.attemptInfo?.attemptNumber ?? 1,
@@ -891,6 +903,15 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
       req,
       isProbeRun ? "probe_output" : "final_output",
     );
+    if ((req.analytics?.attemptNumber ?? req.source.attemptInfo?.attemptNumber ?? 1) >= 3) {
+      const attempt3Usage = summarizeAttempt3ContextUsage(enrichedOutput, req.source);
+      logIntelligenceDecision(isProbeRun ? "probe_output" : "final_output", {
+        clientRunId: req.analytics?.clientRunId ?? null,
+        attempt3PriorContextUsed: attempt3Usage.used,
+        attempt3PriorContextIgnored: attempt3Usage.ignored,
+        attempt3CandidateReasoning: attempt3Usage.candidateReasoning,
+      });
+    }
     logIntelligenceDecision(isProbeRun ? "probe_output" : "final_output", {
       clientRunId: req.analytics?.clientRunId ?? null,
       entityCount: enrichedOutput.structuredEntities.length,
@@ -939,6 +960,15 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
       req,
       isProbeRun ? "probe_output" : "final_output",
     );
+    if ((req.analytics?.attemptNumber ?? req.source.attemptInfo?.attemptNumber ?? 1) >= 3) {
+      const attempt3Usage = summarizeAttempt3ContextUsage(enrichedOutput, req.source);
+      logIntelligenceDecision(isProbeRun ? "probe_output" : "final_output", {
+        clientRunId: req.analytics?.clientRunId ?? null,
+        attempt3PriorContextUsed: attempt3Usage.used,
+        attempt3PriorContextIgnored: attempt3Usage.ignored,
+        attempt3CandidateReasoning: attempt3Usage.candidateReasoning,
+      });
+    }
     logIntelligenceDecision(isProbeRun ? "probe_output" : "final_output", {
       clientRunId: req.analytics?.clientRunId ?? null,
       entityCount: enrichedOutput.structuredEntities.length,
@@ -982,6 +1012,15 @@ export async function runIntelligencePipeline(req: IntelligenceRequest): Promise
     req,
     isProbeRun ? "probe_output" : "final_output",
   );
+  if ((req.analytics?.attemptNumber ?? req.source.attemptInfo?.attemptNumber ?? 1) >= 3) {
+    const attempt3Usage = summarizeAttempt3ContextUsage(fallbackOutput, req.source);
+    logIntelligenceDecision(isProbeRun ? "probe_output" : "final_output", {
+      clientRunId: req.analytics?.clientRunId ?? null,
+      attempt3PriorContextUsed: attempt3Usage.used,
+      attempt3PriorContextIgnored: attempt3Usage.ignored,
+      attempt3CandidateReasoning: attempt3Usage.candidateReasoning,
+    });
+  }
 
   return {
     output: fallbackOutput,

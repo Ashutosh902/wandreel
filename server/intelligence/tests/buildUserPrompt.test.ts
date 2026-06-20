@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildUserPrompt } from "../prompts";
+import { buildSystemPrompt, buildUserPrompt } from "../prompts";
 import type { ExtractionResult } from "../../extraction/types";
 
 function buildSource(): ExtractionResult {
@@ -134,4 +134,106 @@ test("user prompt includes retry attempt context when available", () => {
   assert.match(prompt, /retry_1_skips_visual_fallback/);
   assert.match(prompt, /priorAttemptHypotheses/);
   assert.match(prompt, /Tumpak Sewu Waterfall/);
+});
+
+test("attempt 3 prompt uses geo hint but marks generic prior name as rejected", () => {
+  const source = buildSource();
+  source.attemptInfo = { attemptNumber: 3, triggerType: "retry" };
+  source.metadata.description = "Hidden spot in Sikkim #gangtok #tadong";
+  source.debug = {
+    priorAttemptHypotheses: [
+      {
+        attemptNumber: 1,
+        status: "needs_review",
+        categoryGuesses: ["eat"],
+        locationHints: ["Tadong, Gangtok, Sikkim"],
+        possibleMatches: [
+          {
+            name: "pinteresty café",
+            categoryGuess: "eat",
+            locationHint: "Tadong, Gangtok, Sikkim",
+            confidence: "low",
+            confidenceReason: "Generic caption phrase",
+          },
+        ],
+      },
+    ],
+    orchestration: {
+      route: "retry_2",
+      acceptedAfter: "manual_review",
+      decisions: [{ stage: "visualFallback", ran: true, reason: "retry_2_visual_default_final_attempt" }],
+    },
+  };
+  const prompt = buildUserPrompt(source, { attemptNumber: 3, triggerType: "retry" });
+  assert.match(prompt, /attempt3PriorContext/);
+  assert.match(prompt, /Tadong, Gangtok, Sikkim/);
+  assert.match(prompt, /pinteresty café \[rejected_generic_caption_name\]/i);
+});
+
+test("attempt 3 prompt includes creator comment venue evidence above generic prior names", () => {
+  const source = buildSource();
+  source.attemptInfo = { attemptNumber: 3, triggerType: "retry" };
+  source.metadata.commentEvidence = {
+    attempted: true,
+    timedOut: false,
+    pinnedComment: null,
+    topComments: [],
+    creatorReplies: ["Queen's Pod, 16 Adampool, Lumsey, Tadong, Gangtok, Sikkim 737102"],
+    commentsFetchedCount: 1,
+    commentRepliesFetchedCount: 1,
+    creatorReplyCount: 1,
+    provider: "instagram_script",
+    reason: null,
+  };
+  source.debug = {
+    priorAttemptHypotheses: [
+      {
+        attemptNumber: 2,
+        status: "needs_review",
+        categoryGuesses: ["eat"],
+        locationHints: ["Gangtok, Sikkim"],
+        possibleMatches: [
+          {
+            name: "cute cafe",
+            categoryGuess: "eat",
+            locationHint: "Gangtok, Sikkim",
+            confidence: "low",
+            confidenceReason: "Generic caption phrase",
+          },
+        ],
+      },
+    ],
+  };
+  const prompt = buildUserPrompt(source, { attemptNumber: 3, triggerType: "retry" });
+  assert.match(prompt, /Queen's Pod, 16 Adampool, Lumsey, Tadong, Gangtok, Sikkim 737102/);
+  assert.match(prompt, /priorityOrder/);
+  assert.match(prompt, /comment_or_creator_reply_with_venue_and_address/);
+});
+
+test("attempt 3 prompt includes prior generic wrong name but instructs not to copy it", () => {
+  const source = buildSource();
+  const prompt = buildSystemPrompt({ attemptNumber: 3 });
+  source.attemptInfo = { attemptNumber: 3, triggerType: "retry" };
+  source.debug = {
+    priorAttemptHypotheses: [
+      {
+        attemptNumber: 1,
+        status: "needs_review",
+        categoryGuesses: ["eat"],
+        locationHints: ["Patna, Bihar"],
+        possibleMatches: [
+          {
+            name: "8,041 likes, 29 comments - creator on April 19, 2026",
+            categoryGuess: "eat",
+            locationHint: "Patna, Bihar",
+            confidence: "low",
+            confidenceReason: "Metadata boilerplate",
+          },
+        ],
+      },
+    ],
+  };
+  const userPrompt = buildUserPrompt(source, { attemptNumber: 3, triggerType: "retry" });
+  assert.match(prompt, /Never copy a prior entity name into the final answer unless it is independently supported/i);
+  assert.match(userPrompt, /rejected_metadata_boilerplate_name/i);
 });

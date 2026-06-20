@@ -9,6 +9,235 @@ function trimText(input: string | null | undefined, max: number): string {
   return clean.slice(0, max);
 }
 
+function extractHashtags(input: string | null | undefined): string[] {
+  return Array.from(String(input || "").matchAll(/#([a-z0-9_]+)/gi))
+    .map((match) => `#${String(match[1] || "").trim()}`)
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function splitUsefulLines(input: string | null | undefined, max = 4, maxLine = 180): string[] {
+  return String(input || "")
+    .split(/\r?\n|[.!?]/)
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .filter((line) => line.length >= 4)
+    .slice(0, max)
+    .map((line) => line.slice(0, maxLine));
+}
+
+const PRIOR_REJECTED_NAME_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+  { pattern: /\blikes?\b/i, reason: "rejected_metadata_boilerplate_name" },
+  { pattern: /\bcomments?\b/i, reason: "rejected_metadata_boilerplate_name" },
+  { pattern: /\bon (january|february|march|april|may|june|july|august|september|october|november|december)\b/i, reason: "rejected_metadata_boilerplate_name" },
+  { pattern: /&quot;|&#0*39;|&amp;|&#064;/i, reason: "rejected_metadata_boilerplate_name" },
+  { pattern: /\bpinteresty\s+caf(?:e|é)(?:\b|$)/i, reason: "rejected_generic_caption_name" },
+  { pattern: /\bcute\s+caf(?:e|é)(?:\b|$)/i, reason: "rejected_generic_caption_name" },
+  { pattern: /\bcute\s+aesthetic\b/i, reason: "rejected_generic_caption_name" },
+  { pattern: /\baesthetic\s+caf(?:e|é)(?:\b|$)/i, reason: "rejected_generic_caption_name" },
+  { pattern: /\bhidden\s+gem\s+caf(?:e|é)(?:\b|$)/i, reason: "rejected_generic_caption_name" },
+  { pattern: /\bcutest\s+caf(?:e|é)(?:\b|$)/i, reason: "rejected_generic_caption_name" },
+  { pattern: /\bmust\s+visit\s+place\b/i, reason: "rejected_generic_caption_name" },
+];
+
+function classifyRejectedPriorName(name: string): string | null {
+  const normalized = String(name || "").replace(/\s+/g, " ").trim();
+  if (!normalized) return null;
+  for (const item of PRIOR_REJECTED_NAME_PATTERNS) {
+    if (item.pattern.test(normalized)) return item.reason;
+  }
+  return null;
+}
+
+function uniqueStrings(values: Array<string | null | undefined>, max = 8): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const clean = String(value || "").replace(/\s+/g, " ").trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(clean);
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function buildAttempt3PrimaryVisualEvidence(source: ExtractionResult) {
+  const selected = source.visualFallback?.selectedCandidate;
+  return {
+    selectedCandidate: selected
+      ? {
+          name: selected.candidateName || null,
+          aliases: selected.aliases || [],
+          query: selected.query,
+          categoryHint: selected.categoryHint || null,
+          locationHint: selected.locationHint || null,
+          locality: selected.locality || null,
+          city: selected.city || null,
+          state: selected.state || null,
+          country: selected.country || null,
+          formattedAddress: selected.formattedAddress || null,
+          verificationConfidence: selected.verificationConfidence,
+          locationVerified: selected.locationVerified ?? false,
+          rankingScore: selected.rankingScore,
+          reason: selected.reason || null,
+          visualEvidence: trimText(selected.visualEvidence, 220) || null,
+        }
+      : null,
+    alternateCandidates: (source.visualFallback?.candidates || []).slice(0, 3).map((candidate) => ({
+      name: candidate.candidateName || null,
+      query: candidate.query,
+      categoryHint: candidate.categoryHint || null,
+      locationHint: candidate.locationHint || null,
+      locality: candidate.locality || null,
+      city: candidate.city || null,
+      state: candidate.state || null,
+      country: candidate.country || null,
+      verificationConfidence: candidate.verificationConfidence,
+      rankingScore: candidate.rankingScore,
+      reason: candidate.reason || null,
+    })),
+    summaryText: trimText(source.visualFallback?.summaryText, 300) || null,
+  };
+}
+
+export function buildAttempt3PriorContext(source: ExtractionResult) {
+  const priorAttemptHypotheses = Array.isArray((source.debug as any)?.priorAttemptHypotheses)
+    ? (source.debug as any).priorAttemptHypotheses
+    : [];
+  const metadata = source.metadata;
+  const commentEvidence = metadata.commentEvidence;
+  const priorCategoryGuesses = uniqueStrings(
+    priorAttemptHypotheses.flatMap((item: any) => Array.isArray(item?.categoryGuesses) ? item.categoryGuesses : []),
+    6,
+  );
+  const priorLocationGuesses = uniqueStrings(
+    [
+      ...priorAttemptHypotheses.flatMap((item: any) => Array.isArray(item?.locationHints) ? item.locationHints : []),
+      ...priorAttemptHypotheses.flatMap((item: any) =>
+        Array.isArray(item?.possibleMatches)
+          ? item.possibleMatches.flatMap((match: any) => [match?.locality, match?.city, match?.state, match?.country, match?.locationHint])
+          : [],
+      ),
+    ],
+    8,
+  );
+  const priorRejectedNames = uniqueStrings(
+    priorAttemptHypotheses.flatMap((item: any) =>
+      Array.isArray(item?.possibleMatches)
+        ? item.possibleMatches
+            .map((match: any) => {
+              const name = String(match?.name || "").trim();
+              const rejectionReason = classifyRejectedPriorName(name);
+              return rejectionReason ? `${name} [${rejectionReason}]` : null;
+            })
+        : [],
+    ),
+    8,
+  );
+
+  return {
+    caution: "Prior context may be incomplete, generic, or wrong. Use it as a nudge only, never as ground truth.",
+    captionDescriptionHints: splitUsefulLines(metadata.description, 4, 180),
+    hashtags: extractHashtags(metadata.description),
+    priorCategoryGuesses,
+    priorLocalityCityStateGuesses: priorLocationGuesses,
+    priorOcrSnippets: uniqueStrings(
+      [
+        ...splitUsefulLines(source.ocr?.text, 4, 140),
+        ...priorAttemptHypotheses.flatMap((item: any) =>
+          Array.isArray(item?.possibleMatches)
+            ? item.possibleMatches.map((match: any) => String(match?.googleMapsQuery || "").trim()).filter(Boolean)
+            : [],
+        ),
+      ],
+      6,
+    ),
+    priorTranscriptSnippets: splitUsefulLines(source.transcript?.text, 3, 140),
+    priorCommentReplyEvidence: uniqueStrings(
+      [
+        trimText(commentEvidence?.pinnedComment, 180) || null,
+        ...(Array.isArray(commentEvidence?.creatorReplies) ? commentEvidence!.creatorReplies.map((item) => trimText(item, 180)) : []),
+        ...(Array.isArray(commentEvidence?.topComments) ? commentEvidence!.topComments.map((item) => trimText(item, 180)) : []),
+      ],
+      6,
+    ),
+    priorRejectedOrGenericNames: priorRejectedNames,
+    priorAttemptHypotheses: priorAttemptHypotheses.map((item: any) => ({
+      attemptNumber: Number(item?.attemptNumber) || null,
+      status: item?.status || null,
+      confidenceReason: trimText(item?.confidenceReason, 180) || null,
+      categoryGuesses: Array.isArray(item?.categoryGuesses) ? item.categoryGuesses : [],
+      locationHints: Array.isArray(item?.locationHints) ? item.locationHints : [],
+      possibleMatches: Array.isArray(item?.possibleMatches)
+        ? item.possibleMatches.slice(0, 4).map((match: any) => ({
+            name: String(match?.name || "").trim() || null,
+            categoryGuess: match?.categoryGuess || null,
+            locationHint: match?.locationHint || null,
+            confidence: match?.confidence || null,
+            confidenceReason: trimText(match?.confidenceReason, 160) || null,
+            rejectionReason: classifyRejectedPriorName(String(match?.name || "").trim()),
+          }))
+        : [],
+    })),
+  };
+}
+
+export function buildAttempt3EvidenceWeights() {
+  return {
+    priorityOrder: [
+      "comment_or_creator_reply_with_venue_and_address",
+      "clear_visual_signboard_or_named_visual_landmark",
+      "visual_architecture_plus_geo_context",
+      "caption_or_hashtag_geo_or_category_hint",
+      "prior_generic_guess",
+    ],
+    primary: "visual_evidence",
+    secondary: "prior_context_constraints_only",
+    rule: "Never copy prior entity names unless independently supported by visual, OCR, transcript, or comment evidence.",
+  };
+}
+
+export function summarizeAttempt3ContextUsage(output: { structuredEntities?: Array<{ name?: string | null; category?: string | null; locality?: string | null; city?: string | null; state?: string | null; country?: string | null; evidenceText?: string | null }> }, source: ExtractionResult) {
+  const priorContext = buildAttempt3PriorContext(source);
+  const entity = Array.isArray(output.structuredEntities) ? output.structuredEntities[0] : null;
+  if (!entity) {
+    return {
+      used: [],
+      ignored: [
+        ...priorContext.priorRejectedOrGenericNames,
+        ...priorContext.priorCategoryGuesses,
+        ...priorContext.priorLocalityCityStateGuesses,
+      ].slice(0, 10),
+      candidateReasoning: "No final entity selected. Prior context remained non-binding.",
+    };
+  }
+
+  const entityText = [entity.name, entity.category, entity.locality, entity.city, entity.state, entity.country, entity.evidenceText]
+    .map((value) => String(value || "").toLowerCase())
+    .join(" ");
+  const used = uniqueStrings([
+    ...priorContext.priorCategoryGuesses.filter((value) => entityText.includes(value.toLowerCase())),
+    ...priorContext.priorLocalityCityStateGuesses.filter((value) => entityText.includes(value.toLowerCase())),
+    ...priorContext.priorCommentReplyEvidence.filter((value) => entityText.includes(String(entity.locality || "").toLowerCase()) || entityText.includes(String(entity.name || "").toLowerCase())),
+  ], 8);
+  const ignored = uniqueStrings([
+    ...priorContext.priorRejectedOrGenericNames,
+    ...priorContext.priorAttemptHypotheses.flatMap((item) =>
+      item.possibleMatches
+        .map((match) => match.name && !entityText.includes(String(match.name).toLowerCase()) ? String(match.name) : null)
+        .filter(Boolean),
+    ),
+  ], 8);
+  return {
+    used,
+    ignored,
+    candidateReasoning: trimText(entity.evidenceText, 240) || "Final entity derived from Attempt 3 evidence.",
+  };
+}
+
 export function buildSystemPrompt(input?: { attemptNumber?: number | null }): string {
   const attemptNumber = Number(input?.attemptNumber) || 1;
   const retryInstructions =
@@ -25,7 +254,13 @@ export function buildSystemPrompt(input?: { attemptNumber?: number | null }): st
 25. If visual candidate is plausible but not uniquely verified, return needs_review with candidate list.
 26. Prefer manual-review style honesty over a specific but weakly supported place guess.
 27. Do not let caption-only or prior-attempt guesses outweigh a strongly verified visual candidate in Attempt 3.
-28. Do not convert an ambiguous visual match into a confident ready result.`
+28. Do not convert an ambiguous visual match into a confident ready result.
+29. Treat Attempt 1 and Attempt 2 as prior context only. They may provide geo hints, category hints, OCR fragments, transcript fragments, hashtags, or comments, but they can be wrong.
+30. Never copy a prior entity name into the final answer unless it is independently supported by visual evidence, OCR, transcript, or comment/address evidence in this attempt.
+31. Use caption and hashtags mainly as geo/category constraints, not as proof of a venue name.
+32. If prior context suggests a city/state and a visual candidate is outside that area, downrank it unless the visual/location evidence is strong.
+33. If the visual query was built from generic OCR or caption text, treat that candidate as a possible match, not a high-confidence result.
+34. Evidence priority order for Attempt 3 is: comment/reply venue+address > clear visual signboard > visual architecture + geo context > caption/hashtag geo hint > prior generic guess.` 
       : attemptNumber === 2
         ? `
 17. This is Retry 1 / Attempt 2.
@@ -221,6 +456,9 @@ export function buildUserPrompt(source: ExtractionResult, analytics?: Intelligen
         ? (source.debug as any).priorAttemptHypotheses
         : []
       : [],
+    attempt3PrimaryVisualEvidence: attemptNumber >= 3 ? buildAttempt3PrimaryVisualEvidence(source) : null,
+    attempt3PriorContext: attemptNumber >= 3 ? buildAttempt3PriorContext(source) : null,
+    attempt3EvidenceWeights: attemptNumber >= 3 ? buildAttempt3EvidenceWeights() : null,
   };
 
   return `Process this extracted combined text for Wandreel. Return valid JSON only.\n\nInput:\n${JSON.stringify(payload, null, 2)}`;
