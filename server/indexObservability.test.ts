@@ -1380,6 +1380,10 @@ test("admin usage overview returns aggregated response shape for admin users", a
     assert.equal(body.rates.saveRatePerUser, 0.5);
     assert.equal(body.activity.lastActiveAt, "2026-06-21T10:00:00Z");
     assert.equal(body.definitions.repeatUser, "runs_count >= 2");
+    const usageSql = mock.calls.find((call) => call.sql.includes("run_rollup"))?.sql || "";
+    assert.match(usageSql, /\(count\(distinct submitted_link_id\) filter \(where submitted_link_id is not null\)\)::numeric as unique_links_submitted/i);
+    assert.match(usageSql, /\(count\(\*\) filter \(where final_user_action = 'edited'\)\)::numeric as edited_count/i);
+    assert.match(usageSql, /\(count\(\*\) filter \(where event_type = 'app_opened'\)\)::numeric as app_opened_count/i);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

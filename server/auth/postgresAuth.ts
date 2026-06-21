@@ -2136,8 +2136,8 @@ async function getAdminUsageActorRows(input: AdminUsageInput): Promise<AdminUsag
           min(created_at) as first_seen_at,
           max(updated_at) as last_seen_at,
           count(*)::numeric as runs_count,
-          count(distinct submitted_link_id)::numeric filter (where submitted_link_id is not null) as unique_links_submitted,
-          count(*)::numeric filter (where final_user_action = 'edited') as edited_count
+          (count(distinct submitted_link_id) filter (where submitted_link_id is not null))::numeric as unique_links_submitted,
+          (count(*) filter (where final_user_action = 'edited'))::numeric as edited_count
         from actor_runs
         group by actor_key, user_type
       ),
@@ -2158,8 +2158,8 @@ async function getAdminUsageActorRows(input: AdminUsageInput): Promise<AdminUsag
           actor_key,
           min(created_at) as first_seen_at,
           max(created_at) as last_seen_at,
-          count(*)::numeric filter (where event_type = 'app_opened') as app_opened_count,
-          count(*)::numeric filter (where event_type = 'login_seen') as login_seen_count
+          (count(*) filter (where event_type = 'app_opened'))::numeric as app_opened_count,
+          (count(*) filter (where event_type = 'login_seen'))::numeric as login_seen_count
         from actor_app_events
         group by actor_key
       ),
@@ -2241,8 +2241,8 @@ async function getAdminUsageActorRows(input: AdminUsageInput): Promise<AdminUsag
             min(created_at) as first_seen_at,
             max(updated_at) as last_seen_at,
             count(*)::numeric as runs_count,
-            count(distinct submitted_link_id)::numeric filter (where submitted_link_id is not null) as unique_links_submitted,
-            count(*)::numeric filter (where final_user_action = 'edited') as edited_count
+            (count(distinct submitted_link_id) filter (where submitted_link_id is not null))::numeric as unique_links_submitted,
+            (count(*) filter (where final_user_action = 'edited'))::numeric as edited_count
           from actor_runs
           group by actor_key, user_type
         ),
