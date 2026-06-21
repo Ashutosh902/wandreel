@@ -20,6 +20,8 @@ import {
   getAdminObservabilityOverview,
   getAdminObservabilityLinks,
   getAdminObservabilityLinkDetail,
+  getAdminUsageOverview,
+  getAdminUsageUsers,
   getReelAnalyticsRunIdByClientRunId,
   getReelJob,
   getLatestReusableMetadataExtractionByCanonicalUrl,
@@ -30,6 +32,7 @@ import {
   listSavedPlaces,
   markReelAnalyticsEntityOutcome,
   recordReelAnalyticsEvent,
+  recordAppUsageEvent,
   linkRunToSubmittedLink,
   persistReelAnalyticsAttemptArtifacts,
   revokeSession,
@@ -1904,6 +1907,35 @@ app.post("/api/analytics/reel-event", optionalAuth, async (req, res) => {
   }
 });
 
+app.post("/api/analytics/app-event", optionalAuth, async (req, res) => {
+  try {
+    if (!isPostgresConfigured()) {
+      return res.status(204).end();
+    }
+    const eventType = String(req.body?.eventType || "").trim();
+    if (eventType !== "app_opened" && eventType !== "login_seen") {
+      return res.status(400).json({ ok: false, error: "Invalid event_type" });
+    }
+    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+    const anonymousId = req.body?.anonymousId ? String(req.body.anonymousId).trim() : null;
+    try {
+      await recordAppUsageEvent({
+        eventType,
+        userId: authUser?.userId ?? null,
+        anonymousId,
+        metadataJson: null,
+      });
+      return res.status(201).json({ ok: true, recorded: true });
+    } catch (recordError) {
+      console.error("record app usage event failed", recordError);
+      return res.status(201).json({ ok: true, recorded: false });
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not record app usage event";
+    return res.status(400).json({ ok: false, error: message });
+  }
+});
+
 app.post("/api/auth/phone/request-otp", (req, res) => {
   try {
     const phone = String(req.body?.phone || "").trim();
@@ -2192,6 +2224,83 @@ app.get("/api/admin/observability/links/:submittedLinkId", requireAdmin, async (
     return res.json({ ok: true, ...result });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not fetch link detail";
+    return res.status(400).json({ ok: false, error: message });
+  }
+});
+
+app.get("/api/admin/usage/overview", requireAdmin, async (req, res) => {
+  try {
+    const result = await getAdminUsageOverview({
+      from: req.query?.from ? String(req.query.from).trim() : null,
+      to: req.query?.to ? String(req.query.to).trim() : null,
+      platform: req.query?.platform ? String(req.query.platform).trim() : null,
+      userType: req.query?.userType ? String(req.query.userType).trim() as "logged_in" | "anonymous" : null,
+    });
+    return res.json({
+      ok: true,
+      summary: {
+        loggedInUsers: result.loggedInUsers,
+        anonymousUsers: result.anonymousUsers,
+        uniqueUsers: result.uniqueUsers,
+        appOpenedUsers: result.appOpenedUsers,
+        loginSeenUsers: result.loginSeenUsers,
+        loggedInButNoRunUsers: result.loggedInButNoRunUsers,
+        newUsers: result.newUsers,
+        returningUsers: result.returningUsers,
+        repeatUsers: result.repeatUsers,
+        usersSubmittedAtLeastOneLink: result.usersSubmittedAtLeastOneLink,
+        usersSavedAtLeastOnePlace: result.usersSavedAtLeastOnePlace,
+        usersWithTwoPlusSavedPlaces: result.usersWithTwoPlusSavedPlaces,
+        usersSubmittedButDidNotSave: result.usersSubmittedButDidNotSave,
+        totalSavedPlaces: result.totalSavedPlaces,
+      },
+      rates: {
+        savesPerUser: result.savesPerUser,
+        linksPerUser: result.linksPerUser,
+        saveRatePerUser: result.saveRatePerUser,
+      },
+      activity: {
+        lastActiveAt: result.lastActiveAt,
+      },
+      definitions: {
+        newUser: "first_seen_at within selected range",
+        returningUser: "active in selected range and first_seen_at before selected range",
+        repeatUser: "runs_count >= 2",
+        droppedAfterExtraction: "unique_links_submitted > 0 and saved_places_count = 0",
+        saveRatePerUser: "users_who_saved / users_who_submitted",
+        rowSaveRate: "saved_places_count / unique_links_submitted",
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not fetch admin usage overview";
+    return res.status(400).json({ ok: false, error: message });
+  }
+});
+
+app.get("/api/admin/usage/users", requireAdmin, async (req, res) => {
+  try {
+    const result = await getAdminUsageUsers({
+      from: req.query?.from ? String(req.query.from).trim() : null,
+      to: req.query?.to ? String(req.query.to).trim() : null,
+      platform: req.query?.platform ? String(req.query.platform).trim() : null,
+      userType: req.query?.userType ? String(req.query.userType).trim() as "logged_in" | "anonymous" : null,
+      status: req.query?.status ? String(req.query.status).trim() as "new" | "active" | "saved_place" | "repeat_user" | "dropped_after_extraction" | "opened_app" | "logged_in" | "no_link_submitted" : null,
+      q: req.query?.q ? String(req.query.q).trim() : null,
+      page: req.query?.page ? Number(req.query.page) : undefined,
+      pageSize: req.query?.pageSize ? Number(req.query.pageSize) : undefined,
+    });
+    return res.json({
+      ok: true,
+      rows: result.rows,
+      pagination: {
+        total: result.total,
+        page: result.page,
+        pageSize: result.pageSize,
+        totalPages: result.totalPages,
+      },
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not fetch admin usage users";
     return res.status(400).json({ ok: false, error: message });
   }
 });

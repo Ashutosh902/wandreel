@@ -317,6 +317,83 @@ export type AdminObservabilityLinksResult = {
   totalPages: number;
 };
 
+type AdminUsageActorRow = {
+  actor_key: string;
+  user_type: "logged_in" | "anonymous";
+  first_seen_at: string;
+  last_seen_at: string;
+  runs_count: number | string | null;
+  unique_links_submitted: number | string | null;
+  saved_places_count: number | string | null;
+  edited_count: number | string | null;
+  reused_count: number | string | null;
+  app_opened_count: number | string | null;
+  login_seen_count: number | string | null;
+};
+
+export type AdminUsageInput = {
+  from?: string | null;
+  to?: string | null;
+  platform?: string | null;
+  userType?: "logged_in" | "anonymous" | null;
+};
+
+export type AdminUsageOverviewResult = {
+  loggedInUsers: number;
+  anonymousUsers: number;
+  uniqueUsers: number;
+  appOpenedUsers: number;
+  loginSeenUsers: number;
+  loggedInButNoRunUsers: number;
+  newUsers: number;
+  returningUsers: number;
+  repeatUsers: number;
+  usersSubmittedAtLeastOneLink: number;
+  usersSavedAtLeastOnePlace: number;
+  usersWithTwoPlusSavedPlaces: number;
+  usersSubmittedButDidNotSave: number;
+  totalSavedPlaces: number;
+  savesPerUser: number;
+  linksPerUser: number;
+  saveRatePerUser: number;
+  lastActiveAt: string | null;
+};
+
+export type AdminUsageUsersInput = AdminUsageInput & {
+  status?: "new" | "active" | "saved_place" | "repeat_user" | "dropped_after_extraction" | "opened_app" | "logged_in" | "no_link_submitted" | null;
+  q?: string | null;
+  page?: number | null;
+  pageSize?: number | null;
+};
+
+export type AdminUsageUserRowResult = {
+  actorKey: string;
+  userType: "logged_in" | "anonymous";
+  firstSeenAt: string;
+  lastSeenAt: string;
+  runsCount: number;
+  uniqueLinksSubmitted: number;
+  savedPlacesCount: number;
+  editedCount: number;
+  reusedCount: number;
+  appOpenedCount: number;
+  loginSeenCount: number;
+  hasSubmittedLink: boolean;
+  hasSavedPlace: boolean;
+  saveRate: number;
+  linksPerUser: number;
+  savesPerUser: number;
+  statusBadges: Array<"new" | "active" | "saved_place" | "repeat_user" | "dropped_after_extraction" | "opened_app" | "logged_in" | "no_link_submitted">;
+};
+
+export type AdminUsageUsersResult = {
+  rows: AdminUsageUserRowResult[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
 export type AttemptPromotedFieldsInput = {
   attemptId?: string | null;
   runId?: string | null;
@@ -335,6 +412,13 @@ export type AttemptPromotedFieldsInput = {
   commentsFetchedCount?: number | null;
   commentRepliesFetchedCount?: number | null;
   creatorReplyCount?: number | null;
+};
+
+export type AppUsageEventInput = {
+  eventType: "app_opened" | "login_seen";
+  userId?: string | null;
+  anonymousId?: string | null;
+  metadataJson?: Record<string, unknown> | null;
 };
 
 export type AdminObservabilityLinkDetailInput = {
@@ -763,6 +847,29 @@ export async function ensureAuthSchema() {
 
   await database.query(`
     create index if not exists idx_user_saved_places_user_created on user_saved_places(user_id, created_at desc);
+  `);
+
+  await database.query(`
+    create table if not exists app_usage_events (
+      id uuid primary key default gen_random_uuid(),
+      event_type text not null,
+      user_id uuid references users(id) on delete set null,
+      anonymous_id text,
+      created_at timestamptz not null default now(),
+      metadata_json jsonb
+    );
+  `);
+
+  await database.query(`
+    create index if not exists idx_app_usage_events_created on app_usage_events(created_at desc);
+  `);
+
+  await database.query(`
+    create index if not exists idx_app_usage_events_user_created on app_usage_events(user_id, created_at desc);
+  `);
+
+  await database.query(`
+    create index if not exists idx_app_usage_events_anon_created on app_usage_events(anonymous_id, created_at desc);
   `);
 
   await database.query(`
@@ -1676,6 +1783,22 @@ export async function recordReelAnalyticsEvent(input: ReelAnalyticsEventInput) {
   );
 }
 
+export async function recordAppUsageEvent(input: AppUsageEventInput): Promise<void> {
+  await database.query(
+    `
+      insert into app_usage_events (id, event_type, user_id, anonymous_id, created_at, metadata_json)
+      values ($1, $2, $3, $4, now(), $5::jsonb)
+    `,
+    [
+      randomUUID(),
+      input.eventType,
+      input.userId ?? null,
+      input.anonymousId ?? null,
+      JSON.stringify(input.metadataJson ?? {}),
+    ],
+  );
+}
+
 export async function upsertReelAnalyticsEntities(input: ReelAnalyticsEntitiesUpsertInput): Promise<void> {
   for (const entity of input.entities) {
     await database.query(
@@ -1827,6 +1950,250 @@ function normalizeInteger(value: number | null | undefined): number | null {
 function normalizeNumericResult(value: number | string | null | undefined): number {
   const numeric = Number(value);
   return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function maskActorKey(actorKey: string, userType: "logged_in" | "anonymous") {
+  const digest = hashValue(actorKey).slice(0, 8);
+  return `${userType === "logged_in" ? "usr" : "anon"}_${digest}`;
+}
+
+function isWithinSelectedRange(value: string, from: string | null, to: string | null) {
+  const timestamp = new Date(value).getTime();
+  if (!Number.isFinite(timestamp)) return false;
+  if (from) {
+    const fromTime = new Date(from).getTime();
+    if (Number.isFinite(fromTime) && timestamp < fromTime) return false;
+  }
+  if (to) {
+    const toTime = new Date(`${to}T23:59:59.999Z`).getTime();
+    if (Number.isFinite(toTime) && timestamp > toTime) return false;
+  }
+  return true;
+}
+
+function buildUsageStatusBadges(
+  row: Pick<AdminUsageUserRowResult, "firstSeenAt" | "lastSeenAt" | "runsCount" | "uniqueLinksSubmitted" | "savedPlacesCount" | "appOpenedCount" | "loginSeenCount">,
+  from: string | null,
+  to: string | null,
+): Array<"new" | "active" | "saved_place" | "repeat_user" | "dropped_after_extraction" | "opened_app" | "logged_in" | "no_link_submitted"> {
+  const badges: Array<"new" | "active" | "saved_place" | "repeat_user" | "dropped_after_extraction" | "opened_app" | "logged_in" | "no_link_submitted"> = [];
+  if ((from || to) && isWithinSelectedRange(row.firstSeenAt, from, to)) {
+    badges.push("new");
+  }
+  if (row.lastSeenAt) {
+    badges.push("active");
+  }
+  if (row.appOpenedCount > 0) {
+    badges.push("opened_app");
+  }
+  if (row.loginSeenCount > 0) {
+    badges.push("logged_in");
+  }
+  if (row.savedPlacesCount > 0) {
+    badges.push("saved_place");
+  }
+  if (row.runsCount >= 2) {
+    badges.push("repeat_user");
+  }
+  if (row.uniqueLinksSubmitted === 0) {
+    badges.push("no_link_submitted");
+  }
+  if (row.uniqueLinksSubmitted > 0 && row.savedPlacesCount === 0) {
+    badges.push("dropped_after_extraction");
+  }
+  return badges;
+}
+
+async function getAdminUsageActorRows(input: AdminUsageInput): Promise<AdminUsageUserRowResult[]> {
+  const from = input.from ? String(input.from).trim() : null;
+  const to = input.to ? String(input.to).trim() : null;
+  const platform = input.platform ? String(input.platform).trim() : null;
+  const userType = input.userType ? String(input.userType).trim() : null;
+
+  const result = await database.query<AdminUsageActorRow>(
+    `
+      with active_runs as (
+        select
+          r.*,
+          case
+            when r.user_id is not null then 'u:' || r.user_id::text
+            else 'a:' || coalesce(r.anonymous_id, 'unknown')
+          end as actor_key,
+          case
+            when r.user_id is not null then 'logged_in'
+            else 'anonymous'
+          end as user_type
+        from reel_analytics_runs r
+        where
+          ($1::timestamptz is null or r.created_at >= $1::timestamptz)
+          and ($2::timestamptz is null or r.created_at < ($2::timestamptz + interval '1 day'))
+          and ($3::text is null or r.source_platform = $3::text)
+          and (
+            $4::text is null
+            or ($4::text = 'logged_in' and r.user_id is not null)
+            or ($4::text = 'anonymous' and r.user_id is null)
+          )
+      ),
+      active_app_events as (
+        select
+          e.*,
+          case
+            when e.user_id is not null then 'u:' || e.user_id::text
+            else 'a:' || coalesce(e.anonymous_id, 'unknown')
+          end as actor_key,
+          case
+            when e.user_id is not null then 'logged_in'
+            else 'anonymous'
+          end as user_type
+        from app_usage_events e
+        where
+          ($3::text is null)
+          and ($1::timestamptz is null or e.created_at >= $1::timestamptz)
+          and ($2::timestamptz is null or e.created_at < ($2::timestamptz + interval '1 day'))
+          and (
+            $4::text is null
+            or ($4::text = 'logged_in' and e.user_id is not null)
+            or ($4::text = 'anonymous' and e.user_id is null)
+          )
+          and e.event_type in ('app_opened', 'login_seen')
+      ),
+      actor_scope as (
+        select distinct actor_key, user_type
+        from active_runs
+        union
+        select distinct actor_key, user_type
+        from active_app_events
+      ),
+      actor_runs as (
+        select
+          r.*,
+          scope.actor_key,
+          scope.user_type
+        from actor_scope scope
+        join reel_analytics_runs r
+          on (
+            (scope.user_type = 'logged_in' and scope.actor_key = 'u:' || r.user_id::text)
+            or (scope.user_type = 'anonymous' and scope.actor_key = 'a:' || coalesce(r.anonymous_id, 'unknown'))
+          )
+        where ($3::text is null or r.source_platform = $3::text)
+      ),
+      actor_app_events as (
+        select
+          e.*,
+          scope.actor_key,
+          scope.user_type
+        from actor_scope scope
+        join app_usage_events e
+          on (
+            (scope.user_type = 'logged_in' and scope.actor_key = 'u:' || e.user_id::text)
+            or (scope.user_type = 'anonymous' and scope.actor_key = 'a:' || coalesce(e.anonymous_id, 'unknown'))
+          )
+        where
+          ($3::text is null)
+          and e.event_type in ('app_opened', 'login_seen')
+      ),
+      run_rollup as (
+        select
+          actor_key,
+          user_type,
+          min(created_at) as first_seen_at,
+          max(updated_at) as last_seen_at,
+          count(*)::numeric as runs_count,
+          count(distinct submitted_link_id)::numeric filter (where submitted_link_id is not null) as unique_links_submitted,
+          count(*)::numeric filter (where final_user_action = 'edited') as edited_count
+        from actor_runs
+        group by actor_key, user_type
+      ),
+      reuse_rollup as (
+        select
+          actor_key,
+          coalesce(sum(case when link_runs > 1 then link_runs - 1 else 0 end), 0)::numeric as reused_count
+        from (
+          select actor_key, submitted_link_id, count(*)::numeric as link_runs
+          from actor_runs
+          where submitted_link_id is not null
+          group by actor_key, submitted_link_id
+        ) grouped_links
+        group by actor_key
+      ),
+      app_event_rollup as (
+        select
+          actor_key,
+          min(created_at) as first_seen_at,
+          max(created_at) as last_seen_at,
+          count(*)::numeric filter (where event_type = 'app_opened') as app_opened_count,
+          count(*)::numeric filter (where event_type = 'login_seen') as login_seen_count
+        from actor_app_events
+        group by actor_key
+      ),
+      saved_place_rollup as (
+        select
+          'u:' || usp.user_id::text as actor_key,
+          count(*)::numeric as saved_places_count,
+          max(usp.created_at) as last_saved_at
+        from user_saved_places usp
+        where
+          ($1::timestamptz is null or usp.created_at >= $1::timestamptz)
+          and ($2::timestamptz is null or usp.created_at < ($2::timestamptz + interval '1 day'))
+        group by 1
+      )
+      select
+        scope.actor_key,
+        scope.user_type,
+        coalesce(
+          least(rr.first_seen_at, aer.first_seen_at),
+          rr.first_seen_at,
+          aer.first_seen_at
+        ) as first_seen_at,
+        greatest(
+          coalesce(rr.last_seen_at, aer.last_seen_at),
+          coalesce(aer.last_seen_at, rr.last_seen_at),
+          coalesce(spr.last_saved_at, rr.last_seen_at, aer.last_seen_at)
+        ) as last_seen_at,
+        coalesce(rr.runs_count, 0)::numeric as runs_count,
+        coalesce(rr.unique_links_submitted, 0)::numeric as unique_links_submitted,
+        coalesce(spr.saved_places_count, 0)::numeric as saved_places_count,
+        coalesce(rr.edited_count, 0)::numeric as edited_count,
+        coalesce(reuse.reused_count, 0)::numeric as reused_count,
+        coalesce(aer.app_opened_count, 0)::numeric as app_opened_count,
+        coalesce(aer.login_seen_count, 0)::numeric as login_seen_count
+      from actor_scope scope
+      left join run_rollup rr on rr.actor_key = scope.actor_key
+      left join saved_place_rollup spr on spr.actor_key = scope.actor_key
+      left join reuse_rollup reuse on reuse.actor_key = scope.actor_key
+      left join app_event_rollup aer on aer.actor_key = scope.actor_key
+      order by last_seen_at desc nulls last, scope.actor_key asc
+    `,
+    [from, to, platform, userType],
+  );
+
+  return result.rows.map((row) => {
+    const mapped: AdminUsageUserRowResult = {
+      actorKey: maskActorKey(row.actor_key, row.user_type),
+      userType: row.user_type,
+      firstSeenAt: row.first_seen_at,
+      lastSeenAt: row.last_seen_at,
+      runsCount: normalizeNumericResult(row.runs_count),
+      uniqueLinksSubmitted: normalizeNumericResult(row.unique_links_submitted),
+      savedPlacesCount: normalizeNumericResult(row.saved_places_count),
+      editedCount: normalizeNumericResult(row.edited_count),
+      reusedCount: normalizeNumericResult(row.reused_count),
+      appOpenedCount: normalizeNumericResult(row.app_opened_count),
+      loginSeenCount: normalizeNumericResult(row.login_seen_count),
+      hasSubmittedLink: normalizeNumericResult(row.unique_links_submitted) > 0,
+      hasSavedPlace: normalizeNumericResult(row.saved_places_count) > 0,
+      saveRate: 0,
+      linksPerUser: 0,
+      savesPerUser: 0,
+      statusBadges: [],
+    };
+    mapped.saveRate =
+      mapped.uniqueLinksSubmitted > 0 ? mapped.savedPlacesCount / mapped.uniqueLinksSubmitted : 0;
+    mapped.linksPerUser = mapped.uniqueLinksSubmitted;
+    mapped.savesPerUser = mapped.savedPlacesCount;
+    mapped.statusBadges = buildUsageStatusBadges(mapped, from, to);
+    return mapped;
+  });
 }
 
 function buildEntityFieldEditDedupeKey(input: {
@@ -2172,6 +2539,93 @@ export async function getAdminObservabilityLinks(
   return {
     rows,
     total: totalCount,
+    page,
+    pageSize,
+    totalPages,
+  };
+}
+
+export async function getAdminUsageOverview(
+  input: AdminUsageInput,
+): Promise<AdminUsageOverviewResult> {
+  const from = input.from ? String(input.from).trim() : null;
+  const to = input.to ? String(input.to).trim() : null;
+  const rows = await getAdminUsageActorRows(input);
+  const loggedInUsers = rows.filter((row) => row.userType === "logged_in").length;
+  const anonymousUsers = rows.filter((row) => row.userType === "anonymous").length;
+  const uniqueUsers = rows.length;
+  const appOpenedUsers = rows.filter((row) => row.appOpenedCount > 0).length;
+  const loginSeenUsers = rows.filter((row) => row.loginSeenCount > 0).length;
+  const loggedInButNoRunUsers = rows.filter((row) => row.loginSeenCount > 0 && row.runsCount === 0).length;
+  const newUsers = rows.filter((row) => (from || to) && isWithinSelectedRange(row.firstSeenAt, from, to)).length;
+  const returningUsers = rows.filter((row) => from && new Date(row.firstSeenAt).getTime() < new Date(from).getTime()).length;
+  const repeatUsers = rows.filter((row) => row.runsCount >= 2).length;
+  const usersSubmittedAtLeastOneLink = rows.filter((row) => row.uniqueLinksSubmitted > 0).length;
+  const usersSavedAtLeastOnePlace = rows.filter((row) => row.savedPlacesCount > 0).length;
+  const usersWithTwoPlusSavedPlaces = rows.filter((row) => row.savedPlacesCount >= 2).length;
+  const usersSubmittedButDidNotSave = rows.filter(
+    (row) => row.uniqueLinksSubmitted > 0 && row.savedPlacesCount === 0,
+  ).length;
+  const totalSavedPlaces = rows.reduce((sum, row) => sum + row.savedPlacesCount, 0);
+  const totalUniqueLinks = rows.reduce((sum, row) => sum + row.uniqueLinksSubmitted, 0);
+  const lastActiveAt = rows.reduce<string | null>((latest, row) => {
+    if (!latest) return row.lastSeenAt;
+    return new Date(row.lastSeenAt).getTime() > new Date(latest).getTime() ? row.lastSeenAt : latest;
+  }, null);
+
+  return {
+    loggedInUsers,
+    anonymousUsers,
+    uniqueUsers,
+    appOpenedUsers,
+    loginSeenUsers,
+    loggedInButNoRunUsers,
+    newUsers,
+    returningUsers,
+    repeatUsers,
+    usersSubmittedAtLeastOneLink,
+    usersSavedAtLeastOnePlace,
+    usersWithTwoPlusSavedPlaces,
+    usersSubmittedButDidNotSave,
+    totalSavedPlaces,
+    savesPerUser: uniqueUsers > 0 ? totalSavedPlaces / uniqueUsers : 0,
+    linksPerUser: uniqueUsers > 0 ? totalUniqueLinks / uniqueUsers : 0,
+    saveRatePerUser:
+      usersSubmittedAtLeastOneLink > 0 ? usersSavedAtLeastOnePlace / usersSubmittedAtLeastOneLink : 0,
+    lastActiveAt,
+  };
+}
+
+export async function getAdminUsageUsers(
+  input: AdminUsageUsersInput,
+): Promise<AdminUsageUsersResult> {
+  const status = input.status ? String(input.status).trim() : null;
+  const q = input.q ? String(input.q).trim().toLowerCase() : null;
+  const page =
+    Number.isFinite(Number(input.page)) && Number(input.page) >= 1 ? Number(input.page) : 1;
+  const pageSize =
+    Number.isFinite(Number(input.pageSize)) && Number(input.pageSize) >= 1
+      ? Math.min(Number(input.pageSize), 200)
+      : 50;
+  const offset = (page - 1) * pageSize;
+
+  const rows = await getAdminUsageActorRows(input);
+  const filteredRows = rows.filter((row) => {
+    if (status && !row.statusBadges.includes(status as AdminUsageUserRowResult["statusBadges"][number])) {
+      return false;
+    }
+    if (q && !row.actorKey.toLowerCase().includes(q)) {
+      return false;
+    }
+    return true;
+  });
+
+  const total = filteredRows.length;
+  const totalPages = Math.ceil(total / pageSize);
+
+  return {
+    rows: filteredRows.slice(offset, offset + pageSize),
+    total,
     page,
     pageSize,
     totalPages,

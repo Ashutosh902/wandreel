@@ -1253,3 +1253,358 @@ test("admin link detail endpoint access control and includeRaw", async () => {
   }
 });
 
+test("admin usage overview requires authentication", async () => {
+  process.env.NODE_ENV = "test";
+  process.env.ADMIN_EMAILS = "admin@example.com";
+  const mock = createDatabaseMock([]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+    schemaReadyOverride: false,
+  });
+
+  const { app } = await import("./index");
+  const server = app.listen(0);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/admin/usage/overview`);
+    const body = await response.json();
+    assert.equal(response.status, 401);
+    assert.equal(body.ok, false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("admin usage overview forbids authenticated non-admin users", async () => {
+  process.env.NODE_ENV = "test";
+  process.env.ADMIN_EMAILS = "admin@example.com";
+  const mock = createDatabaseMock([
+    [buildAuthSessionUserRow({ email: "user@example.com" })],
+  ]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+    schemaReadyOverride: false,
+  });
+
+  const { app } = await import("./index");
+  const server = app.listen(0);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/admin/usage/overview`, {
+      headers: { Cookie: "wr_session=test-token" },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 403);
+    assert.equal(body.ok, false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("admin usage overview returns aggregated response shape for admin users", async () => {
+  process.env.NODE_ENV = "test";
+  process.env.ADMIN_EMAILS = "admin@example.com";
+  const mock = createDatabaseMock([
+    [buildAuthSessionUserRow({ email: "admin@example.com" })],
+    [
+      {
+        actor_key: "u:user-1",
+        user_type: "logged_in",
+        first_seen_at: "2026-06-05T10:00:00Z",
+        last_seen_at: "2026-06-21T10:00:00Z",
+        runs_count: "3",
+        unique_links_submitted: "2",
+        saved_places_count: "2",
+        edited_count: "1",
+        reused_count: "1",
+        app_opened_count: "1",
+        login_seen_count: "1",
+      },
+      {
+        actor_key: "a:anon-1",
+        user_type: "anonymous",
+        first_seen_at: "2026-05-28T10:00:00Z",
+        last_seen_at: "2026-06-20T10:00:00Z",
+        runs_count: "1",
+        unique_links_submitted: "1",
+        saved_places_count: "0",
+        edited_count: "0",
+        reused_count: "0",
+        app_opened_count: "1",
+        login_seen_count: "0",
+      },
+      {
+        actor_key: "u:user-2",
+        user_type: "logged_in",
+        first_seen_at: "2026-06-10T10:00:00Z",
+        last_seen_at: "2026-06-10T10:00:00Z",
+        runs_count: "0",
+        unique_links_submitted: "0",
+        saved_places_count: "0",
+        edited_count: "0",
+        reused_count: "0",
+        app_opened_count: "1",
+        login_seen_count: "1",
+      },
+    ],
+  ]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+    schemaReadyOverride: false,
+  });
+
+  const { app } = await import("./index");
+  const server = app.listen(0);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/admin/usage/overview?from=2026-06-01&to=2026-06-21&platform=instagram&userType=logged_in`, {
+      headers: { Cookie: "wr_session=test-token" },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.summary.loggedInUsers, 2);
+    assert.equal(body.summary.anonymousUsers, 1);
+    assert.equal(body.summary.appOpenedUsers, 3);
+    assert.equal(body.summary.loginSeenUsers, 2);
+    assert.equal(body.summary.loggedInButNoRunUsers, 1);
+    assert.equal(body.rates.saveRatePerUser, 0.5);
+    assert.equal(body.activity.lastActiveAt, "2026-06-21T10:00:00Z");
+    assert.equal(body.definitions.repeatUser, "runs_count >= 2");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("admin usage users returns paginated masked rows for admin users", async () => {
+  process.env.NODE_ENV = "test";
+  process.env.ADMIN_EMAILS = "admin@example.com";
+  const mock = createDatabaseMock([
+    [buildAuthSessionUserRow({ email: "admin@example.com" })],
+    [
+      {
+        actor_key: "u:user-1",
+        user_type: "logged_in",
+        first_seen_at: "2026-06-05T10:00:00Z",
+        last_seen_at: "2026-06-21T10:00:00Z",
+        runs_count: "3",
+        unique_links_submitted: "2",
+        saved_places_count: "2",
+        edited_count: "1",
+        reused_count: "1",
+        app_opened_count: "1",
+        login_seen_count: "1",
+      },
+      {
+        actor_key: "a:anon-1",
+        user_type: "anonymous",
+        first_seen_at: "2026-05-28T10:00:00Z",
+        last_seen_at: "2026-06-20T10:00:00Z",
+        runs_count: "1",
+        unique_links_submitted: "1",
+        saved_places_count: "0",
+        edited_count: "0",
+        reused_count: "0",
+        app_opened_count: "1",
+        login_seen_count: "0",
+      },
+    ],
+  ]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+    schemaReadyOverride: false,
+  });
+
+  const { app } = await import("./index");
+  const server = app.listen(0);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/admin/usage/users?from=2026-06-01&to=2026-06-21&userType=logged_in&status=repeat_user&q=usr_&page=1&pageSize=20`, {
+      headers: { Cookie: "wr_session=test-token" },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.ok, true);
+    assert.deepEqual(body.pagination, {
+      total: 1,
+      page: 1,
+      pageSize: 20,
+      totalPages: 1,
+    });
+    assert.equal(body.rows.length, 1);
+    assert.match(body.rows[0].actorKey, /^usr_[0-9a-f]{8}$/);
+    assert.equal(body.rows[0].userType, "logged_in");
+    assert.equal(body.rows[0].appOpenedCount, 1);
+    assert.equal(body.rows[0].loginSeenCount, 1);
+    assert.equal(body.rows[0].hasSubmittedLink, true);
+    assert.equal(body.rows[0].hasSavedPlace, true);
+    assert.ok(body.rows[0].statusBadges.includes("repeat_user"));
+    assert.ok(body.rows[0].statusBadges.includes("saved_place"));
+    assert.equal(JSON.stringify(body).includes("user-1"), false);
+    assert.equal(JSON.stringify(body).includes("anon-1"), false);
+    assert.equal(JSON.stringify(body).includes("admin@example.com"), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("app-event records app_opened", async () => {
+  process.env.NODE_ENV = "test";
+  const mock = createDatabaseMock([[]]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+    schemaReadyOverride: false,
+  });
+
+  const { app } = await import("./index");
+  const server = app.listen(0);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/analytics/app-event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eventType: "app_opened", anonymousId: "anon-1" }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 201);
+    assert.equal(body.ok, true);
+    assert.equal(body.recorded, true);
+    assert.match(mock.calls[0]?.sql || "", /insert into app_usage_events/i);
+    assert.equal(mock.calls[0]?.params?.[1], "app_opened");
+    assert.equal(mock.calls[0]?.params?.[3], "anon-1");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("app-event records login_seen for logged-in session", async () => {
+  process.env.NODE_ENV = "test";
+  const mock = createDatabaseMock([
+    [buildAuthSessionUserRow({ id: "user-1", email: "user@example.com" })],
+    [],
+  ]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+    schemaReadyOverride: false,
+  });
+
+  const { app } = await import("./index");
+  const server = app.listen(0);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/analytics/app-event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Cookie: "wr_session=test-token" },
+      body: JSON.stringify({ eventType: "login_seen", anonymousId: "anon-2" }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 201);
+    assert.equal(body.ok, true);
+    assert.equal(body.recorded, true);
+    assert.equal(mock.calls[1]?.params?.[1], "login_seen");
+    assert.equal(mock.calls[1]?.params?.[2], "user-1");
+    assert.equal(mock.calls[1]?.params?.[3], "anon-2");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("app-event rejects invalid event_type", async () => {
+  process.env.NODE_ENV = "test";
+  const mock = createDatabaseMock([]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+    schemaReadyOverride: false,
+  });
+
+  const { app } = await import("./index");
+  const server = app.listen(0);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/analytics/app-event`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ eventType: "something_else" }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 400);
+    assert.equal(body.ok, false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("admin usage users includes app-event-only actors with no runs", async () => {
+  process.env.NODE_ENV = "test";
+  process.env.ADMIN_EMAILS = "admin@example.com";
+  const mock = createDatabaseMock([
+    [buildAuthSessionUserRow({ email: "admin@example.com" })],
+    [
+      {
+        actor_key: "u:user-2",
+        user_type: "logged_in",
+        first_seen_at: "2026-06-10T10:00:00Z",
+        last_seen_at: "2026-06-10T10:00:00Z",
+        runs_count: "0",
+        unique_links_submitted: "0",
+        saved_places_count: "0",
+        edited_count: "0",
+        reused_count: "0",
+        app_opened_count: "1",
+        login_seen_count: "1",
+      },
+    ],
+  ]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+    schemaReadyOverride: false,
+  });
+
+  const { app } = await import("./index");
+  const server = app.listen(0);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/admin/usage/users?status=no_link_submitted`, {
+      headers: { Cookie: "wr_session=test-token" },
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.rows.length, 1);
+    assert.equal(body.rows[0].runsCount, 0);
+    assert.equal(body.rows[0].appOpenedCount, 1);
+    assert.equal(body.rows[0].loginSeenCount, 1);
+    assert.equal(body.rows[0].hasSubmittedLink, false);
+    assert.equal(body.rows[0].hasSavedPlace, false);
+    assert.ok(body.rows[0].statusBadges.includes("opened_app"));
+    assert.ok(body.rows[0].statusBadges.includes("logged_in"));
+    assert.ok(body.rows[0].statusBadges.includes("no_link_submitted"));
+    assert.equal(JSON.stringify(body).includes("user-2"), false);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});

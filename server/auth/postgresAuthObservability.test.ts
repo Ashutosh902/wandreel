@@ -6,6 +6,8 @@ import {
   getAdminObservabilityOverview,
   getAdminObservabilityLinkDetail,
   getAdminObservabilityLinks,
+  getAdminUsageOverview,
+  getAdminUsageUsers,
   ensureAuthSchema,
   findSavedPlaceByUserAndPlaceId,
   getLatestReusableMetadataExtractionByCanonicalUrl,
@@ -61,6 +63,7 @@ test("ensureAuthSchema adds observability tables and promoted columns", async ()
   assert.match(sqlText, /create table if not exists attempt_stage_runs/i);
   assert.match(sqlText, /create table if not exists attempt_evidence/i);
   assert.match(sqlText, /create table if not exists entity_field_edits/i);
+  assert.match(sqlText, /create table if not exists app_usage_events/i);
   assert.match(sqlText, /alter table if exists reel_analytics_runs add column if not exists submitted_link_id/i);
   assert.match(sqlText, /alter table if exists reel_analytics_runs add column if not exists canonical_url/i);
   assert.match(sqlText, /alter table if exists reel_analytics_attempts add column if not exists accepted_after/i);
@@ -733,3 +736,196 @@ test("getAdminObservabilityLinks filters by search query (q)", async () => {
   assert.equal(mock.calls[1]?.params?.[6], "instagram.com");
 });
 
+test("getAdminUsageOverview returns masked aggregate customer usage metrics", async () => {
+  const mock = createDatabaseMock([[
+    {
+      actor_key: "u:user-1",
+      user_type: "logged_in",
+      first_seen_at: "2026-06-05T10:00:00Z",
+      last_seen_at: "2026-06-21T10:00:00Z",
+      runs_count: "3",
+      unique_links_submitted: "2",
+      saved_places_count: "2",
+      edited_count: "1",
+      reused_count: "1",
+      app_opened_count: "1",
+      login_seen_count: "1",
+    },
+    {
+      actor_key: "a:anon-1",
+      user_type: "anonymous",
+      first_seen_at: "2026-05-28T10:00:00Z",
+      last_seen_at: "2026-06-20T10:00:00Z",
+      runs_count: "1",
+      unique_links_submitted: "1",
+      saved_places_count: "0",
+      edited_count: "0",
+      reused_count: "0",
+      app_opened_count: "1",
+      login_seen_count: "0",
+    },
+    {
+      actor_key: "u:user-2",
+      user_type: "logged_in",
+      first_seen_at: "2026-06-10T10:00:00Z",
+      last_seen_at: "2026-06-10T10:00:00Z",
+      runs_count: "0",
+      unique_links_submitted: "0",
+      saved_places_count: "0",
+      edited_count: "0",
+      reused_count: "0",
+      app_opened_count: "1",
+      login_seen_count: "1",
+    },
+  ]]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+  });
+
+  const result = await getAdminUsageOverview({
+    from: "2026-06-01",
+    to: "2026-06-21",
+    platform: "instagram",
+  });
+
+  assert.equal(result.loggedInUsers, 2);
+  assert.equal(result.anonymousUsers, 1);
+  assert.equal(result.uniqueUsers, 3);
+  assert.equal(result.appOpenedUsers, 3);
+  assert.equal(result.loginSeenUsers, 2);
+  assert.equal(result.loggedInButNoRunUsers, 1);
+  assert.equal(result.newUsers, 2);
+  assert.equal(result.returningUsers, 1);
+  assert.equal(result.repeatUsers, 1);
+  assert.equal(result.usersSubmittedAtLeastOneLink, 2);
+  assert.equal(result.usersSavedAtLeastOnePlace, 1);
+  assert.equal(result.usersWithTwoPlusSavedPlaces, 1);
+  assert.equal(result.usersSubmittedButDidNotSave, 1);
+  assert.equal(result.totalSavedPlaces, 2);
+  assert.equal(result.savesPerUser, 2 / 3);
+  assert.equal(result.linksPerUser, 1);
+  assert.equal(result.saveRatePerUser, 0.5);
+  assert.equal(result.lastActiveAt, "2026-06-21T10:00:00Z");
+  assert.deepEqual(mock.calls[0]?.params, ["2026-06-01", "2026-06-21", "instagram", null]);
+});
+
+test("getAdminUsageUsers paginates, filters, and masks actor keys", async () => {
+  const mock = createDatabaseMock([[
+    {
+      actor_key: "u:user-1",
+      user_type: "logged_in",
+      first_seen_at: "2026-06-05T10:00:00Z",
+      last_seen_at: "2026-06-21T10:00:00Z",
+      runs_count: "3",
+      unique_links_submitted: "2",
+      saved_places_count: "2",
+      edited_count: "1",
+      reused_count: "1",
+      app_opened_count: "1",
+      login_seen_count: "1",
+    },
+    {
+      actor_key: "a:anon-1",
+      user_type: "anonymous",
+      first_seen_at: "2026-05-28T10:00:00Z",
+      last_seen_at: "2026-06-20T10:00:00Z",
+      runs_count: "1",
+      unique_links_submitted: "1",
+      saved_places_count: "0",
+      edited_count: "0",
+      reused_count: "0",
+      app_opened_count: "1",
+      login_seen_count: "0",
+    },
+    {
+      actor_key: "u:user-2",
+      user_type: "logged_in",
+      first_seen_at: "2026-06-10T10:00:00Z",
+      last_seen_at: "2026-06-10T10:00:00Z",
+      runs_count: "0",
+      unique_links_submitted: "0",
+      saved_places_count: "0",
+      edited_count: "0",
+      reused_count: "0",
+      app_opened_count: "1",
+      login_seen_count: "1",
+    },
+  ]]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+  });
+
+  const result = await getAdminUsageUsers({
+    from: "2026-06-01",
+    to: "2026-06-21",
+    userType: "logged_in",
+    status: "repeat_user",
+    q: "usr_",
+    page: 1,
+    pageSize: 10,
+  });
+
+  assert.equal(result.total, 1);
+  assert.equal(result.page, 1);
+  assert.equal(result.pageSize, 10);
+  assert.equal(result.totalPages, 1);
+  assert.equal(result.rows.length, 1);
+  assert.match(result.rows[0]?.actorKey || "", /^usr_[0-9a-f]{8}$/);
+  assert.equal(result.rows[0]?.userType, "logged_in");
+  assert.equal(result.rows[0]?.runsCount, 3);
+  assert.equal(result.rows[0]?.uniqueLinksSubmitted, 2);
+  assert.equal(result.rows[0]?.savedPlacesCount, 2);
+  assert.equal(result.rows[0]?.editedCount, 1);
+  assert.equal(result.rows[0]?.reusedCount, 1);
+  assert.equal(result.rows[0]?.appOpenedCount, 1);
+  assert.equal(result.rows[0]?.loginSeenCount, 1);
+  assert.equal(result.rows[0]?.hasSubmittedLink, true);
+  assert.equal(result.rows[0]?.hasSavedPlace, true);
+  assert.equal(result.rows[0]?.saveRate, 1);
+  assert.ok(result.rows[0]?.statusBadges.includes("repeat_user"));
+  assert.ok(result.rows[0]?.statusBadges.includes("saved_place"));
+  assert.ok(!result.rows[0]?.statusBadges.includes("no_link_submitted"));
+  assert.ok(!JSON.stringify(result.rows[0]).includes("user-1"));
+  assert.deepEqual(mock.calls[0]?.params, ["2026-06-01", "2026-06-21", null, "logged_in"]);
+});
+
+test("getAdminUsageUsers includes app event actors with no runs", async () => {
+  const mock = createDatabaseMock([[
+    {
+      actor_key: "u:user-2",
+      user_type: "logged_in",
+      first_seen_at: "2026-06-10T10:00:00Z",
+      last_seen_at: "2026-06-10T10:00:00Z",
+      runs_count: "0",
+      unique_links_submitted: "0",
+      saved_places_count: "0",
+      edited_count: "0",
+      reused_count: "0",
+      app_opened_count: "1",
+      login_seen_count: "1",
+    },
+  ]]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+  });
+
+  const result = await getAdminUsageUsers({
+    userType: "logged_in",
+    status: "no_link_submitted",
+    page: 1,
+    pageSize: 10,
+  });
+
+  assert.equal(result.total, 1);
+  assert.equal(result.rows[0]?.runsCount, 0);
+  assert.equal(result.rows[0]?.appOpenedCount, 1);
+  assert.equal(result.rows[0]?.loginSeenCount, 1);
+  assert.equal(result.rows[0]?.hasSubmittedLink, false);
+  assert.equal(result.rows[0]?.hasSavedPlace, false);
+  assert.ok(result.rows[0]?.statusBadges.includes("opened_app"));
+  assert.ok(result.rows[0]?.statusBadges.includes("logged_in"));
+  assert.ok(result.rows[0]?.statusBadges.includes("no_link_submitted"));
+});
