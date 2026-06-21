@@ -9,6 +9,21 @@ async function safeJson(res: Response) {
   }
 }
 
+function buildQuery(params: Record<string, string | number | undefined>) {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null) return;
+    if (typeof value === "string") {
+      const trimmed = value.trim();
+      if (!trimmed) return;
+      query.set(key, trimmed);
+      return;
+    }
+    query.set(key, String(value));
+  });
+  return query;
+}
+
 type AdminApiBase = {
   ok: boolean;
   status: number;
@@ -219,10 +234,7 @@ export type AdminUsageUsersResponse = AdminApiBase & {
 };
 
 export async function fetchAdminOverview(params: Record<string, string | number | undefined> = {}): Promise<AdminOverviewResponse> {
-  const query = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && String(v) !== "") query.set(k, String(v));
-  });
+  const query = buildQuery(params);
   const querySuffix = query.toString() ? `?${query.toString()}` : "";
   const res = await fetch(`${API_BASE}/api/admin/observability/overview${querySuffix}`, { credentials: "include" });
   const body = await safeJson(res);
@@ -230,11 +242,9 @@ export async function fetchAdminOverview(params: Record<string, string | number 
 }
 
 export async function fetchAdminLinks(params: Record<string, string | number | undefined> = {}): Promise<AdminLinksResponse> {
-  const query = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && String(v) !== "") query.set(k, String(v));
-  });
-  const res = await fetch(`${API_BASE}/api/admin/observability/links?${query.toString()}`, { credentials: "include" });
+  const query = buildQuery(params);
+  const querySuffix = query.toString() ? `?${query.toString()}` : "";
+  const res = await fetch(`${API_BASE}/api/admin/observability/links${querySuffix}`, { credentials: "include" });
   const body = await safeJson(res);
   return { ok: res.ok, status: res.status, ...body };
 }
@@ -274,10 +284,7 @@ export async function fetchAdminLinkDetail(submittedLinkId: string): Promise<Adm
 }
 
 export async function fetchAdminUsageOverview(params: Record<string, string | number | undefined> = {}): Promise<AdminUsageOverviewResponse> {
-  const query = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && String(v) !== "") query.set(k, String(v));
-  });
+  const query = buildQuery(params);
   const querySuffix = query.toString() ? `?${query.toString()}` : "";
   const res = await fetch(`${API_BASE}/api/admin/usage/overview${querySuffix}`, { credentials: "include" });
   const body = await safeJson(res);
@@ -285,10 +292,7 @@ export async function fetchAdminUsageOverview(params: Record<string, string | nu
 }
 
 export async function fetchAdminUsageUsers(params: Record<string, string | number | undefined> = {}): Promise<AdminUsageUsersResponse> {
-  const query = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null && String(v) !== "") query.set(k, String(v));
-  });
+  const query = buildQuery(params);
   const querySuffix = query.toString() ? `?${query.toString()}` : "";
   const res = await fetch(`${API_BASE}/api/admin/usage/users${querySuffix}`, { credentials: "include" });
   const body = await safeJson(res);

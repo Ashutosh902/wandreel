@@ -2004,14 +2004,51 @@ function buildUsageStatusBadges(
   return badges;
 }
 
+function isMissingAppUsageEventsTableError(error: unknown) {
+  const code = typeof error === "object" && error && "code" in error ? String((error as { code?: unknown }).code || "") : "";
+  const message = error instanceof Error ? error.message : String(error || "");
+  return code === "42P01" || /app_usage_events/i.test(message);
+}
+
+function mapAdminUsageActorRows(rows: AdminUsageActorRow[], from: string | null, to: string | null) {
+  return rows.map((row) => {
+    const mapped: AdminUsageUserRowResult = {
+      actorKey: maskActorKey(row.actor_key, row.user_type),
+      userType: row.user_type,
+      firstSeenAt: row.first_seen_at,
+      lastSeenAt: row.last_seen_at,
+      runsCount: normalizeNumericResult(row.runs_count),
+      uniqueLinksSubmitted: normalizeNumericResult(row.unique_links_submitted),
+      savedPlacesCount: normalizeNumericResult(row.saved_places_count),
+      editedCount: normalizeNumericResult(row.edited_count),
+      reusedCount: normalizeNumericResult(row.reused_count),
+      appOpenedCount: normalizeNumericResult(row.app_opened_count),
+      loginSeenCount: normalizeNumericResult(row.login_seen_count),
+      hasSubmittedLink: normalizeNumericResult(row.unique_links_submitted) > 0,
+      hasSavedPlace: normalizeNumericResult(row.saved_places_count) > 0,
+      saveRate: 0,
+      linksPerUser: 0,
+      savesPerUser: 0,
+      statusBadges: [],
+    };
+    mapped.saveRate =
+      mapped.uniqueLinksSubmitted > 0 ? mapped.savedPlacesCount / mapped.uniqueLinksSubmitted : 0;
+    mapped.linksPerUser = mapped.uniqueLinksSubmitted;
+    mapped.savesPerUser = mapped.savedPlacesCount;
+    mapped.statusBadges = buildUsageStatusBadges(mapped, from, to);
+    return mapped;
+  });
+}
+
 async function getAdminUsageActorRows(input: AdminUsageInput): Promise<AdminUsageUserRowResult[]> {
   const from = input.from ? String(input.from).trim() : null;
   const to = input.to ? String(input.to).trim() : null;
   const platform = input.platform ? String(input.platform).trim() : null;
   const userType = input.userType ? String(input.userType).trim() : null;
 
-  const result = await database.query<AdminUsageActorRow>(
-    `
+  try {
+    const result = await database.query<AdminUsageActorRow>(
+      `
       with active_runs as (
         select
           r.*,
@@ -2163,37 +2200,100 @@ async function getAdminUsageActorRows(input: AdminUsageInput): Promise<AdminUsag
       left join reuse_rollup reuse on reuse.actor_key = scope.actor_key
       left join app_event_rollup aer on aer.actor_key = scope.actor_key
       order by last_seen_at desc nulls last, scope.actor_key asc
-    `,
-    [from, to, platform, userType],
-  );
+      `,
+      [from, to, platform, userType],
+    );
 
-  return result.rows.map((row) => {
-    const mapped: AdminUsageUserRowResult = {
-      actorKey: maskActorKey(row.actor_key, row.user_type),
-      userType: row.user_type,
-      firstSeenAt: row.first_seen_at,
-      lastSeenAt: row.last_seen_at,
-      runsCount: normalizeNumericResult(row.runs_count),
-      uniqueLinksSubmitted: normalizeNumericResult(row.unique_links_submitted),
-      savedPlacesCount: normalizeNumericResult(row.saved_places_count),
-      editedCount: normalizeNumericResult(row.edited_count),
-      reusedCount: normalizeNumericResult(row.reused_count),
-      appOpenedCount: normalizeNumericResult(row.app_opened_count),
-      loginSeenCount: normalizeNumericResult(row.login_seen_count),
-      hasSubmittedLink: normalizeNumericResult(row.unique_links_submitted) > 0,
-      hasSavedPlace: normalizeNumericResult(row.saved_places_count) > 0,
-      saveRate: 0,
-      linksPerUser: 0,
-      savesPerUser: 0,
-      statusBadges: [],
-    };
-    mapped.saveRate =
-      mapped.uniqueLinksSubmitted > 0 ? mapped.savedPlacesCount / mapped.uniqueLinksSubmitted : 0;
-    mapped.linksPerUser = mapped.uniqueLinksSubmitted;
-    mapped.savesPerUser = mapped.savedPlacesCount;
-    mapped.statusBadges = buildUsageStatusBadges(mapped, from, to);
-    return mapped;
-  });
+    return mapAdminUsageActorRows(result.rows, from, to);
+  } catch (error) {
+    if (!isMissingAppUsageEventsTableError(error)) {
+      throw error;
+    }
+
+    const fallbackResult = await database.query<AdminUsageActorRow>(
+      `
+        with actor_runs as (
+          select
+            r.*,
+            case
+              when r.user_id is not null then 'u:' || r.user_id::text
+              else 'a:' || coalesce(r.anonymous_id, 'unknown')
+            end as actor_key,
+            case
+              when r.user_id is not null then 'logged_in'
+              else 'anonymous'
+            end as user_type
+          from reel_analytics_runs r
+          where
+            ($1::timestamptz is null or r.created_at >= $1::timestamptz)
+            and ($2::timestamptz is null or r.created_at < ($2::timestamptz + interval '1 day'))
+            and ($3::text is null or r.source_platform = $3::text)
+            and (
+              $4::text is null
+              or ($4::text = 'logged_in' and r.user_id is not null)
+              or ($4::text = 'anonymous' and r.user_id is null)
+            )
+        ),
+        run_rollup as (
+          select
+            actor_key,
+            user_type,
+            min(created_at) as first_seen_at,
+            max(updated_at) as last_seen_at,
+            count(*)::numeric as runs_count,
+            count(distinct submitted_link_id)::numeric filter (where submitted_link_id is not null) as unique_links_submitted,
+            count(*)::numeric filter (where final_user_action = 'edited') as edited_count
+          from actor_runs
+          group by actor_key, user_type
+        ),
+        reuse_rollup as (
+          select
+            actor_key,
+            coalesce(sum(case when link_runs > 1 then link_runs - 1 else 0 end), 0)::numeric as reused_count
+          from (
+            select actor_key, submitted_link_id, count(*)::numeric as link_runs
+            from actor_runs
+            where submitted_link_id is not null
+            group by actor_key, submitted_link_id
+          ) grouped_links
+          group by actor_key
+        ),
+        saved_place_rollup as (
+          select
+            'u:' || usp.user_id::text as actor_key,
+            count(*)::numeric as saved_places_count,
+            max(usp.created_at) as last_saved_at
+          from user_saved_places usp
+          where
+            ($1::timestamptz is null or usp.created_at >= $1::timestamptz)
+            and ($2::timestamptz is null or usp.created_at < ($2::timestamptz + interval '1 day'))
+          group by 1
+        )
+        select
+          rr.actor_key,
+          rr.user_type,
+          rr.first_seen_at,
+          greatest(
+            coalesce(rr.last_seen_at, spr.last_saved_at),
+            coalesce(spr.last_saved_at, rr.last_seen_at)
+          ) as last_seen_at,
+          rr.runs_count,
+          rr.unique_links_submitted,
+          coalesce(spr.saved_places_count, 0)::numeric as saved_places_count,
+          rr.edited_count,
+          coalesce(reuse.reused_count, 0)::numeric as reused_count,
+          0::numeric as app_opened_count,
+          0::numeric as login_seen_count
+        from run_rollup rr
+        left join saved_place_rollup spr on spr.actor_key = rr.actor_key
+        left join reuse_rollup reuse on reuse.actor_key = rr.actor_key
+        order by last_seen_at desc nulls last, rr.actor_key asc
+      `,
+      [from, to, platform, userType],
+    );
+
+    return mapAdminUsageActorRows(fallbackResult.rows, from, to);
+  }
 }
 
 function buildEntityFieldEditDedupeKey(input: {

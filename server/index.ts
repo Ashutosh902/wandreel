@@ -2230,11 +2230,16 @@ app.get("/api/admin/observability/links/:submittedLinkId", requireAdmin, async (
 
 app.get("/api/admin/usage/overview", requireAdmin, async (req, res) => {
   try {
+    const userTypeRaw = req.query?.userType ? String(req.query.userType).trim() : "";
+    const userType = userTypeRaw === "logged_in" || userTypeRaw === "anonymous" ? userTypeRaw : null;
+    const platform = req.query?.platform ? String(req.query.platform).trim() : "";
+    const from = req.query?.from ? String(req.query.from).trim() : "";
+    const to = req.query?.to ? String(req.query.to).trim() : "";
     const result = await getAdminUsageOverview({
-      from: req.query?.from ? String(req.query.from).trim() : null,
-      to: req.query?.to ? String(req.query.to).trim() : null,
-      platform: req.query?.platform ? String(req.query.platform).trim() : null,
-      userType: req.query?.userType ? String(req.query.userType).trim() as "logged_in" | "anonymous" : null,
+      from: from || null,
+      to: to || null,
+      platform: platform || null,
+      userType,
     });
     return res.json({
       ok: true,
@@ -2279,13 +2284,25 @@ app.get("/api/admin/usage/overview", requireAdmin, async (req, res) => {
 
 app.get("/api/admin/usage/users", requireAdmin, async (req, res) => {
   try {
+    const userTypeRaw = req.query?.userType ? String(req.query.userType).trim() : "";
+    const statusRaw = req.query?.status ? String(req.query.status).trim() : "";
+    const userType = userTypeRaw === "logged_in" || userTypeRaw === "anonymous" ? userTypeRaw : null;
+    const status = (
+      ["new", "active", "saved_place", "repeat_user", "dropped_after_extraction", "opened_app", "logged_in", "no_link_submitted"] as const
+    ).includes(statusRaw as "new")
+      ? statusRaw as "new" | "active" | "saved_place" | "repeat_user" | "dropped_after_extraction" | "opened_app" | "logged_in" | "no_link_submitted"
+      : null;
+    const platform = req.query?.platform ? String(req.query.platform).trim() : "";
+    const from = req.query?.from ? String(req.query.from).trim() : "";
+    const to = req.query?.to ? String(req.query.to).trim() : "";
+    const q = req.query?.q ? String(req.query.q).trim() : "";
     const result = await getAdminUsageUsers({
-      from: req.query?.from ? String(req.query.from).trim() : null,
-      to: req.query?.to ? String(req.query.to).trim() : null,
-      platform: req.query?.platform ? String(req.query.platform).trim() : null,
-      userType: req.query?.userType ? String(req.query.userType).trim() as "logged_in" | "anonymous" : null,
-      status: req.query?.status ? String(req.query.status).trim() as "new" | "active" | "saved_place" | "repeat_user" | "dropped_after_extraction" | "opened_app" | "logged_in" | "no_link_submitted" : null,
-      q: req.query?.q ? String(req.query.q).trim() : null,
+      from: from || null,
+      to: to || null,
+      platform: platform || null,
+      userType,
+      status,
+      q: q || null,
       page: req.query?.page ? Number(req.query.page) : undefined,
       pageSize: req.query?.pageSize ? Number(req.query.pageSize) : undefined,
     });

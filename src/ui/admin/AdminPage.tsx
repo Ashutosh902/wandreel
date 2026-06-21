@@ -462,7 +462,17 @@ export function AdminPage() {
       setUsageLoading(false);
       return;
     }
-    setUsageOverview(overviewRes.ok ? overviewRes : null);
+    if (!overviewRes.ok || !usersRes.ok) {
+      setUsageOverview(null);
+      setUsageUsers([]);
+      setUsageTotal(0);
+      setUsageError(
+        String(overviewRes.error || usersRes.error || "Customer usage API request failed"),
+      );
+      setUsageLoading(false);
+      return;
+    }
+    setUsageOverview(overviewRes);
     setUsageUsers(usersRes.rows || []);
     setUsageTotal(Number(usersRes.pagination?.total || 0));
     setUsagePage(nextPage);

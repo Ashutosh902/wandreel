@@ -1460,6 +1460,76 @@ test("admin usage users returns paginated masked rows for admin users", async ()
   }
 });
 
+test("admin usage routes ignore blank and invalid optional filters safely", async () => {
+  process.env.NODE_ENV = "test";
+  process.env.ADMIN_EMAILS = "admin@example.com";
+  const mock = createDatabaseMock([
+    [buildAuthSessionUserRow({ email: "admin@example.com" })],
+    [
+      {
+        actor_key: "u:user-1",
+        user_type: "logged_in",
+        first_seen_at: "2026-06-05T10:00:00Z",
+        last_seen_at: "2026-06-21T10:00:00Z",
+        runs_count: "1",
+        unique_links_submitted: "1",
+        saved_places_count: "0",
+        edited_count: "0",
+        reused_count: "0",
+        app_opened_count: "1",
+        login_seen_count: "1",
+      },
+    ],
+    [buildAuthSessionUserRow({ email: "admin@example.com" })],
+    [
+      {
+        actor_key: "u:user-1",
+        user_type: "logged_in",
+        first_seen_at: "2026-06-05T10:00:00Z",
+        last_seen_at: "2026-06-21T10:00:00Z",
+        runs_count: "1",
+        unique_links_submitted: "1",
+        saved_places_count: "0",
+        edited_count: "0",
+        reused_count: "0",
+        app_opened_count: "1",
+        login_seen_count: "1",
+      },
+    ],
+  ]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+    schemaReadyOverride: false,
+  });
+
+  const { app } = await import("./index");
+  const server = app.listen(0);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const overviewResponse = await fetch(`http://127.0.0.1:${port}/api/admin/usage/overview?userType=&platform=%20%20&from=&to=`, {
+      headers: { Cookie: "wr_session=test-token" },
+    });
+    const overviewBody = await overviewResponse.json();
+    assert.equal(overviewResponse.status, 200);
+    assert.equal(overviewBody.ok, true);
+
+    const usersResponse = await fetch(`http://127.0.0.1:${port}/api/admin/usage/users?page=1&pageSize=20&userType=bad&status=bad&q=%20%20`, {
+      headers: { Cookie: "wr_session=test-token" },
+    });
+    const usersBody = await usersResponse.json();
+    assert.equal(usersResponse.status, 200);
+    assert.equal(usersBody.ok, true);
+    assert.equal(usersBody.rows.length, 1);
+    assert.deepEqual(mock.calls[1]?.params, [null, null, null, null]);
+    assert.deepEqual(mock.calls[3]?.params, [null, null, null, null]);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
 test("app-event records app_opened", async () => {
   process.env.NODE_ENV = "test";
   const mock = createDatabaseMock([[]]);
