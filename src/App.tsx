@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import "./App.css";
 import { AppShell } from "./ui/layout/AppShell";
 import { UxProvider } from "./ui/layout/UxProvider";
@@ -21,7 +21,7 @@ function getAnalyticsAnonymousId() {
 
 async function postAppUsageEvent(eventType: "app_opened" | "login_seen") {
   try {
-    await fetch(`${API_BASE_URL}/api/analytics/app-event`, {
+    const response = await fetch(`${API_BASE_URL}/api/analytics/app-event`, {
       method: "POST",
       credentials: "include",
       headers: { "Content-Type": "application/json" },
@@ -30,27 +30,44 @@ async function postAppUsageEvent(eventType: "app_opened" | "login_seen") {
         anonymousId: typeof window !== "undefined" ? getAnalyticsAnonymousId() : null,
       }),
     });
+    const body = await response.json().catch(() => ({}));
+    return response.ok && body?.ok && body?.recorded !== false;
   } catch {
     // Best-effort analytics should never interrupt app usage.
+    return false;
   }
 }
 
 function AppUsageTracker() {
   const { sessionUser } = useAuth();
+  const appOpenedInFlightRef = useRef(false);
+  const loginSeenInFlightRef = useRef(false);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (window.sessionStorage.getItem(APP_OPENED_SESSION_KEY)) return;
-    window.sessionStorage.setItem(APP_OPENED_SESSION_KEY, "1");
-    void postAppUsageEvent("app_opened");
+    if (appOpenedInFlightRef.current) return;
+    appOpenedInFlightRef.current = true;
+    void postAppUsageEvent("app_opened").then((recorded) => {
+      if (recorded) {
+        window.sessionStorage.setItem(APP_OPENED_SESSION_KEY, "1");
+      }
+      appOpenedInFlightRef.current = false;
+    });
   }, []);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     if (!sessionUser?.userId) return;
     if (window.sessionStorage.getItem(LOGIN_SEEN_SESSION_KEY)) return;
-    window.sessionStorage.setItem(LOGIN_SEEN_SESSION_KEY, "1");
-    void postAppUsageEvent("login_seen");
+    if (loginSeenInFlightRef.current) return;
+    loginSeenInFlightRef.current = true;
+    void postAppUsageEvent("login_seen").then((recorded) => {
+      if (recorded) {
+        window.sessionStorage.setItem(LOGIN_SEEN_SESSION_KEY, "1");
+      }
+      loginSeenInFlightRef.current = false;
+    });
   }, [sessionUser?.userId]);
 
   return null;

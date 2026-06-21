@@ -1925,10 +1925,10 @@ app.post("/api/analytics/app-event", optionalAuth, async (req, res) => {
         anonymousId,
         metadataJson: null,
       });
-      return res.status(201).json({ ok: true, recorded: true });
+      return res.status(200).json({ ok: true, recorded: true });
     } catch (recordError) {
       console.error("record app usage event failed", recordError);
-      return res.status(201).json({ ok: true, recorded: false });
+      return res.status(200).json({ ok: true, recorded: false });
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not record app usage event";

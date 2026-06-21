@@ -1481,7 +1481,7 @@ test("app-event records app_opened", async () => {
       body: JSON.stringify({ eventType: "app_opened", anonymousId: "anon-1" }),
     });
     const body = await response.json();
-    assert.equal(response.status, 201);
+    assert.equal(response.status, 200);
     assert.equal(body.ok, true);
     assert.equal(body.recorded, true);
     assert.match(mock.calls[0]?.sql || "", /insert into app_usage_events/i);
@@ -1516,7 +1516,7 @@ test("app-event records login_seen for logged-in session", async () => {
       body: JSON.stringify({ eventType: "login_seen", anonymousId: "anon-2" }),
     });
     const body = await response.json();
-    assert.equal(response.status, 201);
+    assert.equal(response.status, 200);
     assert.equal(body.ok, true);
     assert.equal(body.recorded, true);
     assert.equal(mock.calls[1]?.params?.[1], "login_seen");
