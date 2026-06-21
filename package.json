@@ -9,6 +9,8 @@
     "start:prod": "tsx server/start.ts",
     "start:render": "tsx server/start.ts",
     "build": "tsc -b && vite build",
+    "cap:sync:android": "npx cap sync android",
+    "cap:open:android": "npx cap open android",
     "lint": "eslint .",
     "preview": "npm run build && wrangler dev",
     "typecheck:server": "tsc -p tsconfig.server.json --noEmit",
@@ -19,6 +21,8 @@
     "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.1",
+    "@capacitor/core": "^8.4.1",
     "@react-google-maps/api": "^2.20.8",
     "@types/pg": "^8.20.0",
     "dotenv": "^17.4.2",
@@ -33,6 +37,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.4.1",
     "@cloudflare/vite-plugin": "^1.39.0",
     "@eslint/js": "^10.0.1",
     "@types/express": "^5.0.5",

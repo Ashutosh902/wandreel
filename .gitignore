@@ -29,3 +29,18 @@ dist-ssr
 !.dev.vars.example
 .env*
 !.env.example
+
+# Android / Gradle generated files
+android/.gradle/
+android/.idea/
+android/local.properties
+android/captures/
+android/build/
+android/app/build/
+android/app/release/
+android/app/google-services.json
+android/.cxx/
+android/.externalNativeBuild/
+android/*.jks
+android/*.keystore
+*.keystore

@@ -69,6 +69,7 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
 - Login/Profile screen entry: `src/ui/profile/LoginProfileScreen.tsx`
 - Login/Profile styles: `src/ui/profile/profile.css`
 - Deployment master guide: `deployment/README.md`
+- Android wrapper setup: `docs/android-wrapper-phase1.md`
 - Cloudflare setup: `deployment/cloudflare/setup.md`
 - Production cutover checklist: `deployment/checklists/cutover.md`
 - Deployment preflight scripts: `deployment/scripts/preflight.mjs`
@@ -209,6 +210,24 @@ npm run dev:api
 npm run typecheck:server
 npm run test:intelligence
 npm run build
+```
+
+## Android Wrapper (Phase 1)
+
+Wandreel now includes a Capacitor Android wrapper on the `android-wrapper-phase1` branch.
+
+- Android package id: `com.wandreel.app`
+- Android app name: `Wandreel`
+- Wrapper mode: Capacitor Android shell loading `https://app.wandreel.com`
+- Full setup guide: `docs/android-wrapper-phase1.md`
+
+Typical commands:
+
+```bash
+npm install
+npm run build
+npx cap sync android
+npx cap open android
 ```
 
 ## Extraction SLA tuning env (optional)
