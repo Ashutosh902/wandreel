@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 
 export type AuthProvider = "EMAIL" | "GOOGLE" | "PHONE" | "FACEBOOK" | "APPLE";
 
@@ -41,6 +41,38 @@ type ReelAnalyticsRunRecord = {
   id: string;
 };
 
+type SubmittedLinkRecord = {
+  id: string;
+};
+
+type ReusableMetadataExtractionRecord = {
+  submitted_link_id: string;
+  canonical_url: string;
+  run_id: string;
+  client_run_id: string | null;
+  user_id: string | null;
+  anonymous_id: string | null;
+  attempt_id: string | null;
+  attempt_number: number | null;
+  status: string | null;
+  failure_reason: string | null;
+  extraction_result_json: unknown;
+  intelligence_status: string | null;
+};
+
+type AdminObservabilityOverviewRow = {
+  total_submitted_links: number | string | null;
+  total_runs: number | string | null;
+  total_attempts: number | string | null;
+  saved_runs: number | string | null;
+  edited_runs: number | string | null;
+  discarded_runs: number | string | null;
+  average_attempt_count: number | string | null;
+  average_extraction_time_ms: number | string | null;
+  estimated_cache_reuse_count: number | string | null;
+  estimated_duplicate_saved_place_count: number | string | null;
+};
+
 type ReelJobRecord = {
   id: string;
   run_id: string | null;
@@ -60,15 +92,19 @@ const SESSION_COOKIE_NAME = "wr_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const EMAIL_OTP_TTL_MS = 1000 * 60 * 10;
 
+type DatabaseLike = Pick<Pool, "query" | "connect">;
+
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: DATABASE_URL.includes("sslmode=require") ? { rejectUnauthorized: false } : undefined,
 });
 
+let databaseUrl = DATABASE_URL;
+let database: DatabaseLike = pool;
 let schemaReady = false;
 
 export function isPostgresConfigured() {
-  return Boolean(DATABASE_URL.trim());
+  return Boolean(databaseUrl.trim());
 }
 
 export type ReelAnalyticsAttemptInput = {
@@ -179,6 +215,458 @@ export type ReelJobDto = {
   updatedAt: string;
 };
 
+export type SubmittedLinkUpsertInput = {
+  canonicalUrl: string;
+  canonicalUrlHash?: string | null;
+  sourcePlatform?: string | null;
+  latestTitle?: string | null;
+  latestDescription?: string | null;
+  latestImageUrl?: string | null;
+};
+
+export type SubmittedLinkUpsertResult = {
+  id: string;
+};
+
+export type ReusableMetadataExtractionLookupResult = {
+  submittedLinkId: string;
+  canonicalUrl: string;
+  runId: string;
+  clientRunId: string | null;
+  userId: string | null;
+  anonymousId: string | null;
+  attemptId: string | null;
+  attemptNumber: number | null;
+  status: string | null;
+  failureReason: string | null;
+  extractionResult: unknown;
+  priorStatus: string | null;
+};
+
+export type AdminObservabilityOverviewInput = {
+  from?: string | null;
+  to?: string | null;
+  platform?: string | null;
+};
+
+export type AdminObservabilityOverviewResult = {
+  totalSubmittedLinks: number;
+  totalRuns: number;
+  totalAttempts: number;
+  savedRuns: number;
+  editedRuns: number;
+  discardedRuns: number;
+  saveRate: number;
+  editRate: number;
+  discardRate: number;
+  averageAttemptCount: number;
+  averageExtractionTimeMs: number | null;
+  estimatedCacheReuseCount: number;
+  estimatedDuplicateSavedPlaceCount: number;
+};
+
+type AdminObservabilityLinksRow = {
+  submitted_link_id: string;
+  canonical_url: string;
+  platform: string | null;
+  first_seen_at: string;
+  last_seen_at: string;
+  run_count: number | string | null;
+  attempt_count: number | string | null;
+  latest_status: string | null;
+  latest_accepted_after: string | null;
+  latest_route: string | null;
+  cache_reuse_count: number | string | null;
+  final_selected_place_id: string | null;
+  final_user_action: string | null;
+};
+
+export type AdminObservabilityLinksInput = {
+  from?: string | null;
+  to?: string | null;
+  platform?: string | null;
+  status?: string | null;
+  reused?: boolean | null;
+  acceptedAfter?: string | null;
+  q?: string | null;
+  page?: number | null;
+  pageSize?: number | null;
+};
+
+export type AdminObservabilityLinksItemResult = {
+  submittedLinkId: string;
+  canonicalUrl: string;
+  platform: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  runCount: number;
+  attemptCount: number;
+  latestStatus: string | null;
+  latestAcceptedAfter: string | null;
+  latestRoute: string | null;
+  cacheReuseCount: number;
+  finalSelectedPlaceId: string | null;
+  finalUserAction: string | null;
+};
+
+export type AdminObservabilityLinksResult = {
+  rows: AdminObservabilityLinksItemResult[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export type AttemptPromotedFieldsInput = {
+  attemptId?: string | null;
+  runId?: string | null;
+  attemptNumber?: number | null;
+  canonicalUrl?: string | null;
+  acceptedAfter?: string | null;
+  route?: string | null;
+  stageStatus?: Record<string, unknown> | null;
+  stageTimingsMs?: Record<string, unknown> | null;
+  transcriptAttempted?: boolean | null;
+  transcriptSucceeded?: boolean | null;
+  ocrAttempted?: boolean | null;
+  ocrSucceeded?: boolean | null;
+  visualAttempted?: boolean | null;
+  visualSucceeded?: boolean | null;
+  commentsFetchedCount?: number | null;
+  commentRepliesFetchedCount?: number | null;
+  creatorReplyCount?: number | null;
+};
+
+export type AdminObservabilityLinkDetailInput = {
+  submittedLinkId: string;
+  includeRaw?: boolean | null;
+};
+
+export type AdminObservabilityLinkDetailResult = {
+  submittedLink: {
+    id: string;
+    canonicalUrl: string;
+    platform: string | null;
+    firstSeenAt: string;
+    lastSeenAt: string;
+  } | null;
+  runs: Array<{
+    id: string;
+    clientRunId: string | null;
+    userId: string | null;
+    anonymousId: string | null;
+    sourceUrl: string;
+    sourcePlatform: string | null;
+    latestOutcome: string | null;
+    latestAttemptNumber: number | null;
+    firstSavedAttemptNumber: number | null;
+    firstEditedAttemptNumber: number | null;
+    firstDiscardedAttemptNumber: number | null;
+    createdAt: string;
+    updatedAt: string;
+    attempts: Array<any>;
+    events: Array<any>;
+  }>;
+};
+
+export async function getAdminObservabilityLinkDetail(
+  input: AdminObservabilityLinkDetailInput,
+): Promise<AdminObservabilityLinkDetailResult> {
+  const submittedLinkId = String(input.submittedLinkId || "").trim();
+  const includeRaw = !!input.includeRaw;
+  if (!submittedLinkId) {
+    return { submittedLink: null, runs: [] };
+  }
+
+  // 1) submitted link
+  const slRes = await database.query(
+    `select id::text, canonical_url, source_platform, first_seen_at, last_seen_at from submitted_links where id = $1 limit 1`,
+    [submittedLinkId],
+  );
+  const submittedLinkRow = slRes.rows[0];
+  const submittedLink = submittedLinkRow
+    ? {
+        id: submittedLinkRow.id,
+        canonicalUrl: submittedLinkRow.canonical_url,
+        platform: submittedLinkRow.source_platform,
+        firstSeenAt: submittedLinkRow.first_seen_at,
+        lastSeenAt: submittedLinkRow.last_seen_at,
+      }
+    : null;
+
+  if (!submittedLink) return { submittedLink: null, runs: [] };
+
+  // 2) runs
+  const runsRes = await database.query(
+    `select * from reel_analytics_runs where submitted_link_id = $1 order by created_at asc`,
+    [submittedLinkId],
+  );
+  const runs = runsRes.rows;
+  const runIds = runs.map((r: any) => r.id);
+
+  // 3) attempts
+  const attemptsRes = runIds.length
+    ? await database.query(`select * from reel_analytics_attempts where run_id = any($1::uuid[]) order by created_at asc`, [runIds])
+    : { rows: [] };
+  const attempts = attemptsRes.rows;
+
+  // 4) stages
+  const stagesRes = runIds.length
+    ? await database.query(`select * from attempt_stage_runs where run_id = any($1::uuid[]) order by created_at asc`, [runIds])
+    : { rows: [] };
+  const stages = stagesRes.rows;
+
+  // 5) evidence
+  const evidenceRes = runIds.length
+    ? await database.query(`select * from attempt_evidence where run_id = any($1::uuid[]) order by created_at asc`, [runIds])
+    : { rows: [] };
+  const evidence = evidenceRes.rows;
+
+  // 6) entities
+  const entitiesRes = runIds.length
+    ? await database.query(`select * from reel_analytics_entities where run_id = any($1::uuid[]) order by created_at asc`, [runIds])
+    : { rows: [] };
+  const entities = entitiesRes.rows;
+
+  // 7) events
+  const eventsRes = runIds.length
+    ? await database.query(`select * from reel_analytics_events where run_id = any($1::uuid[]) order by created_at asc`, [runIds])
+    : { rows: [] };
+  const events = eventsRes.rows;
+
+  // 8) entity field edits
+  const editsRes = runIds.length
+    ? await database.query(`select * from entity_field_edits where run_id = any($1::uuid[]) order by created_at asc`, [runIds])
+    : { rows: [] };
+  const edits = editsRes.rows;
+
+  // Assemble runs with nested attempts, stages, evidence, entities, events, edits
+  const attemptsByRun: Record<string, any[]> = {};
+  for (const a of attempts) {
+    const runId = a.run_id;
+    attemptsByRun[runId] = attemptsByRun[runId] || [];
+    attemptsByRun[runId].push({
+      id: a.id,
+      attemptNumber: a.attempt_number,
+      status: a.status,
+      triggerType: a.trigger_type,
+      model: a.model,
+      inputTokens: a.input_tokens,
+      outputTokens: a.output_tokens,
+      totalTokens: a.total_tokens,
+      providerLatencyMs: a.provider_latency_ms,
+      totalLatencyMs: a.total_latency_ms,
+      entityCount: a.entity_count,
+      intelligenceStatus: a.intelligence_status,
+      validationErrorCount: a.validation_error_count,
+      failureReason: a.failure_reason,
+      createdAt: a.created_at,
+      startedAt: a.started_at,
+      completedAt: a.completed_at,
+      acceptedAfter: a.accepted_after,
+      route: a.route,
+      // raw payloads
+      extractionResult: includeRaw ? a.extraction_result_json : null,
+      intelligenceResult: includeRaw ? a.intelligence_result_json : null,
+      // summarized fields when raw not included
+      extractionResultSummary: includeRaw ? null : (a.extraction_result_json ? "<hidden>" : null),
+      intelligenceResultSummary: includeRaw ? null : (a.intelligence_result_json ? "<hidden>" : null),
+      stages: [],
+      evidence: [],
+      entities: [],
+      edits: [],
+    });
+  }
+
+  const stagesByAttemptKey: Record<string, any[]> = {};
+  for (const s of stages) {
+    const key = `${s.run_id}::${s.attempt_number}`;
+    stagesByAttemptKey[key] = stagesByAttemptKey[key] || [];
+    stagesByAttemptKey[key].push({
+      id: s.id,
+      stage: s.stage,
+      status: s.status,
+      attemptNumber: s.attempt_number,
+      latencyMs: s.latency_ms,
+      errorText: s.error_text,
+      createdAt: s.created_at,
+      startedAt: s.started_at,
+      finishedAt: s.finished_at,
+    });
+  }
+
+  const evidenceByAttemptKey: Record<string, any[]> = {};
+  for (const e of evidence) {
+    const key = `${e.run_id}::${e.attempt_number}`;
+    evidenceByAttemptKey[key] = evidenceByAttemptKey[key] || [];
+    evidenceByAttemptKey[key].push({
+      id: e.id,
+      evidenceType: e.evidence_type,
+      position: e.position,
+      summaryText: e.summary_text,
+      sourceRef: e.source_ref,
+      metricsJson: includeRaw ? e.metrics_json : null,
+      rawJson: includeRaw ? e.raw_json : null,
+      createdAt: e.created_at,
+    });
+  }
+
+  const entitiesByAttemptKey: Record<string, any[]> = {};
+  for (const en of entities) {
+    const key = `${en.run_id}::${en.attempt_number}`;
+    entitiesByAttemptKey[key] = entitiesByAttemptKey[key] || [];
+    entitiesByAttemptKey[key].push({
+      id: en.id,
+      entityIndex: en.entity_index,
+      entityType: en.entity_type,
+      title: en.title,
+      subtitle: en.subtitle,
+      placeCandidateId: en.place_candidate_id,
+      finalPlaceId: en.final_place_id,
+      confidence: en.confidence,
+      metadataJson: includeRaw ? en.metadata_json : null,
+      wasSaved: !!en.was_saved,
+      wasEdited: !!en.was_edited,
+      wasDiscarded: !!en.was_discarded,
+      createdAt: en.created_at,
+    });
+  }
+
+  const editsByRun: Record<string, any[]> = {};
+  for (const ed of edits) {
+    editsByRun[ed.run_id] = editsByRun[ed.run_id] || [];
+    editsByRun[ed.run_id].push({
+      id: ed.id,
+      dedupeKey: ed.dedupe_key,
+      runId: ed.run_id,
+      attemptId: ed.attempt_id,
+      attemptNumber: ed.attempt_number,
+      entityId: ed.entity_id,
+      entityIndex: ed.entity_index,
+      fieldName: ed.field_name,
+      beforeValueJson: includeRaw ? ed.before_value_json : null,
+      afterValueJson: includeRaw ? ed.after_value_json : null,
+      editedByUserId: ed.edited_by_user_id,
+      createdAt: ed.created_at,
+    });
+  }
+
+  const eventsByRun: Record<string, any[]> = {};
+  for (const ev of events) {
+    eventsByRun[ev.run_id] = eventsByRun[ev.run_id] || [];
+    eventsByRun[ev.run_id].push({
+      id: ev.id,
+      attemptNumber: ev.attempt_number,
+      eventName: ev.event_name,
+      payloadJson: includeRaw ? ev.payload_json : null,
+      createdAt: ev.created_at,
+    });
+  }
+
+  const runsResult: AdminObservabilityLinkDetailResult["runs"] = [] as any;
+  for (const r of runs) {
+    const runAttempts = attemptsByRun[r.id] || [];
+    for (const a of runAttempts) {
+      const key = `${r.id}::${a.attemptNumber}`;
+      a.stages = stagesByAttemptKey[key] || [];
+      a.evidence = evidenceByAttemptKey[key] || [];
+      a.entities = entitiesByAttemptKey[key] || [];
+      a.edits = editsByRun[r.id] || [];
+    }
+    runsResult.push({
+      id: r.id,
+      clientRunId: r.client_run_id ?? null,
+      userId: r.user_id ?? null,
+      anonymousId: r.anonymous_id ?? null,
+      sourceUrl: r.source_url,
+      sourcePlatform: r.source_platform ?? null,
+      latestOutcome: r.latest_outcome ?? null,
+      latestAttemptNumber: r.latest_attempt_number ?? null,
+      firstSavedAttemptNumber: r.first_saved_attempt_number ?? null,
+      firstEditedAttemptNumber: r.first_edited_attempt_number ?? null,
+      firstDiscardedAttemptNumber: r.first_discarded_attempt_number ?? null,
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+      attempts: runAttempts,
+      events: eventsByRun[r.id] || [],
+    });
+  }
+
+  return { submittedLink, runs: runsResult };
+}
+
+export type AttemptStageRunUpsertInput = {
+  attemptId?: string | null;
+  runId: string;
+  attemptNumber: number;
+  stages: Array<{
+    stageKey: string;
+    status?: string | null;
+    provider?: string | null;
+    reason?: string | null;
+    latencyMs?: number | null;
+    chars?: number | null;
+    metadataJson?: Record<string, unknown> | null;
+  }>;
+};
+
+export type AttemptEvidenceUpsertInput = {
+  attemptId?: string | null;
+  runId: string;
+  attemptNumber: number;
+  evidence: Array<{
+    evidenceType: string;
+    position?: number | null;
+    summaryText?: string | null;
+    sourceRef?: string | null;
+    metricsJson?: Record<string, unknown> | null;
+    rawJson?: Record<string, unknown> | null;
+  }>;
+};
+
+export type RunFinalOutcomeUpdateInput = {
+  runId: string;
+  finalUserAction?: "saved" | "edited" | "discarded" | null;
+  finalSelectedPlaceId?: string | null;
+};
+
+export type EntityFieldEditInsertInput = {
+  edits: Array<{
+    runId: string;
+    attemptId?: string | null;
+    attemptNumber?: number | null;
+    entityId?: string | null;
+    entityIndex?: number | null;
+    fieldName: string;
+    beforeValue?: unknown;
+    afterValue?: unknown;
+    editedByUserId?: string | null;
+    dedupeKey?: string | null;
+  }>;
+};
+
+export function __setPostgresTestConfig(input: {
+  databaseOverride?: DatabaseLike;
+  databaseUrlOverride?: string;
+  schemaReadyOverride?: boolean;
+}) {
+  if (Object.prototype.hasOwnProperty.call(input, "databaseOverride")) {
+    database = input.databaseOverride ?? pool;
+  }
+  if (Object.prototype.hasOwnProperty.call(input, "databaseUrlOverride")) {
+    databaseUrl = input.databaseUrlOverride ?? DATABASE_URL;
+  }
+  if (Object.prototype.hasOwnProperty.call(input, "schemaReadyOverride")) {
+    schemaReady = Boolean(input.schemaReadyOverride);
+  }
+}
+
+export function __resetPostgresTestConfig() {
+  database = pool;
+  databaseUrl = DATABASE_URL;
+  schemaReady = false;
+}
+
 function isMissingUpdatedAtColumnError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error || "");
   return /column\s+"updated_at"\s+of relation\s+"reel_analytics_attempts"\s+does not exist/i.test(message);
@@ -215,7 +703,7 @@ export async function ensureAuthSchema() {
     throw new Error("DATABASE_URL is not configured");
   }
 
-  await pool.query(`
+  await database.query(`
     create table if not exists users (
       id uuid primary key default gen_random_uuid(),
       email text unique,
@@ -232,7 +720,7 @@ export async function ensureAuthSchema() {
     );
   `);
 
-  await pool.query(`
+  await database.query(`
     create table if not exists auth_sessions (
       id uuid primary key default gen_random_uuid(),
       user_id uuid not null references users(id) on delete cascade,
@@ -243,7 +731,7 @@ export async function ensureAuthSchema() {
     );
   `);
 
-  await pool.query(`
+  await database.query(`
     create table if not exists auth_email_otps (
       id uuid primary key default gen_random_uuid(),
       email text not null,
@@ -255,11 +743,11 @@ export async function ensureAuthSchema() {
     );
   `);
 
-  await pool.query(`
+  await database.query(`
     create index if not exists idx_auth_email_otps_email_created on auth_email_otps(email, created_at desc);
   `);
 
-  await pool.query(`
+  await database.query(`
     create table if not exists user_saved_places (
       id uuid primary key default gen_random_uuid(),
       user_id uuid not null references users(id) on delete cascade,
@@ -273,11 +761,11 @@ export async function ensureAuthSchema() {
     );
   `);
 
-  await pool.query(`
+  await database.query(`
     create index if not exists idx_user_saved_places_user_created on user_saved_places(user_id, created_at desc);
   `);
 
-  await pool.query(`
+  await database.query(`
     create table if not exists reel_analytics_runs (
       id uuid primary key default gen_random_uuid(),
       client_run_id text not null unique,
@@ -295,7 +783,40 @@ export async function ensureAuthSchema() {
     );
   `);
 
-  await pool.query(`
+  await database.query(`
+    create table if not exists submitted_links (
+      id uuid primary key default gen_random_uuid(),
+      canonical_url text not null unique,
+      canonical_url_hash text,
+      source_platform text,
+      latest_title text,
+      latest_description text,
+      latest_image_url text,
+      first_seen_at timestamptz not null default now(),
+      last_seen_at timestamptz not null default now(),
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    );
+  `);
+
+  await database.query(`
+    create index if not exists idx_submitted_links_last_seen on submitted_links(last_seen_at desc);
+  `);
+
+  await database.query(`
+    alter table if exists reel_analytics_runs add column if not exists submitted_link_id uuid references submitted_links(id) on delete set null;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_runs add column if not exists canonical_url text;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_runs add column if not exists final_user_action text;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_runs add column if not exists final_selected_place_id text;
+  `);
+
+  await database.query(`
     create table if not exists reel_analytics_attempts (
       id uuid primary key default gen_random_uuid(),
       run_id uuid not null references reel_analytics_runs(id) on delete cascade,
@@ -324,24 +845,66 @@ export async function ensureAuthSchema() {
     );
   `);
 
-  await pool.query(`
+  await database.query(`
     create index if not exists idx_reel_analytics_attempts_run_attempt on reel_analytics_attempts(run_id, attempt_number desc);
   `);
 
-  await pool.query(`
+  await database.query(`
     alter table if exists reel_analytics_attempts add column if not exists extraction_result_json jsonb;
   `);
-  await pool.query(`
+  await database.query(`
     alter table if exists reel_analytics_attempts add column if not exists intelligence_result_json jsonb;
   `);
-  await pool.query(`
+  await database.query(`
     alter table if exists reel_analytics_attempts add column if not exists hypothesis_json jsonb;
   `);
-  await pool.query(`
+  await database.query(`
     alter table if exists reel_analytics_attempts add column if not exists updated_at timestamptz not null default now();
   `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists canonical_url text;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists accepted_after text;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists route text;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists stage_status_json jsonb;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists stage_timings_ms_json jsonb;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists transcript_attempted boolean;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists transcript_succeeded boolean;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists ocr_attempted boolean;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists ocr_succeeded boolean;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists visual_attempted boolean;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists visual_succeeded boolean;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists comments_fetched_count integer;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists comment_replies_fetched_count integer;
+  `);
+  await database.query(`
+    alter table if exists reel_analytics_attempts add column if not exists creator_reply_count integer;
+  `);
 
-  await pool.query(`
+  await database.query(`
     create table if not exists reel_analytics_events (
       id uuid primary key default gen_random_uuid(),
       run_id uuid not null references reel_analytics_runs(id) on delete cascade,
@@ -352,7 +915,7 @@ export async function ensureAuthSchema() {
     );
   `);
 
-  await pool.query(`
+  await database.query(`
     create table if not exists reel_analytics_entities (
       id uuid primary key default gen_random_uuid(),
       run_id uuid not null references reel_analytics_runs(id) on delete cascade,
@@ -375,23 +938,89 @@ export async function ensureAuthSchema() {
     );
   `);
 
-  await pool.query(`
+  await database.query(`
     create index if not exists idx_reel_entities_run_id on reel_analytics_entities(run_id);
   `);
 
-  await pool.query(`
+  await database.query(`
     create index if not exists idx_reel_entities_attempt_id on reel_analytics_entities(attempt_id);
   `);
 
-  await pool.query(`
+  await database.query(`
     create index if not exists idx_reel_entities_final_place_id on reel_analytics_entities(final_place_id);
   `);
 
-  await pool.query(`
+  await database.query(`
     create index if not exists idx_reel_entities_type on reel_analytics_entities(entity_type);
   `);
 
-  await pool.query(`
+  await database.query(`
+    create table if not exists attempt_stage_runs (
+      id uuid primary key default gen_random_uuid(),
+      run_id uuid not null references reel_analytics_runs(id) on delete cascade,
+      attempt_id uuid references reel_analytics_attempts(id) on delete cascade,
+      attempt_number integer not null,
+      stage_key text not null,
+      status text,
+      provider text,
+      reason text,
+      latency_ms integer,
+      chars integer,
+      metadata_json jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (run_id, attempt_number, stage_key)
+    );
+  `);
+
+  await database.query(`
+    create index if not exists idx_attempt_stage_runs_attempt on attempt_stage_runs(attempt_id);
+  `);
+
+  await database.query(`
+    create table if not exists attempt_evidence (
+      id uuid primary key default gen_random_uuid(),
+      run_id uuid not null references reel_analytics_runs(id) on delete cascade,
+      attempt_id uuid references reel_analytics_attempts(id) on delete cascade,
+      attempt_number integer not null,
+      evidence_type text not null,
+      position integer not null default 0,
+      summary_text text,
+      source_ref text,
+      metrics_json jsonb not null default '{}'::jsonb,
+      raw_json jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now(),
+      unique (run_id, attempt_number, evidence_type, position)
+    );
+  `);
+
+  await database.query(`
+    create index if not exists idx_attempt_evidence_attempt on attempt_evidence(attempt_id);
+  `);
+
+  await database.query(`
+    create table if not exists entity_field_edits (
+      id uuid primary key default gen_random_uuid(),
+      dedupe_key text not null unique,
+      run_id uuid not null references reel_analytics_runs(id) on delete cascade,
+      attempt_id uuid references reel_analytics_attempts(id) on delete cascade,
+      attempt_number integer,
+      entity_id uuid references reel_analytics_entities(id) on delete set null,
+      entity_index integer,
+      field_name text not null,
+      before_value_json jsonb,
+      after_value_json jsonb,
+      edited_by_user_id uuid references users(id) on delete set null,
+      created_at timestamptz not null default now()
+    );
+  `);
+
+  await database.query(`
+    create index if not exists idx_entity_field_edits_run_attempt on entity_field_edits(run_id, attempt_number, created_at desc);
+  `);
+
+  await database.query(`
     create table if not exists reel_jobs (
       id uuid primary key default gen_random_uuid(),
       run_id uuid references reel_analytics_runs(id) on delete cascade,
@@ -407,19 +1036,19 @@ export async function ensureAuthSchema() {
     );
   `);
 
-  await pool.query(`
+  await database.query(`
     create index if not exists idx_reel_jobs_run_id on reel_jobs(run_id);
   `);
 
-  await pool.query(`
+  await database.query(`
     create index if not exists idx_reel_jobs_attempt_id on reel_jobs(attempt_id);
   `);
 
-  await pool.query(`
+  await database.query(`
     create index if not exists idx_reel_jobs_status on reel_jobs(status);
   `);
 
-  await pool.query(`
+  await database.query(`
     create index if not exists idx_reel_jobs_created_at on reel_jobs(created_at desc);
   `);
 
@@ -457,14 +1086,14 @@ function toUserDTO(row: UserRecord) {
 }
 
 export async function findUserById(userId: string) {
-  const result = await pool.query<UserRecord>("select * from users where id = $1 limit 1", [userId]);
+  const result = await database.query<UserRecord>("select * from users where id = $1 limit 1", [userId]);
   return result.rows[0] || null;
 }
 
 export async function findUserByEmail(email: string) {
   const normalized = normalizeEmail(email);
   if (!normalized) return null;
-  const result = await pool.query<UserRecord>("select * from users where email = $1 limit 1", [normalized]);
+  const result = await database.query<UserRecord>("select * from users where email = $1 limit 1", [normalized]);
   return result.rows[0] || null;
 }
 
@@ -479,7 +1108,7 @@ export async function upsertGoogleVerifiedUser(input: {
   const displayName = sanitizeDisplayName(input.displayName) || email.split("@")[0] || "Wandreel User";
   const avatarUrl = input.avatarUrl ? String(input.avatarUrl).trim() : null;
 
-  const client = await pool.connect();
+  const client = await database.connect() as PoolClient;
   try {
     await client.query("begin");
     const existingByEmail = await client.query<UserRecord>("select * from users where email = $1 limit 1 for update", [email]);
@@ -530,7 +1159,7 @@ export async function createOrReuseEmailVerifiedUser(input: { email: string; dis
   const displayName = sanitizeDisplayName(input.displayName);
   const existing = await findUserByEmail(email);
   if (existing) {
-    const updated = await pool.query<UserRecord>(
+    const updated = await database.query<UserRecord>(
       `
         update users
         set
@@ -546,7 +1175,7 @@ export async function createOrReuseEmailVerifiedUser(input: { email: string; dis
     return toUserDTO(updated.rows[0]);
   }
 
-  const inserted = await pool.query<UserRecord>(
+  const inserted = await database.query<UserRecord>(
     `
       insert into users (
         id, email, email_verified, phone_number, phone_verified, display_name, avatar_url, auth_provider, provider_id, created_at, updated_at
@@ -564,7 +1193,7 @@ export async function updateDisplayName(userId: string, displayName: string) {
   if (!cleaned) {
     throw new Error("displayName is required");
   }
-  const updated = await pool.query<UserRecord>(
+  const updated = await database.query<UserRecord>(
     "update users set display_name = $2, updated_at = now() where id = $1 returning *",
     [userId, cleaned],
   );
@@ -580,7 +1209,7 @@ export async function createSession(userId: string) {
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
   const sessionId = randomUUID();
 
-  await pool.query<SessionRecord>(
+  await database.query<SessionRecord>(
     `
       insert into auth_sessions (id, user_id, token_hash, expires_at, revoked_at, created_at)
       values ($1, $2, $3, $4, null, now())
@@ -593,7 +1222,7 @@ export async function createSession(userId: string) {
 
 export async function findSessionUser(rawToken: string) {
   const tokenHash = hashValue(rawToken);
-  const result = await pool.query<UserRecord>(
+  const result = await database.query<UserRecord>(
     `
       select u.*
       from auth_sessions s
@@ -611,7 +1240,7 @@ export async function findSessionUser(rawToken: string) {
 
 export async function revokeSession(rawToken: string) {
   const tokenHash = hashValue(rawToken);
-  await pool.query("update auth_sessions set revoked_at = now() where token_hash = $1 and revoked_at is null", [tokenHash]);
+  await database.query("update auth_sessions set revoked_at = now() where token_hash = $1 and revoked_at is null", [tokenHash]);
 }
 
 export async function issueEmailOtp(emailInput: string) {
@@ -623,7 +1252,7 @@ export async function issueEmailOtp(emailInput: string) {
   const otpHash = hashValue(otp);
   const expiresAt = new Date(Date.now() + EMAIL_OTP_TTL_MS).toISOString();
 
-  await pool.query(
+  await database.query(
     `
       insert into auth_email_otps (id, email, otp_hash, expires_at, consumed_at, attempt_count, created_at)
       values ($1, $2, $3, $4, null, 0, now())
@@ -647,7 +1276,7 @@ export async function verifyEmailOtp(emailInput: string, otp: string) {
     throw new Error("OTP must be 6 digits");
   }
 
-  const latestResult = await pool.query<{
+  const latestResult = await database.query<{
     id: string;
     otp_hash: string;
     expires_at: string;
@@ -676,11 +1305,11 @@ export async function verifyEmailOtp(emailInput: string, otp: string) {
 
   const receivedHash = hashValue(otp.trim());
   if (receivedHash !== latest.otp_hash) {
-    await pool.query("update auth_email_otps set attempt_count = attempt_count + 1 where id = $1", [latest.id]);
+    await database.query("update auth_email_otps set attempt_count = attempt_count + 1 where id = $1", [latest.id]);
     throw new Error("Invalid OTP");
   }
 
-  await pool.query("update auth_email_otps set consumed_at = now(), attempt_count = attempt_count + 1 where id = $1", [latest.id]);
+  await database.query("update auth_email_otps set consumed_at = now(), attempt_count = attempt_count + 1 where id = $1", [latest.id]);
   return { email };
 }
 
@@ -722,11 +1351,22 @@ function toSavedPlaceDTO(row: SavedPlaceRecord) {
 }
 
 export async function listSavedPlaces(userId: string) {
-  const result = await pool.query<SavedPlaceRecord>(
+  const result = await database.query<SavedPlaceRecord>(
     "select * from user_saved_places where user_id = $1 order by created_at desc",
     [userId],
   );
   return result.rows.map(toSavedPlaceDTO);
+}
+
+export async function findSavedPlaceByUserAndPlaceId(userId: string, placeIdRaw: string) {
+  const placeId = String(placeIdRaw || "").trim();
+  if (!placeId) return null;
+  const result = await database.query<SavedPlaceRecord>(
+    "select * from user_saved_places where user_id = $1 and place_id = $2 limit 1",
+    [userId, placeId],
+  );
+  const row = result.rows[0];
+  return row ? toSavedPlaceDTO(row) : null;
 }
 
 export async function upsertSavedPlace(userId: string, input: { placeId: string; title: string; category?: string | null; metadata?: unknown }) {
@@ -738,27 +1378,32 @@ export async function upsertSavedPlace(userId: string, input: { placeId: string;
   if (!placeId) throw new Error("placeId is required");
   if (!title) throw new Error("title is required");
 
-  const result = await pool.query<SavedPlaceRecord>(
+  const existing = await findSavedPlaceByUserAndPlaceId(userId, placeId);
+  if (existing) {
+    return {
+      item: existing,
+      alreadySaved: true,
+    };
+  }
+
+  const result = await database.query<SavedPlaceRecord>(
     `
       insert into user_saved_places (id, user_id, place_id, title, category, metadata_json, created_at, updated_at)
       values ($1, $2, $3, $4, $5, $6::jsonb, now(), now())
-      on conflict (user_id, place_id)
-      do update set
-        title = excluded.title,
-        category = excluded.category,
-        metadata_json = excluded.metadata_json,
-        updated_at = now()
       returning *
     `,
     [randomUUID(), userId, placeId, title, category, JSON.stringify(metadata)],
   );
-  return toSavedPlaceDTO(result.rows[0]);
+  return {
+    item: toSavedPlaceDTO(result.rows[0]),
+    alreadySaved: false,
+  };
 }
 
 export async function deleteSavedPlace(userId: string, placeIdRaw: string) {
   const placeId = String(placeIdRaw || "").trim();
   if (!placeId) throw new Error("placeId is required");
-  const result = await pool.query(
+  const result = await database.query(
     "delete from user_saved_places where user_id = $1 and place_id = $2 returning id",
     [userId, placeId],
   );
@@ -773,7 +1418,7 @@ async function upsertReelAnalyticsRun(input: {
   sourcePlatform?: string | null;
   latestAttemptNumber?: number;
 }) {
-  const result = await pool.query<ReelAnalyticsRunRecord>(
+  const result = await database.query<ReelAnalyticsRunRecord>(
     `
       insert into reel_analytics_runs (
         id, client_run_id, user_id, anonymous_id, source_url, source_platform, latest_attempt_number, created_at, updated_at
@@ -814,7 +1459,7 @@ export async function createReelAnalyticsAttempt(input: ReelAnalyticsAttemptInpu
   if (!runId) return null;
 
   const attemptId = randomUUID();
-  const attemptResult = await pool.query<{ id: string }>(
+  const attemptResult = await database.query<{ id: string }>(
     `
       insert into reel_analytics_attempts (
         id, run_id, attempt_number, trigger_type, status, source_url, source_platform, created_at, started_at
@@ -834,7 +1479,7 @@ export async function createReelAnalyticsAttempt(input: ReelAnalyticsAttemptInpu
     [attemptId, runId, input.attemptNumber, input.triggerType, input.sourceUrl, input.sourcePlatform ?? null],
   );
 
-  await pool.query(
+  await database.query(
     "update reel_analytics_runs set latest_attempt_number = greatest(latest_attempt_number, $2), updated_at = now() where id = $1",
     [runId, input.attemptNumber],
   );
@@ -845,7 +1490,7 @@ export async function createReelAnalyticsAttempt(input: ReelAnalyticsAttemptInpu
 export async function getReelAnalyticsRunIdByClientRunId(clientRunId: string) {
   const normalized = String(clientRunId || "").trim();
   if (!normalized) return null;
-  const result = await pool.query<ReelAnalyticsRunRecord>(
+  const result = await database.query<ReelAnalyticsRunRecord>(
     "select id from reel_analytics_runs where client_run_id = $1 limit 1",
     [normalized],
   );
@@ -853,7 +1498,7 @@ export async function getReelAnalyticsRunIdByClientRunId(clientRunId: string) {
 }
 
 export async function finalizeReelAnalyticsAttempt(input: ReelAnalyticsAttemptCompletion) {
-  await pool.query(
+  await database.query(
     `
       update reel_analytics_attempts
       set
@@ -900,7 +1545,7 @@ export async function persistReelAnalyticsAttemptArtifacts(input: ReelAnalyticsA
 
   if (input.attemptId) {
     try {
-      await pool.query(
+      await database.query(
         `
           update reel_analytics_attempts
           set
@@ -922,7 +1567,7 @@ export async function persistReelAnalyticsAttemptArtifacts(input: ReelAnalyticsA
       );
     } catch (error) {
       if (!isMissingUpdatedAtColumnError(error)) throw error;
-      await pool.query(
+      await database.query(
         `
           update reel_analytics_attempts
           set
@@ -950,7 +1595,7 @@ export async function persistReelAnalyticsAttemptArtifacts(input: ReelAnalyticsA
   if (!runId || !attemptNumber) return;
 
   try {
-    await pool.query(
+    await database.query(
       `
         update reel_analytics_attempts
         set
@@ -973,7 +1618,7 @@ export async function persistReelAnalyticsAttemptArtifacts(input: ReelAnalyticsA
     );
   } catch (error) {
     if (!isMissingUpdatedAtColumnError(error)) throw error;
-    await pool.query(
+    await database.query(
       `
         update reel_analytics_attempts
         set
@@ -1007,7 +1652,7 @@ export async function recordReelAnalyticsEvent(input: ReelAnalyticsEventInput) {
   });
   if (!runId) return;
 
-  await pool.query(
+  await database.query(
     `
       insert into reel_analytics_events (id, run_id, attempt_number, event_name, payload_json, created_at)
       values ($1, $2, $3, $4, $5::jsonb, now())
@@ -1015,7 +1660,7 @@ export async function recordReelAnalyticsEvent(input: ReelAnalyticsEventInput) {
     [randomUUID(), runId, input.attemptNumber ?? null, input.eventName, JSON.stringify(input.payload ?? {})],
   );
 
-  await pool.query(
+  await database.query(
     `
       update reel_analytics_runs
       set
@@ -1033,7 +1678,7 @@ export async function recordReelAnalyticsEvent(input: ReelAnalyticsEventInput) {
 
 export async function upsertReelAnalyticsEntities(input: ReelAnalyticsEntitiesUpsertInput): Promise<void> {
   for (const entity of input.entities) {
-    await pool.query(
+    await database.query(
       `
         insert into reel_analytics_entities (
           id, run_id, attempt_id, attempt_number, entity_index, entity_type, title, subtitle,
@@ -1079,7 +1724,7 @@ export async function markReelAnalyticsEntityOutcome(input: ReelAnalyticsEntityO
         : "was_discarded";
 
   if (input.entityId) {
-    await pool.query(
+    await database.query(
       `
         update reel_analytics_entities
         set
@@ -1095,7 +1740,7 @@ export async function markReelAnalyticsEntityOutcome(input: ReelAnalyticsEntityO
 
   if (input.entityIndex === null || typeof input.entityIndex !== "number") return;
 
-  await pool.query(
+  await database.query(
     `
       update reel_analytics_entities
       set
@@ -1110,7 +1755,7 @@ export async function markReelAnalyticsEntityOutcome(input: ReelAnalyticsEntityO
 
 export async function createReelJob(input: ReelJobCreateInput): Promise<{ id: string }> {
   const jobId = input.jobId || randomUUID();
-  await pool.query(
+  await database.query(
     `
       insert into reel_jobs (
         id, run_id, attempt_id, attempt_number, job_type, status, progress_json, created_at, updated_at
@@ -1146,7 +1791,7 @@ export async function updateReelJob(input: ReelJobUpdateInput): Promise<void> {
   const serializedProgressJson = hasProgressJson ? JSON.stringify(sanitizeArtifactPayload(input.progressJson ?? {})) : null;
   const serializedResultJson =
     hasResultJson ? (input.resultJson === null ? null : JSON.stringify(sanitizeArtifactPayload(input.resultJson))) : null;
-  await pool.query(
+  await database.query(
     `
       update reel_jobs
       set
@@ -1170,6 +1815,577 @@ export async function updateReelJob(input: ReelJobUpdateInput): Promise<void> {
   );
 }
 
+function serializeJsonOrNull(value: unknown): string | null {
+  if (typeof value === "undefined") return null;
+  return value === null ? null : JSON.stringify(value);
+}
+
+function normalizeInteger(value: number | null | undefined): number | null {
+  return Number.isFinite(Number(value)) ? Number(value) : null;
+}
+
+function normalizeNumericResult(value: number | string | null | undefined): number {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : 0;
+}
+
+function buildEntityFieldEditDedupeKey(input: {
+  runId: string;
+  attemptId?: string | null;
+  attemptNumber?: number | null;
+  entityId?: string | null;
+  entityIndex?: number | null;
+  fieldName: string;
+  beforeValue?: unknown;
+  afterValue?: unknown;
+}) {
+  return createHash("sha256").update(JSON.stringify({
+    runId: input.runId,
+    attemptId: input.attemptId ?? null,
+    attemptNumber: input.attemptNumber ?? null,
+    entityId: input.entityId ?? null,
+    entityIndex: input.entityIndex ?? null,
+    fieldName: input.fieldName,
+    beforeValue: input.beforeValue ?? null,
+    afterValue: input.afterValue ?? null,
+  })).digest("hex");
+}
+
+export async function upsertSubmittedLink(input: SubmittedLinkUpsertInput): Promise<SubmittedLinkUpsertResult | null> {
+  const canonicalUrl = String(input.canonicalUrl || "").trim();
+  if (!canonicalUrl) return null;
+  const result = await database.query<SubmittedLinkRecord>(
+    `
+      insert into submitted_links (
+        id, canonical_url, canonical_url_hash, source_platform, latest_title,
+        latest_description, latest_image_url, first_seen_at, last_seen_at, created_at, updated_at
+      )
+      values ($1, $2, $3, $4, $5, $6, $7, now(), now(), now(), now())
+      on conflict (canonical_url)
+      do update set
+        canonical_url_hash = coalesce(excluded.canonical_url_hash, submitted_links.canonical_url_hash),
+        source_platform = coalesce(excluded.source_platform, submitted_links.source_platform),
+        latest_title = coalesce(excluded.latest_title, submitted_links.latest_title),
+        latest_description = coalesce(excluded.latest_description, submitted_links.latest_description),
+        latest_image_url = coalesce(excluded.latest_image_url, submitted_links.latest_image_url),
+        last_seen_at = now(),
+        updated_at = now()
+      returning id
+    `,
+    [
+      randomUUID(),
+      canonicalUrl,
+      input.canonicalUrlHash ? String(input.canonicalUrlHash).trim() : null,
+      input.sourcePlatform ? String(input.sourcePlatform).trim() : null,
+      input.latestTitle ? String(input.latestTitle) : null,
+      input.latestDescription ? String(input.latestDescription) : null,
+      input.latestImageUrl ? String(input.latestImageUrl) : null,
+    ],
+  );
+  const row = result.rows[0];
+  return row ? { id: row.id } : null;
+}
+
+export async function getLatestReusableMetadataExtractionByCanonicalUrl(
+  canonicalUrlRaw: string,
+): Promise<ReusableMetadataExtractionLookupResult | null> {
+  const canonicalUrl = String(canonicalUrlRaw || "").trim();
+  if (!canonicalUrl) return null;
+  const result = await database.query<ReusableMetadataExtractionRecord>(
+    `
+      select
+        sl.id as submitted_link_id,
+        sl.canonical_url,
+        r.id as run_id,
+        r.client_run_id,
+        r.user_id,
+        r.anonymous_id,
+        a.id as attempt_id,
+        a.attempt_number,
+        a.status,
+        a.failure_reason,
+        a.extraction_result_json,
+        a.intelligence_status
+      from submitted_links sl
+      join reel_analytics_runs r on r.submitted_link_id = sl.id
+      join reel_analytics_attempts a on a.run_id = r.id
+      where
+        sl.canonical_url = $1
+        and coalesce(a.canonical_url, r.canonical_url, sl.canonical_url) = $1
+        and a.extraction_result_json is not null
+        and coalesce(a.status, '') <> 'failed'
+        and a.failure_reason is null
+      order by coalesce(a.completed_at, a.updated_at, a.started_at, a.created_at) desc, a.attempt_number desc
+      limit 1
+    `,
+    [canonicalUrl],
+  );
+  const row = result.rows[0];
+  if (!row) return null;
+  return {
+    submittedLinkId: row.submitted_link_id,
+    canonicalUrl: row.canonical_url,
+    runId: row.run_id,
+    clientRunId: row.client_run_id,
+    userId: row.user_id,
+    anonymousId: row.anonymous_id,
+    attemptId: row.attempt_id,
+    attemptNumber: row.attempt_number,
+    status: row.status,
+    failureReason: row.failure_reason,
+    extractionResult: row.extraction_result_json,
+    priorStatus: row.intelligence_status ?? row.status,
+  };
+}
+
+export async function getAdminObservabilityOverview(
+  input: AdminObservabilityOverviewInput,
+): Promise<AdminObservabilityOverviewResult> {
+  const from = input.from ? String(input.from).trim() : null;
+  const to = input.to ? String(input.to).trim() : null;
+  const platform = input.platform ? String(input.platform).trim() : null;
+
+  const result = await database.query<AdminObservabilityOverviewRow>(
+    `
+      with filtered_links as (
+        select sl.id
+        from submitted_links sl
+        where
+          ($1::timestamptz is null or sl.first_seen_at >= $1::timestamptz)
+          and ($2::timestamptz is null or sl.first_seen_at < ($2::timestamptz + interval '1 day'))
+          and ($3::text is null or sl.source_platform = $3::text)
+      ),
+      filtered_runs as (
+        select r.*
+        from reel_analytics_runs r
+        where
+          ($1::timestamptz is null or r.created_at >= $1::timestamptz)
+          and ($2::timestamptz is null or r.created_at < ($2::timestamptz + interval '1 day'))
+          and ($3::text is null or r.source_platform = $3::text)
+      ),
+      filtered_attempts as (
+        select a.*
+        from reel_analytics_attempts a
+        join filtered_runs r on r.id = a.run_id
+      ),
+      filtered_stage_totals as (
+        select s.run_id, s.attempt_number, sum(coalesce(s.latency_ms, 0))::numeric as total_latency_ms
+        from attempt_stage_runs s
+        join filtered_runs r on r.id = s.run_id
+        group by s.run_id, s.attempt_number
+      ),
+      cache_reuse as (
+        select coalesce(sum(case when run_count > 1 then run_count - 1 else 0 end), 0)::numeric as estimated_cache_reuse_count
+        from (
+          select r.submitted_link_id, count(*)::numeric as run_count
+          from filtered_runs r
+          where r.submitted_link_id is not null
+          group by r.submitted_link_id
+        ) grouped_runs
+      ),
+      duplicate_saves as (
+        select coalesce(sum(case when save_count > 1 then save_count - 1 else 0 end), 0)::numeric as estimated_duplicate_saved_place_count
+        from (
+          select r.user_id, r.final_selected_place_id, count(*)::numeric as save_count
+          from filtered_runs r
+          where
+            r.user_id is not null
+            and r.final_user_action = 'saved'
+            and r.final_selected_place_id is not null
+          group by r.user_id, r.final_selected_place_id
+        ) grouped_saves
+      )
+      select
+        (select count(*)::numeric from filtered_links) as total_submitted_links,
+        (select count(*)::numeric from filtered_runs) as total_runs,
+        (select count(*)::numeric from filtered_attempts) as total_attempts,
+        (select count(*)::numeric from filtered_runs where final_user_action = 'saved') as saved_runs,
+        (select count(*)::numeric from filtered_runs where final_user_action = 'edited') as edited_runs,
+        (select count(*)::numeric from filtered_runs where final_user_action = 'discarded') as discarded_runs,
+        (select avg(latest_attempt_number)::numeric from filtered_runs where latest_attempt_number > 0) as average_attempt_count,
+        (select avg(total_latency_ms)::numeric from filtered_stage_totals) as average_extraction_time_ms,
+        (select estimated_cache_reuse_count from cache_reuse) as estimated_cache_reuse_count,
+        (select estimated_duplicate_saved_place_count from duplicate_saves) as estimated_duplicate_saved_place_count
+    `,
+    [from, to, platform],
+  );
+
+  const row = result.rows[0];
+  const totalRuns = normalizeNumericResult(row?.total_runs);
+  const savedRuns = normalizeNumericResult(row?.saved_runs);
+  const editedRuns = normalizeNumericResult(row?.edited_runs);
+  const discardedRuns = normalizeNumericResult(row?.discarded_runs);
+
+  const saveRate = totalRuns > 0 ? savedRuns / totalRuns : 0;
+  const editRate = totalRuns > 0 ? editedRuns / totalRuns : 0;
+  const discardRate = totalRuns > 0 ? discardedRuns / totalRuns : 0;
+  const averageExtractionTimeMsRaw = row?.average_extraction_time_ms;
+  const averageExtractionTimeMs =
+    averageExtractionTimeMsRaw === null || typeof averageExtractionTimeMsRaw === "undefined"
+      ? null
+      : normalizeNumericResult(averageExtractionTimeMsRaw);
+
+  return {
+    totalSubmittedLinks: normalizeNumericResult(row?.total_submitted_links),
+    totalRuns,
+    totalAttempts: normalizeNumericResult(row?.total_attempts),
+    savedRuns,
+    editedRuns,
+    discardedRuns,
+    saveRate,
+    editRate,
+    discardRate,
+    averageAttemptCount: normalizeNumericResult(row?.average_attempt_count),
+    averageExtractionTimeMs,
+    estimatedCacheReuseCount: normalizeNumericResult(row?.estimated_cache_reuse_count),
+    estimatedDuplicateSavedPlaceCount: normalizeNumericResult(row?.estimated_duplicate_saved_place_count),
+  };
+}
+
+export async function getAdminObservabilityLinks(
+  input: AdminObservabilityLinksInput,
+): Promise<AdminObservabilityLinksResult> {
+  const from = input.from ? String(input.from).trim() : null;
+  const to = input.to ? String(input.to).trim() : null;
+  const platform = input.platform ? String(input.platform).trim() : null;
+  const status = input.status ? String(input.status).trim() : null;
+  const reused = input.reused ? true : input.reused === false ? false : null;
+  const acceptedAfter = input.acceptedAfter ? String(input.acceptedAfter).trim() : null;
+  const q = input.q ? String(input.q).trim() : null;
+  const page =
+    Number.isFinite(Number(input.page)) && Number(input.page) >= 1 ? Number(input.page) : 1;
+  const pageSize =
+    Number.isFinite(Number(input.pageSize)) && Number(input.pageSize) >= 1
+      ? Math.min(Number(input.pageSize), 200)
+      : 50;
+  const offset = (page - 1) * pageSize;
+
+  // First, get total count
+  const countResult = await database.query<{ total: string | number }>(
+    `
+      with filtered_links as (
+        select distinct sl.id
+        from submitted_links sl
+        left join reel_analytics_runs r on r.submitted_link_id = sl.id
+        where
+          ($1::timestamptz is null or sl.first_seen_at >= $1::timestamptz)
+          and ($2::timestamptz is null or sl.first_seen_at < ($2::timestamptz + interval '1 day'))
+          and ($3::text is null or sl.source_platform = $3::text)
+          and ($4::text is null or r.latest_outcome = $4::text)
+          and (
+            case when $5::boolean is not null then
+              (select count(*) > 1 from reel_analytics_runs where submitted_link_id = sl.id) = $5::boolean
+            else true
+            end
+          )
+          and ($6::text is null or exists (select 1 from reel_analytics_attempts a where a.run_id = r.id and a.accepted_after = $6::text))
+          and ($7::text is null or sl.canonical_url ilike '%' || $7::text || '%')
+      )
+      select count(*)::numeric as total
+      from filtered_links
+    `,
+    [from, to, platform, status, reused, acceptedAfter, q],
+  );
+
+  const totalCount = normalizeNumericResult(countResult.rows[0]?.total ?? 0);
+  const totalPages = Math.ceil(totalCount / pageSize);
+
+  // Then get the paginated results
+  const result = await database.query<AdminObservabilityLinksRow>(
+    `
+      with filtered_links as (
+        select distinct sl.id, sl.canonical_url, sl.source_platform, sl.first_seen_at, sl.last_seen_at
+        from submitted_links sl
+        left join reel_analytics_runs r on r.submitted_link_id = sl.id
+        where
+          ($1::timestamptz is null or sl.first_seen_at >= $1::timestamptz)
+          and ($2::timestamptz is null or sl.first_seen_at < ($2::timestamptz + interval '1 day'))
+          and ($3::text is null or sl.source_platform = $3::text)
+          and ($4::text is null or r.latest_outcome = $4::text)
+          and (
+            case when $5::boolean is not null then
+              (select count(*) > 1 from reel_analytics_runs where submitted_link_id = sl.id) = $5::boolean
+            else true
+            end
+          )
+          and ($6::text is null or exists (select 1 from reel_analytics_attempts a where a.run_id = r.id and a.accepted_after = $6::text))
+          and ($7::text is null or sl.canonical_url ilike '%' || $7::text || '%')
+        order by sl.last_seen_at desc
+        limit $8::int offset $9::int
+      ),
+      link_aggregates as (
+        select
+          fl.id,
+          fl.canonical_url,
+          fl.source_platform,
+          fl.first_seen_at,
+          fl.last_seen_at,
+          count(distinct r.id)::numeric as run_count,
+          coalesce(avg(r.latest_attempt_number), 0)::numeric as attempt_count,
+          max(r.latest_outcome) as latest_status,
+          max(a.accepted_after) as latest_accepted_after,
+          max(a.route) as latest_route,
+          (select count(*) - 1 from reel_analytics_runs where submitted_link_id = fl.id)::numeric as cache_reuse_count,
+          max(r.final_selected_place_id) as final_selected_place_id,
+          max(r.final_user_action) as final_user_action
+        from filtered_links fl
+        left join reel_analytics_runs r on r.submitted_link_id = fl.id
+        left join reel_analytics_attempts a on a.run_id = r.id and a.attempt_number = r.latest_attempt_number
+        group by fl.id, fl.canonical_url, fl.source_platform, fl.first_seen_at, fl.last_seen_at
+      )
+      select
+        id::text as submitted_link_id,
+        canonical_url,
+        source_platform as platform,
+        first_seen_at,
+        last_seen_at,
+        run_count,
+        attempt_count,
+        latest_status,
+        latest_accepted_after,
+        latest_route,
+        cache_reuse_count,
+        final_selected_place_id,
+        final_user_action
+      from link_aggregates
+      order by last_seen_at desc
+    `,
+    [from, to, platform, status, reused, acceptedAfter, q, pageSize, offset],
+  );
+
+  const rows = result.rows.map((row) => ({
+    submittedLinkId: row.submitted_link_id,
+    canonicalUrl: row.canonical_url,
+    platform: row.platform,
+    firstSeenAt: row.first_seen_at,
+    lastSeenAt: row.last_seen_at,
+    runCount: normalizeNumericResult(row.run_count),
+    attemptCount: normalizeNumericResult(row.attempt_count),
+    latestStatus: row.latest_status,
+    latestAcceptedAfter: row.latest_accepted_after,
+    latestRoute: row.latest_route,
+    cacheReuseCount: normalizeNumericResult(row.cache_reuse_count),
+    finalSelectedPlaceId: row.final_selected_place_id,
+    finalUserAction: row.final_user_action,
+  }));
+
+  return {
+    rows,
+    total: totalCount,
+    page,
+    pageSize,
+    totalPages,
+  };
+}
+
+export async function linkRunToSubmittedLink(input: {
+  runId: string;
+  submittedLinkId: string;
+  canonicalUrl?: string | null;
+}): Promise<void> {
+  const runId = String(input.runId || "").trim();
+  const submittedLinkId = String(input.submittedLinkId || "").trim();
+  if (!runId || !submittedLinkId) return;
+  await database.query(
+    `
+      update reel_analytics_runs
+      set
+        submitted_link_id = $2,
+        canonical_url = coalesce($3, canonical_url),
+        updated_at = now()
+      where id = $1
+    `,
+    [runId, submittedLinkId, input.canonicalUrl ? String(input.canonicalUrl).trim() : null],
+  );
+}
+
+export async function updateAttemptPromotedFields(input: AttemptPromotedFieldsInput): Promise<void> {
+  const attemptId = String(input.attemptId || "").trim();
+  const runId = String(input.runId || "").trim();
+  const attemptNumber = normalizeInteger(input.attemptNumber);
+  if (!attemptId && (!runId || !attemptNumber)) return;
+
+  await database.query(
+    `
+      update reel_analytics_attempts
+      set
+        canonical_url = coalesce($4, canonical_url),
+        accepted_after = coalesce($5, accepted_after),
+        route = coalesce($6, route),
+        stage_status_json = coalesce($7::jsonb, stage_status_json),
+        stage_timings_ms_json = coalesce($8::jsonb, stage_timings_ms_json),
+        transcript_attempted = coalesce($9, transcript_attempted),
+        transcript_succeeded = coalesce($10, transcript_succeeded),
+        ocr_attempted = coalesce($11, ocr_attempted),
+        ocr_succeeded = coalesce($12, ocr_succeeded),
+        visual_attempted = coalesce($13, visual_attempted),
+        visual_succeeded = coalesce($14, visual_succeeded),
+        comments_fetched_count = coalesce($15, comments_fetched_count),
+        comment_replies_fetched_count = coalesce($16, comment_replies_fetched_count),
+        creator_reply_count = coalesce($17, creator_reply_count),
+        updated_at = now()
+      where
+        ($1::uuid is not null and id = $1::uuid)
+        or ($1::uuid is null and run_id = $2::uuid and attempt_number = $3)
+    `,
+    [
+      attemptId || null,
+      runId || null,
+      attemptNumber,
+      input.canonicalUrl ? String(input.canonicalUrl).trim() : null,
+      input.acceptedAfter ? String(input.acceptedAfter).trim() : null,
+      input.route ? String(input.route).trim() : null,
+      serializeJsonOrNull(input.stageStatus ?? null),
+      serializeJsonOrNull(input.stageTimingsMs ?? null),
+      typeof input.transcriptAttempted === "boolean" ? input.transcriptAttempted : null,
+      typeof input.transcriptSucceeded === "boolean" ? input.transcriptSucceeded : null,
+      typeof input.ocrAttempted === "boolean" ? input.ocrAttempted : null,
+      typeof input.ocrSucceeded === "boolean" ? input.ocrSucceeded : null,
+      typeof input.visualAttempted === "boolean" ? input.visualAttempted : null,
+      typeof input.visualSucceeded === "boolean" ? input.visualSucceeded : null,
+      normalizeInteger(input.commentsFetchedCount),
+      normalizeInteger(input.commentRepliesFetchedCount),
+      normalizeInteger(input.creatorReplyCount),
+    ],
+  );
+}
+
+export async function upsertAttemptStageRuns(input: AttemptStageRunUpsertInput): Promise<void> {
+  for (const stage of input.stages) {
+    const stageKey = String(stage.stageKey || "").trim();
+    if (!stageKey) continue;
+    await database.query(
+      `
+        insert into attempt_stage_runs (
+          id, run_id, attempt_id, attempt_number, stage_key, status, provider, reason, latency_ms, chars, metadata_json, created_at, updated_at
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, now(), now())
+        on conflict (run_id, attempt_number, stage_key)
+        do update set
+          attempt_id = coalesce(excluded.attempt_id, attempt_stage_runs.attempt_id),
+          status = excluded.status,
+          provider = excluded.provider,
+          reason = excluded.reason,
+          latency_ms = excluded.latency_ms,
+          chars = excluded.chars,
+          metadata_json = excluded.metadata_json,
+          updated_at = now()
+      `,
+      [
+        randomUUID(),
+        input.runId,
+        input.attemptId ?? null,
+        input.attemptNumber,
+        stageKey,
+        stage.status ? String(stage.status).trim() : null,
+        stage.provider ? String(stage.provider).trim() : null,
+        stage.reason ? String(stage.reason) : null,
+        normalizeInteger(stage.latencyMs),
+        normalizeInteger(stage.chars),
+        JSON.stringify(stage.metadataJson ?? {}),
+      ],
+    );
+  }
+}
+
+export async function upsertAttemptEvidence(input: AttemptEvidenceUpsertInput): Promise<void> {
+  for (const evidence of input.evidence) {
+    const evidenceType = String(evidence.evidenceType || "").trim();
+    if (!evidenceType) continue;
+    await database.query(
+      `
+        insert into attempt_evidence (
+          id, run_id, attempt_id, attempt_number, evidence_type, position, summary_text, source_ref, metrics_json, raw_json, created_at, updated_at
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, now(), now())
+        on conflict (run_id, attempt_number, evidence_type, position)
+        do update set
+          attempt_id = coalesce(excluded.attempt_id, attempt_evidence.attempt_id),
+          summary_text = excluded.summary_text,
+          source_ref = excluded.source_ref,
+          metrics_json = excluded.metrics_json,
+          raw_json = excluded.raw_json,
+          updated_at = now()
+      `,
+      [
+        randomUUID(),
+        input.runId,
+        input.attemptId ?? null,
+        input.attemptNumber,
+        evidenceType,
+        normalizeInteger(evidence.position) ?? 0,
+        evidence.summaryText ? String(evidence.summaryText) : null,
+        evidence.sourceRef ? String(evidence.sourceRef) : null,
+        JSON.stringify(evidence.metricsJson ?? {}),
+        JSON.stringify(evidence.rawJson ?? {}),
+      ],
+    );
+  }
+}
+
+export async function updateRunFinalOutcome(input: RunFinalOutcomeUpdateInput): Promise<void> {
+  const runId = String(input.runId || "").trim();
+  if (!runId) return;
+  await database.query(
+    `
+      update reel_analytics_runs
+      set
+        final_user_action = coalesce($2, final_user_action),
+        final_selected_place_id = coalesce($3, final_selected_place_id),
+        updated_at = now()
+      where id = $1
+    `,
+    [
+      runId,
+      input.finalUserAction ?? null,
+      input.finalSelectedPlaceId ? String(input.finalSelectedPlaceId).trim() : null,
+    ],
+  );
+}
+
+export async function insertEntityFieldEdits(input: EntityFieldEditInsertInput): Promise<void> {
+  for (const edit of input.edits) {
+    const runId = String(edit.runId || "").trim();
+    const fieldName = String(edit.fieldName || "").trim();
+    if (!runId || !fieldName) continue;
+    const dedupeKey = edit.dedupeKey
+      ? String(edit.dedupeKey).trim()
+      : buildEntityFieldEditDedupeKey({
+          runId,
+          attemptId: edit.attemptId ?? null,
+          attemptNumber: edit.attemptNumber ?? null,
+          entityId: edit.entityId ?? null,
+          entityIndex: edit.entityIndex ?? null,
+          fieldName,
+          beforeValue: edit.beforeValue,
+          afterValue: edit.afterValue,
+        });
+    await database.query(
+      `
+        insert into entity_field_edits (
+          id, dedupe_key, run_id, attempt_id, attempt_number, entity_id, entity_index,
+          field_name, before_value_json, after_value_json, edited_by_user_id, created_at
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10::jsonb, $11, now())
+        on conflict (dedupe_key) do nothing
+      `,
+      [
+        randomUUID(),
+        dedupeKey,
+        runId,
+        edit.attemptId ?? null,
+        normalizeInteger(edit.attemptNumber),
+        edit.entityId ?? null,
+        normalizeInteger(edit.entityIndex),
+        fieldName,
+        serializeJsonOrNull(edit.beforeValue ?? null),
+        serializeJsonOrNull(edit.afterValue ?? null),
+        edit.editedByUserId ?? null,
+      ],
+    );
+  }
+}
+
 function toReelJobDto(row: ReelJobRecord): ReelJobDto {
   return {
     id: row.id,
@@ -1189,7 +2405,7 @@ function toReelJobDto(row: ReelJobRecord): ReelJobDto {
 export async function getReelJob(jobId: string): Promise<ReelJobDto | null> {
   const normalized = String(jobId || "").trim();
   if (!normalized) return null;
-  const result = await pool.query<ReelJobRecord>(
+  const result = await database.query<ReelJobRecord>(
     "select * from reel_jobs where id = $1 limit 1",
     [normalized],
   );

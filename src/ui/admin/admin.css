@@ -1,0 +1,19 @@
+.wr-admin-root { padding: 16px; font-family: system-ui, Arial, sans-serif; }
+.wr-admin-overview { margin-bottom: 16px; }
+.wr-admin-cards { display:flex; flex-wrap:wrap; gap:8px; }
+.card { background: #fff; border:1px solid #eee; padding:8px 12px; border-radius:6px; min-width:140px }
+.card .label { font-size:12px; color:#666 }
+.card .value { font-weight:600; font-size:18px }
+.wr-admin-links { margin-top:12px }
+.wr-admin-filters { display:flex; gap:8px; margin-bottom:8px }
+.wr-admin-filters input { padding:6px 8px }
+.wr-admin-table { width:100%; border-collapse:collapse }
+.wr-admin-table th, .wr-admin-table td { border:1px solid #eee; padding:8px; text-align:left; }
+.wr-admin-row { cursor:pointer }
+.wr-admin-row:hover { background:#fafafa }
+.wr-admin-pager { margin-top:8px; display:flex; gap:8px; align-items:center }
+.wr-admin-drawer { position:fixed; right:0; top:0; bottom:0; width:480px; background:#fff; border-left:1px solid #eee; box-shadow:-8px 0 24px rgba(0,0,0,0.08); overflow:auto; }
+.wr-admin-drawer-inner { padding:16px }
+.wr-admin-drawer-close { float:right }
+.wr-admin-pre { background:#f7f7f7; padding:8px; border-radius:6px; max-height:240px; overflow:auto }
+.wr-admin-error { color: #b00020; padding:8px; border:1px solid #f1c0c0; border-radius:6px; background:#fff6f6 }

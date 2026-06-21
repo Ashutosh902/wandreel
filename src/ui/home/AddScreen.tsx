@@ -79,6 +79,12 @@ type IntelligenceApiResponse = {
   };
 };
 
+type EditAnalyticsDiff = {
+  field: "title" | "category" | "subtitle" | "placeId" | "finalPlaceId" | "lat" | "lng";
+  before: string | number | null;
+  after: string | number | null;
+};
+
 type PreviewCard =
   | {
       key: string;
@@ -184,6 +190,60 @@ function buildClientUrlHash(url: string): string {
   } catch {
     return hashUrlForLog(url.trim());
   }
+}
+
+function normalizeEditDiffText(value: string | null | undefined): string | null {
+  const trimmed = String(value || "").trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeEditDiffNumber(value: number | null | undefined): number | null {
+  return Number.isFinite(value) ? Number(value) : null;
+}
+
+function buildEditAnalyticsDiffs(input: {
+  before: DetectedPlace;
+  after: Pick<DetectedPlace, "name" | "category" | "locality" | "placeId" | "lat" | "lng">;
+}): EditAnalyticsDiff[] {
+  const diffs: EditAnalyticsDiff[] = [];
+  const beforeTitle = normalizeEditDiffText(input.before.name);
+  const afterTitle = normalizeEditDiffText(input.after.name);
+  if (beforeTitle !== afterTitle) {
+    diffs.push({ field: "title", before: beforeTitle, after: afterTitle });
+  }
+
+  const beforeCategory = normalizeEditDiffText(input.before.category);
+  const afterCategory = normalizeEditDiffText(input.after.category);
+  if (beforeCategory !== afterCategory) {
+    diffs.push({ field: "category", before: beforeCategory, after: afterCategory });
+  }
+
+  const beforeSubtitle = normalizeEditDiffText(input.before.locality);
+  const afterSubtitle = normalizeEditDiffText(input.after.locality);
+  if (beforeSubtitle !== afterSubtitle) {
+    diffs.push({ field: "subtitle", before: beforeSubtitle, after: afterSubtitle });
+  }
+
+  const beforePlaceId = normalizeEditDiffText(input.before.placeId);
+  const afterPlaceId = normalizeEditDiffText(input.after.placeId);
+  if (beforePlaceId !== afterPlaceId) {
+    diffs.push({ field: "placeId", before: beforePlaceId, after: afterPlaceId });
+    diffs.push({ field: "finalPlaceId", before: beforePlaceId, after: afterPlaceId });
+  }
+
+  const beforeLat = normalizeEditDiffNumber(input.before.lat);
+  const afterLat = normalizeEditDiffNumber(input.after.lat);
+  if ((beforeLat !== null || afterLat !== null) && beforeLat !== afterLat) {
+    diffs.push({ field: "lat", before: beforeLat, after: afterLat });
+  }
+
+  const beforeLng = normalizeEditDiffNumber(input.before.lng);
+  const afterLng = normalizeEditDiffNumber(input.after.lng);
+  if ((beforeLng !== null || afterLng !== null) && beforeLng !== afterLng) {
+    diffs.push({ field: "lng", before: beforeLng, after: afterLng });
+  }
+
+  return diffs;
 }
 
 export function AddScreen() {
@@ -1815,16 +1875,21 @@ export function AddScreen() {
       showToast({ message: "Name and locality are required.", variant: "error" });
       return;
     }
-    const nextPlaces = detectedPlacesRef.current.map((item) => (item.id === activeEditingPlace.id ? {
-      ...item,
+    const editedPlace = {
+      ...activeEditingPlace,
       name,
       category: editCategory,
       locality,
-      fullAddress: fullAddress || item.fullAddress,
-      placeId: editPlaceId ?? item.placeId ?? null,
-      lat: editCoords.lat ?? item.lat ?? null,
-      lng: editCoords.lng ?? item.lng ?? null,
-    } : item));
+      fullAddress: fullAddress || activeEditingPlace.fullAddress,
+      placeId: editPlaceId ?? activeEditingPlace.placeId ?? null,
+      lat: editCoords.lat ?? activeEditingPlace.lat ?? null,
+      lng: editCoords.lng ?? activeEditingPlace.lng ?? null,
+    };
+    const editDiffs = buildEditAnalyticsDiffs({
+      before: activeEditingPlace,
+      after: editedPlace,
+    });
+    const nextPlaces = detectedPlacesRef.current.map((item) => (item.id === activeEditingPlace.id ? editedPlace : item));
     syncDraftState(nextPlaces, pendingJobsRef.current, linkInput);
     void postReelAnalyticsEvent({
       clientRunId: String(activeEditingPlace.runId),
@@ -1838,6 +1903,7 @@ export function AddScreen() {
         category: editCategory,
         hasPlaceId: Boolean(editPlaceId ?? activeEditingPlace.placeId),
         entityIndex: activeEditingPlace.entityIndex ?? null,
+        editDiffs,
       },
     });
     setIsEditing(false);
@@ -1927,6 +1993,22 @@ export function AddScreen() {
           return;
         }
         throw new Error("save_failed");
+      }
+      const payload = (await response.json().catch(() => null)) as
+        | {
+            ok?: boolean;
+            alreadySaved?: boolean;
+            item?: unknown;
+            duplicate?: { kind?: string; scope?: string; placeId?: string; existingSavedPlaceId?: string };
+          }
+        | null;
+      if (payload?.alreadySaved) {
+        setSavedPlaceIds((current) => new Set(current).add(place.id));
+        showToast({ message: "You already saved this place.", variant: "info" });
+        setIsEditing(false);
+        setEditingPlaceId(null);
+        editingPlaceIdRef.current = null;
+        return;
       }
       publishSavedToCategoryFeed(place);
       void postReelAnalyticsEvent({
