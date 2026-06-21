@@ -18,6 +18,7 @@ import "./admin.css";
 
 type MetricCardTone = "blue" | "green" | "amber" | "red" | "neutral";
 type AdminTab = "diagnostics" | "customer";
+type UsageDateRange = "today" | "7d" | "30d" | "all";
 
 type MetricCard = {
   label: string;
@@ -46,6 +47,32 @@ type DerivedStats = {
   reusedLinkCount: number;
   mostRecentSeenAt: string | null;
 };
+
+const USAGE_RANGE_OPTIONS: Array<{ value: UsageDateRange; label: string }> = [
+  { value: "today", label: "Today" },
+  { value: "7d", label: "Last 7 days" },
+  { value: "30d", label: "Last 30 days" },
+  { value: "all", label: "All" },
+];
+
+function toLocalDateString(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getUsageDateParams(range: UsageDateRange) {
+  if (range === "all") return {};
+  const end = new Date();
+  const start = new Date(end);
+  if (range === "today") {
+    const day = toLocalDateString(end);
+    return { from: day, to: day };
+  }
+  start.setDate(end.getDate() - (range === "7d" ? 7 : 30));
+  return { from: toLocalDateString(start), to: toLocalDateString(end) };
+}
 
 function formatInteger(value: number | null | undefined) {
   const normalized = Number.isFinite(value) ? Number(value) : 0;
@@ -95,9 +122,9 @@ function renderEmptyState(message: string) {
 function toBadgeTone(value: string | null | undefined): MetricCardTone {
   const normalized = String(value || "").toLowerCase();
   if (normalized === "saved" || normalized === "saved_place" || normalized === "ocr" || normalized === "success" || normalized === "active") return "green";
-  if (normalized === "description" || normalized === "logged_in" || normalized === "new") return "blue";
+  if (normalized === "description" || normalized === "logged_in" || normalized === "opened_app" || normalized === "new") return "blue";
   if (normalized === "discarded" || normalized === "failed" || normalized === "dropped_after_extraction") return "red";
-  if (normalized === "edited" || normalized === "retry" || normalized === "repeat_user" || normalized === "anonymous") return "amber";
+  if (normalized === "edited" || normalized === "retry" || normalized === "repeat_user" || normalized === "anonymous" || normalized === "no_link_submitted") return "amber";
   return "neutral";
 }
 
@@ -191,6 +218,9 @@ function buildCustomerMetricCards(overview: AdminUsageOverviewResponse | null): 
     { label: "Logged-in users", value: formatInteger(summary?.loggedInUsers), tone: "blue" },
     { label: "Anonymous users", value: formatInteger(summary?.anonymousUsers), tone: "amber" },
     { label: "Unique users", value: formatInteger(summary?.uniqueUsers), tone: "blue" },
+    { label: "App opened users", value: formatInteger(summary?.appOpenedUsers), tone: "blue" },
+    { label: "Login seen users", value: formatInteger(summary?.loginSeenUsers), tone: "green" },
+    { label: "Logged-in but no run users", value: formatInteger(summary?.loggedInButNoRunUsers), tone: "amber" },
     { label: "New users", value: formatInteger(summary?.newUsers), tone: "blue" },
     { label: "Returning users", value: formatInteger(summary?.returningUsers), tone: "green" },
     { label: "Repeat users", value: formatInteger(summary?.repeatUsers), tone: "amber" },
@@ -211,6 +241,7 @@ function buildCustomerInsightCards(overview: AdminUsageOverviewResponse | null):
   const rates = overview?.rates;
   const activity = overview?.activity;
   return [
+    { title: "Users opened the app", value: formatInteger(summary?.appOpenedUsers), tone: "blue" },
     { title: "Users saved at least one place", value: formatInteger(summary?.usersSavedAtLeastOnePlace), tone: "green" },
     { title: "Users submitted but did not save", value: formatInteger(summary?.usersSubmittedButDidNotSave), tone: "red" },
     { title: "Repeat users", value: formatInteger(summary?.repeatUsers), tone: "amber" },
@@ -359,19 +390,39 @@ export function AdminPage() {
   const [usageUserType, setUsageUserType] = useState<string>("");
   const [usageStatus, setUsageStatus] = useState<string>("");
   const [usagePlatform, setUsagePlatform] = useState<string>("");
+  const [usageDateRange, setUsageDateRange] = useState<UsageDateRange>("7d");
+  const [usageExcludeTestUsers, setUsageExcludeTestUsers] = useState(true);
   const [usageLoading, setUsageLoading] = useState(false);
   const [usageError, setUsageError] = useState<string | null>(null);
+  const [usageLastUpdatedAt, setUsageLastUpdatedAt] = useState<string | null>(null);
+
+  useEffect(() => {
+    const className = "wr-admin-page-active";
+    const root = document.getElementById("root");
+    const shell = document.querySelector(".app-shell-root");
+    document.documentElement.classList.add(className);
+    document.body.classList.add(className);
+    root?.classList.add(className);
+    shell?.classList.add(className);
+    return () => {
+      document.documentElement.classList.remove(className);
+      document.body.classList.remove(className);
+      root?.classList.remove(className);
+      shell?.classList.remove(className);
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
+    const initialUsageDates = getUsageDateParams("7d");
     setLoading(true);
     setUsageLoading(true);
     Promise.all([
       fetchAdminOverview(),
       fetchAdminLinks({ page, pageSize }),
       fetchAllAdminLinks(),
-      fetchAdminUsageOverview(),
-      fetchAdminUsageUsers({ page: usagePage, pageSize: usagePageSize }),
+      fetchAdminUsageOverview({ ...initialUsageDates, excludeTestUsers: true }),
+      fetchAdminUsageUsers({ ...initialUsageDates, excludeTestUsers: true, page: usagePage, pageSize: usagePageSize }),
     ])
       .then(([ov, linksRes, statsRes, usageOverviewRes, usageUsersRes]) => {
         if (!mounted) return;
@@ -388,9 +439,17 @@ export function AdminPage() {
         setTotal(Number(linksRes.pagination?.total || 0));
         setLoading(false);
 
-        setUsageOverview(usageOverviewRes);
-        setUsageUsers(usageUsersRes.rows || []);
-        setUsageTotal(Number(usageUsersRes.pagination?.total || 0));
+        if (!usageOverviewRes.ok || !usageUsersRes.ok) {
+          setUsageOverview(null);
+          setUsageUsers([]);
+          setUsageTotal(0);
+          setUsageError(String(usageOverviewRes.error || usageUsersRes.error || "Customer usage API request failed"));
+        } else {
+          setUsageOverview(usageOverviewRes);
+          setUsageUsers(usageUsersRes.rows || []);
+          setUsageTotal(Number(usageUsersRes.pagination?.total || 0));
+          setUsageLastUpdatedAt(new Date().toISOString());
+        }
         setUsageLoading(false);
       })
       .catch((e) => {
@@ -437,24 +496,31 @@ export function AdminPage() {
     await runFilterFetch(1, { platform: "", acceptedAfter: "", q: "" });
   }
 
-  async function runUsageFetch(nextPage = 1, overrides?: Partial<{ userType: string; status: string; platform: string; pageSize: number }>) {
+  async function runUsageFetch(nextPage = 1, overrides?: Partial<{ userType: string; status: string; platform: string; pageSize: number; dateRange: UsageDateRange; excludeTestUsers: boolean }>) {
     const nextUserType = overrides?.userType ?? usageUserType;
     const nextStatus = overrides?.status ?? usageStatus;
     const nextPlatform = overrides?.platform ?? usagePlatform;
     const nextPageSize = overrides?.pageSize ?? usagePageSize;
+    const nextDateRange = overrides?.dateRange ?? usageDateRange;
+    const nextExcludeTestUsers = overrides?.excludeTestUsers ?? usageExcludeTestUsers;
+    const dateParams = getUsageDateParams(nextDateRange);
     setUsageLoading(true);
     setUsageError(null);
     const [overviewRes, usersRes] = await Promise.all([
       fetchAdminUsageOverview({
+        ...dateParams,
         userType: nextUserType || undefined,
         platform: nextPlatform || undefined,
+        excludeTestUsers: nextExcludeTestUsers,
       }),
       fetchAdminUsageUsers({
+        ...dateParams,
         page: nextPage,
         pageSize: nextPageSize,
         userType: nextUserType || undefined,
         status: nextStatus || undefined,
         platform: nextPlatform || undefined,
+        excludeTestUsers: nextExcludeTestUsers,
       }),
     ]);
     if (!usersRes.ok && (usersRes.status === 401 || usersRes.status === 403)) {
@@ -477,6 +543,9 @@ export function AdminPage() {
     setUsageTotal(Number(usersRes.pagination?.total || 0));
     setUsagePage(nextPage);
     setUsagePageSize(nextPageSize);
+    setUsageDateRange(nextDateRange);
+    setUsageExcludeTestUsers(nextExcludeTestUsers);
+    setUsageLastUpdatedAt(new Date().toISOString());
     setUsageLoading(false);
   }
 
@@ -485,7 +554,9 @@ export function AdminPage() {
     setUsageStatus("");
     setUsagePlatform("");
     setUsagePageSize(20);
-    await runUsageFetch(1, { userType: "", status: "", platform: "", pageSize: 20 });
+    setUsageDateRange("7d");
+    setUsageExcludeTestUsers(true);
+    await runUsageFetch(1, { userType: "", status: "", platform: "", pageSize: 20, dateRange: "7d", excludeTestUsers: true });
   }
 
   async function openDetail(row: AdminLinkRow) {
@@ -588,38 +659,40 @@ export function AdminPage() {
               {loading ? <div>Loading links...</div> : null}
               {links.length ? (
                 <>
-                  <table className="wr-admin-table">
-                    <thead>
-                      <tr>
-                        <th>Canonical URL</th>
-                        <th>Platform</th>
-                        <th>Run Count</th>
-                        <th>Attempt Count</th>
-                        <th>Latest Status</th>
-                        <th>Accepted After</th>
-                        <th>Route</th>
-                        <th>Final Action</th>
-                        <th>Cache Reuse</th>
-                        <th>Last Seen</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {links.map((r) => (
-                        <tr key={r.submittedLinkId} onClick={() => openDetail(r)} className="wr-admin-row">
-                          <td className="wr-admin-url-cell" title={r.canonicalUrl}>{r.canonicalUrl}</td>
-                          <td>{r.platform || "-"}</td>
-                          <td>{formatInteger(r.runCount)}</td>
-                          <td>{formatInteger(r.attemptCount)}</td>
-                          <td>{renderBadge(r.latestStatus)}</td>
-                          <td>{renderBadge(r.latestAcceptedAfter)}</td>
-                          <td>{renderBadge(r.latestRoute)}</td>
-                          <td>{renderBadge(r.finalUserAction)}</td>
-                          <td className={r.cacheReuseCount > 0 ? "wr-admin-cache-positive" : ""}>{formatInteger(r.cacheReuseCount ?? 0)}</td>
-                          <td>{formatDateTime(r.lastSeenAt)}</td>
+                  <div className="wr-admin-table-wrap">
+                    <table className="wr-admin-table">
+                      <thead>
+                        <tr>
+                          <th>Canonical URL</th>
+                          <th>Platform</th>
+                          <th>Run Count</th>
+                          <th>Attempt Count</th>
+                          <th>Latest Status</th>
+                          <th>Accepted After</th>
+                          <th>Route</th>
+                          <th>Final Action</th>
+                          <th>Cache Reuse</th>
+                          <th>Last Seen</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {links.map((r) => (
+                          <tr key={r.submittedLinkId} onClick={() => openDetail(r)} className="wr-admin-row">
+                            <td className="wr-admin-url-cell" title={r.canonicalUrl}>{r.canonicalUrl}</td>
+                            <td>{r.platform || "-"}</td>
+                            <td>{formatInteger(r.runCount)}</td>
+                            <td>{formatInteger(r.attemptCount)}</td>
+                            <td>{renderBadge(r.latestStatus)}</td>
+                            <td>{renderBadge(r.latestAcceptedAfter)}</td>
+                            <td>{renderBadge(r.latestRoute)}</td>
+                            <td>{renderBadge(r.finalUserAction)}</td>
+                            <td className={r.cacheReuseCount > 0 ? "wr-admin-cache-positive" : ""}>{formatInteger(r.cacheReuseCount ?? 0)}</td>
+                            <td>{formatDateTime(r.lastSeenAt)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                   <div className="wr-admin-pager">
                     <button disabled={page <= 1} onClick={() => runFilterFetch(page - 1)}>Prev</button>
                     <span>Page {page} / {pages}</span>
@@ -640,20 +713,60 @@ export function AdminPage() {
             <section className="wr-admin-panel">
               <div className="wr-admin-panel-head">
                 <div>
+                  <h2>Customer filters</h2>
+                  <p>Filter usage metrics by time window and exclude internal/admin activity by default.</p>
+                </div>
+              </div>
+              <div className="wr-admin-customer-toolbar">
+                <div className="wr-admin-chip-group">
+                  {USAGE_RANGE_OPTIONS.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      className={`wr-admin-chip${usageDateRange === option.value ? " wr-admin-chip-active" : ""}`}
+                      onClick={() => void runUsageFetch(1, { dateRange: option.value })}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+                <label className="wr-admin-toggle">
+                  <input
+                    type="checkbox"
+                    checked={usageExcludeTestUsers}
+                    onChange={(e) => void runUsageFetch(1, { excludeTestUsers: e.target.checked })}
+                  />
+                  <span>Exclude admin/test users</span>
+                </label>
+                <button type="button" onClick={() => void runUsageFetch(1)}>
+                  Refresh
+                </button>
+                <div className="wr-admin-last-updated">
+                  Last updated: {formatDateTime(usageLastUpdatedAt)}
+                </div>
+              </div>
+            </section>
+            <section className="wr-admin-panel">
+              <div className="wr-admin-panel-head">
+                <div>
                   <h2>Customer summary</h2>
                   <p>Usage and save behavior based on the current customer activity dataset.</p>
                 </div>
               </div>
               <section className="wr-admin-overview">
                 {usageLoading && !usageOverview ? <div>Loading customer usage...</div> : null}
-                <div className="wr-admin-cards">
-                  {customerMetricCards.map((card) => (
-                    <div key={card.label} className={`wr-admin-card wr-admin-card-${card.tone}`}>
-                      <div className="wr-admin-card-value">{card.value}</div>
-                      <div className="wr-admin-card-label">{card.label}</div>
-                    </div>
-                  ))}
-                </div>
+                {usageOverview ? (
+                  <div className="wr-admin-cards">
+                    {customerMetricCards.map((card) => (
+                      <div key={card.label} className={`wr-admin-card wr-admin-card-${card.tone}`}>
+                        <div className="wr-admin-card-value">{card.value}</div>
+                        <div className="wr-admin-card-label">{card.label}</div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  renderEmptyState(usageError ? "Unable to load customer summary. Use Refresh to try again." : "No customer usage summary yet")
+                )}
               </section>
             </section>
 
@@ -664,14 +777,18 @@ export function AdminPage() {
                   <p>Simple user-experience signals from the existing admin usage APIs.</p>
                 </div>
               </div>
-              <div className="wr-admin-insights">
-                {customerInsightCards.map((card) => (
-                  <div key={card.title} className={`wr-admin-insight wr-admin-insight-${card.tone}`}>
-                    <div className="wr-admin-insight-title">{card.title}</div>
-                    <div className="wr-admin-insight-value">{card.value}</div>
-                  </div>
-                ))}
-              </div>
+              {usageOverview ? (
+                <div className="wr-admin-insights">
+                  {customerInsightCards.map((card) => (
+                    <div key={card.title} className={`wr-admin-insight wr-admin-insight-${card.tone}`}>
+                      <div className="wr-admin-insight-title">{card.title}</div>
+                      <div className="wr-admin-insight-value">{card.value}</div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                renderEmptyState(usageError ? "Insights will appear after the customer usage API responds." : "No customer insights yet")
+              )}
             </section>
 
             <section className="wr-admin-panel">
@@ -694,6 +811,9 @@ export function AdminPage() {
                   <option value="saved_place">Saved place</option>
                   <option value="repeat_user">Repeat user</option>
                   <option value="dropped_after_extraction">Dropped after extraction</option>
+                  <option value="opened_app">Opened app</option>
+                  <option value="logged_in">Logged in</option>
+                  <option value="no_link_submitted">No link submitted</option>
                 </select>
                 <input placeholder="Platform" value={usagePlatform} onChange={(e) => setUsagePlatform(e.target.value)} />
                 <select value={String(usagePageSize)} onChange={(e) => setUsagePageSize(Number(e.target.value))} className="wr-admin-select">
@@ -707,52 +827,59 @@ export function AdminPage() {
               {usageLoading ? <div>Loading users...</div> : null}
               {usageUsers.length ? (
                 <>
-                  <table className="wr-admin-table">
-                    <thead>
-                      <tr>
-                        <th>Masked Actor Key</th>
-                        <th>User Type</th>
-                        <th>First Seen</th>
-                        <th>Last Seen</th>
-                        <th>Runs</th>
-                        <th>Unique Links</th>
-                        <th>Saved Places</th>
-                        <th>Edited</th>
-                        <th>Reused</th>
-                        <th>Save Rate</th>
-                        <th>Status Badges</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {usageUsers.map((row) => (
-                        <tr key={row.actorKey} className="wr-admin-row-static">
-                          <td><strong>{row.actorKey}</strong></td>
-                          <td>{renderBadge(row.userType)}</td>
-                          <td>{formatDateTime(row.firstSeenAt)}</td>
-                          <td>{formatDateTime(row.lastSeenAt)}</td>
-                          <td>{formatInteger(row.runsCount)}</td>
-                          <td>{formatInteger(row.uniqueLinksSubmitted)}</td>
-                          <td>{formatInteger(row.savedPlacesCount)}</td>
-                          <td>{formatInteger(row.editedCount)}</td>
-                          <td className={row.reusedCount > 0 ? "wr-admin-cache-positive" : ""}>{formatInteger(row.reusedCount)}</td>
-                          <td>{formatPercent(row.saveRate)}</td>
-                          <td>
-                            <div className="wr-admin-inline-badges">
-                              {row.statusBadges.length ? row.statusBadges.map((badge) => (
-                                <span key={`${row.actorKey}-${badge}`}>{renderBadge(badge)}</span>
-                              )) : renderBadge("neutral")}
-                            </div>
-                          </td>
+                  <div className="wr-admin-table-wrap">
+                    <table className="wr-admin-table">
+                      <thead>
+                        <tr>
+                          <th>Masked Actor Key</th>
+                          <th>User Type</th>
+                          <th>First Seen</th>
+                          <th>Last Seen</th>
+                          <th>Runs</th>
+                          <th>Unique Links</th>
+                          <th>Saved Places</th>
+                          <th>Edited</th>
+                          <th>Reused</th>
+                          <th>Save Rate</th>
+                          <th>Status Badges</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {usageUsers.map((row) => (
+                          <tr key={row.actorKey} className="wr-admin-row-static">
+                            <td><strong>{row.actorKey}</strong></td>
+                            <td>{renderBadge(row.userType)}</td>
+                            <td>{formatDateTime(row.firstSeenAt)}</td>
+                            <td>{formatDateTime(row.lastSeenAt)}</td>
+                            <td>{formatInteger(row.runsCount)}</td>
+                            <td>{formatInteger(row.uniqueLinksSubmitted)}</td>
+                            <td>{formatInteger(row.savedPlacesCount)}</td>
+                            <td>{formatInteger(row.editedCount)}</td>
+                            <td className={row.reusedCount > 0 ? "wr-admin-cache-positive" : ""}>{formatInteger(row.reusedCount)}</td>
+                            <td>{formatPercent(row.saveRate)}</td>
+                            <td>
+                              <div className="wr-admin-inline-badges">
+                                {row.statusBadges.length ? row.statusBadges.map((badge) => (
+                                  <span key={`${row.actorKey}-${badge}`}>{renderBadge(badge)}</span>
+                                )) : renderBadge("neutral")}
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                   <div className="wr-admin-pager">
                     <button disabled={usagePage <= 1} onClick={() => runUsageFetch(usagePage - 1)}>Prev</button>
                     <span>Page {usagePage} / {usagePages}</span>
                     <button disabled={usagePage >= usagePages} onClick={() => runUsageFetch(usagePage + 1)}>Next</button>
                   </div>
                 </>
+              ) : usageError ? (
+                <div className="wr-admin-table-empty">
+                  <h3>Customer usage data could not be loaded</h3>
+                  <p>Use Refresh to retry, or adjust the current date or admin/test filters.</p>
+                </div>
               ) : (
                 <div className="wr-admin-table-empty">
                   <h3>No users match these filters</h3>

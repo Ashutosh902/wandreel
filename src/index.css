@@ -52,6 +52,15 @@ button:active,
     min-height: 100dvh;
     overflow: hidden;
   }
+
+  html.wr-admin-page-active,
+  body.wr-admin-page-active,
+  #root.wr-admin-page-active {
+    width: 100%;
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
 }
 
 @supports not (height: 100dvh) {
@@ -60,6 +69,13 @@ button:active,
     body,
     #root {
       height: 100vh;
+      min-height: 100vh;
+    }
+
+    html.wr-admin-page-active,
+    body.wr-admin-page-active,
+    #root.wr-admin-page-active {
+      height: auto;
       min-height: 100vh;
     }
   }

@@ -1,15 +1,17 @@
 .wr-admin-shell {
-  min-height: 100%;
+  min-height: 100dvh;
   background:
     radial-gradient(circle at top left, rgba(59, 130, 246, 0.08), transparent 28%),
     radial-gradient(circle at top right, rgba(16, 185, 129, 0.08), transparent 24%),
     linear-gradient(180deg, #f5f8fc 0%, #edf3f8 100%);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .wr-admin-root {
   max-width: 1280px;
   margin: 0 auto;
-  padding: 28px 20px 40px;
+  padding: 28px 20px 96px;
   font-family: system-ui, Arial, sans-serif;
   color: #18212f;
 }
@@ -243,6 +245,55 @@
   flex-wrap: wrap;
 }
 
+.wr-admin-customer-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+}
+
+.wr-admin-chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wr-admin-chip {
+  padding: 9px 13px;
+  border-radius: 999px;
+  border: 1px solid #cfdae6;
+  background: #fff;
+  color: #35506d;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.wr-admin-chip-active {
+  background: #1d4ed8;
+  color: #fff;
+  border-color: #1d4ed8;
+}
+
+.wr-admin-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.92rem;
+  color: #415467;
+}
+
+.wr-admin-toggle input {
+  width: 16px;
+  height: 16px;
+}
+
+.wr-admin-last-updated {
+  color: #627488;
+  font-size: 0.88rem;
+  margin-left: auto;
+}
+
 .wr-admin-filters input,
 .wr-admin-filters button,
 .wr-admin-select {
@@ -276,8 +327,15 @@
   border-color: #d3dfec !important;
 }
 
+.wr-admin-table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .wr-admin-table {
   width: 100%;
+  min-width: 920px;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 0.92rem;
@@ -376,7 +434,9 @@
   background: #f5f8fc;
   border-left: 1px solid #dce4ee;
   box-shadow: -16px 0 40px rgba(15, 23, 42, 0.16);
-  overflow: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   z-index: 20;
 }
 
@@ -543,5 +603,59 @@
   .wr-admin-url-cell,
   .wr-admin-source-url {
     max-width: 220px;
+  }
+
+  .wr-admin-last-updated {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 640px) {
+  .wr-admin-shell {
+    min-height: 100dvh;
+  }
+
+  .wr-admin-panel {
+    padding: 16px;
+  }
+
+  .wr-admin-cards {
+    grid-template-columns: 1fr;
+  }
+
+  .wr-admin-insights {
+    grid-template-columns: 1fr;
+  }
+
+  .wr-admin-filters input,
+  .wr-admin-select,
+  .wr-admin-filters button {
+    width: 100%;
+  }
+
+  .wr-admin-customer-toolbar {
+    align-items: stretch;
+  }
+
+  .wr-admin-chip-group {
+    width: 100%;
+  }
+
+  .wr-admin-chip {
+    flex: 1 1 calc(50% - 8px);
+    text-align: center;
+  }
+
+  .wr-admin-toggle {
+    width: 100%;
+  }
+
+  .wr-admin-pager {
+    flex-wrap: wrap;
+  }
+
+  .wr-admin-drawer-inner {
+    padding: 16px 14px 28px;
   }
 }

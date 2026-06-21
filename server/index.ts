@@ -2230,16 +2230,23 @@ app.get("/api/admin/observability/links/:submittedLinkId", requireAdmin, async (
 
 app.get("/api/admin/usage/overview", requireAdmin, async (req, res) => {
   try {
+    const normalizeDate = (value: unknown) => {
+      const normalized = String(value || "").trim();
+      return normalized && Number.isFinite(new Date(normalized).getTime()) ? normalized : null;
+    };
     const userTypeRaw = req.query?.userType ? String(req.query.userType).trim() : "";
     const userType = userTypeRaw === "logged_in" || userTypeRaw === "anonymous" ? userTypeRaw : null;
     const platform = req.query?.platform ? String(req.query.platform).trim() : "";
-    const from = req.query?.from ? String(req.query.from).trim() : "";
-    const to = req.query?.to ? String(req.query.to).trim() : "";
+    const from = normalizeDate(req.query?.from);
+    const to = normalizeDate(req.query?.to);
+    const excludeTestUsersRaw = req.query?.excludeTestUsers ? String(req.query.excludeTestUsers).trim().toLowerCase() : "";
+    const excludeTestUsers = excludeTestUsersRaw === "false" ? false : true;
     const result = await getAdminUsageOverview({
-      from: from || null,
-      to: to || null,
+      from,
+      to,
       platform: platform || null,
       userType,
+      excludeTestUsers,
     });
     return res.json({
       ok: true,
@@ -2284,6 +2291,10 @@ app.get("/api/admin/usage/overview", requireAdmin, async (req, res) => {
 
 app.get("/api/admin/usage/users", requireAdmin, async (req, res) => {
   try {
+    const normalizeDate = (value: unknown) => {
+      const normalized = String(value || "").trim();
+      return normalized && Number.isFinite(new Date(normalized).getTime()) ? normalized : null;
+    };
     const userTypeRaw = req.query?.userType ? String(req.query.userType).trim() : "";
     const statusRaw = req.query?.status ? String(req.query.status).trim() : "";
     const userType = userTypeRaw === "logged_in" || userTypeRaw === "anonymous" ? userTypeRaw : null;
@@ -2293,16 +2304,19 @@ app.get("/api/admin/usage/users", requireAdmin, async (req, res) => {
       ? statusRaw as "new" | "active" | "saved_place" | "repeat_user" | "dropped_after_extraction" | "opened_app" | "logged_in" | "no_link_submitted"
       : null;
     const platform = req.query?.platform ? String(req.query.platform).trim() : "";
-    const from = req.query?.from ? String(req.query.from).trim() : "";
-    const to = req.query?.to ? String(req.query.to).trim() : "";
+    const from = normalizeDate(req.query?.from);
+    const to = normalizeDate(req.query?.to);
     const q = req.query?.q ? String(req.query.q).trim() : "";
+    const excludeTestUsersRaw = req.query?.excludeTestUsers ? String(req.query.excludeTestUsers).trim().toLowerCase() : "";
+    const excludeTestUsers = excludeTestUsersRaw === "false" ? false : true;
     const result = await getAdminUsageUsers({
-      from: from || null,
-      to: to || null,
+      from,
+      to,
       platform: platform || null,
       userType,
       status,
       q: q || null,
+      excludeTestUsers,
       page: req.query?.page ? Number(req.query.page) : undefined,
       pageSize: req.query?.pageSize ? Number(req.query.pageSize) : undefined,
     });

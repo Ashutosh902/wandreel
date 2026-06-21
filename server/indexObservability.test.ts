@@ -1366,7 +1366,7 @@ test("admin usage overview returns aggregated response shape for admin users", a
   const port = typeof address === "object" && address ? address.port : 0;
 
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/api/admin/usage/overview?from=2026-06-01&to=2026-06-21&platform=instagram&userType=logged_in`, {
+    const response = await fetch(`http://127.0.0.1:${port}/api/admin/usage/overview?from=2026-06-01&to=2026-06-21&platform=instagram&userType=logged_in&excludeTestUsers=true`, {
       headers: { Cookie: "wr_session=test-token" },
     });
     const body = await response.json();
@@ -1435,7 +1435,7 @@ test("admin usage users returns paginated masked rows for admin users", async ()
   const port = typeof address === "object" && address ? address.port : 0;
 
   try {
-    const response = await fetch(`http://127.0.0.1:${port}/api/admin/usage/users?from=2026-06-01&to=2026-06-21&userType=logged_in&status=repeat_user&q=usr_&page=1&pageSize=20`, {
+    const response = await fetch(`http://127.0.0.1:${port}/api/admin/usage/users?from=2026-06-01&to=2026-06-21&userType=logged_in&status=repeat_user&q=usr_&page=1&pageSize=20&excludeTestUsers=false`, {
       headers: { Cookie: "wr_session=test-token" },
     });
     const body = await response.json();
@@ -1513,14 +1513,14 @@ test("admin usage routes ignore blank and invalid optional filters safely", asyn
   const port = typeof address === "object" && address ? address.port : 0;
 
   try {
-    const overviewResponse = await fetch(`http://127.0.0.1:${port}/api/admin/usage/overview?userType=&platform=%20%20&from=&to=`, {
+    const overviewResponse = await fetch(`http://127.0.0.1:${port}/api/admin/usage/overview?userType=&platform=%20%20&from=not-a-date&to=&excludeTestUsers=maybe`, {
       headers: { Cookie: "wr_session=test-token" },
     });
     const overviewBody = await overviewResponse.json();
     assert.equal(overviewResponse.status, 200);
     assert.equal(overviewBody.ok, true);
 
-    const usersResponse = await fetch(`http://127.0.0.1:${port}/api/admin/usage/users?page=1&pageSize=20&userType=bad&status=bad&q=%20%20`, {
+    const usersResponse = await fetch(`http://127.0.0.1:${port}/api/admin/usage/users?page=1&pageSize=20&userType=bad&status=bad&q=%20%20&from=bad-date&excludeTestUsers=bad`, {
       headers: { Cookie: "wr_session=test-token" },
     });
     const usersBody = await usersResponse.json();

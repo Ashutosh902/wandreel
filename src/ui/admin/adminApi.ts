@@ -9,7 +9,7 @@ async function safeJson(res: Response) {
   }
 }
 
-function buildQuery(params: Record<string, string | number | undefined>) {
+function buildQuery(params: Record<string, string | number | boolean | undefined>) {
   const query = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
     if (value === undefined || value === null) return;
@@ -187,6 +187,9 @@ export type AdminUsageOverviewResponse = AdminApiBase & {
     loggedInUsers?: number;
     anonymousUsers?: number;
     uniqueUsers?: number;
+    appOpenedUsers?: number;
+    loginSeenUsers?: number;
+    loggedInButNoRunUsers?: number;
     newUsers?: number;
     returningUsers?: number;
     repeatUsers?: number;
@@ -217,10 +220,14 @@ export type AdminUsageUserRow = {
   savedPlacesCount: number;
   editedCount: number;
   reusedCount: number;
+  appOpenedCount: number;
+  loginSeenCount: number;
+  hasSubmittedLink: boolean;
+  hasSavedPlace: boolean;
   saveRate: number;
   linksPerUser: number;
   savesPerUser: number;
-  statusBadges: Array<"new" | "active" | "saved_place" | "repeat_user" | "dropped_after_extraction">;
+  statusBadges: Array<"new" | "active" | "saved_place" | "repeat_user" | "dropped_after_extraction" | "opened_app" | "logged_in" | "no_link_submitted">;
 };
 
 export type AdminUsageUsersResponse = AdminApiBase & {
@@ -233,7 +240,7 @@ export type AdminUsageUsersResponse = AdminApiBase & {
   };
 };
 
-export async function fetchAdminOverview(params: Record<string, string | number | undefined> = {}): Promise<AdminOverviewResponse> {
+export async function fetchAdminOverview(params: Record<string, string | number | boolean | undefined> = {}): Promise<AdminOverviewResponse> {
   const query = buildQuery(params);
   const querySuffix = query.toString() ? `?${query.toString()}` : "";
   const res = await fetch(`${API_BASE}/api/admin/observability/overview${querySuffix}`, { credentials: "include" });
@@ -241,7 +248,7 @@ export async function fetchAdminOverview(params: Record<string, string | number 
   return { ok: res.ok, status: res.status, ...body };
 }
 
-export async function fetchAdminLinks(params: Record<string, string | number | undefined> = {}): Promise<AdminLinksResponse> {
+export async function fetchAdminLinks(params: Record<string, string | number | boolean | undefined> = {}): Promise<AdminLinksResponse> {
   const query = buildQuery(params);
   const querySuffix = query.toString() ? `?${query.toString()}` : "";
   const res = await fetch(`${API_BASE}/api/admin/observability/links${querySuffix}`, { credentials: "include" });
@@ -249,7 +256,7 @@ export async function fetchAdminLinks(params: Record<string, string | number | u
   return { ok: res.ok, status: res.status, ...body };
 }
 
-export async function fetchAllAdminLinks(params: Record<string, string | number | undefined> = {}): Promise<AdminLinksResponse> {
+export async function fetchAllAdminLinks(params: Record<string, string | number | boolean | undefined> = {}): Promise<AdminLinksResponse> {
   const firstPage = await fetchAdminLinks({ ...params, page: 1, pageSize: 200 });
   if (!firstPage.ok) return firstPage;
 
@@ -283,7 +290,7 @@ export async function fetchAdminLinkDetail(submittedLinkId: string): Promise<Adm
   return { ok: res.ok, status: res.status, ...body };
 }
 
-export async function fetchAdminUsageOverview(params: Record<string, string | number | undefined> = {}): Promise<AdminUsageOverviewResponse> {
+export async function fetchAdminUsageOverview(params: Record<string, string | number | boolean | undefined> = {}): Promise<AdminUsageOverviewResponse> {
   const query = buildQuery(params);
   const querySuffix = query.toString() ? `?${query.toString()}` : "";
   const res = await fetch(`${API_BASE}/api/admin/usage/overview${querySuffix}`, { credentials: "include" });
@@ -291,7 +298,7 @@ export async function fetchAdminUsageOverview(params: Record<string, string | nu
   return { ok: res.ok, status: res.status, ...body };
 }
 
-export async function fetchAdminUsageUsers(params: Record<string, string | number | undefined> = {}): Promise<AdminUsageUsersResponse> {
+export async function fetchAdminUsageUsers(params: Record<string, string | number | boolean | undefined> = {}): Promise<AdminUsageUsersResponse> {
   const query = buildQuery(params);
   const querySuffix = query.toString() ? `?${query.toString()}` : "";
   const res = await fetch(`${API_BASE}/api/admin/usage/users${querySuffix}`, { credentials: "include" });

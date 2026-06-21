@@ -810,6 +810,68 @@ test("getAdminUsageOverview returns masked aggregate customer usage metrics", as
   assert.deepEqual(mock.calls[0]?.params, ["2026-06-01", "2026-06-21", "instagram", null]);
 });
 
+test("getAdminUsageOverview excludes admin and test actors by default", async () => {
+  process.env.ADMIN_EMAILS = "admin@example.com";
+  const mock = createDatabaseMock([[
+    {
+      actor_key: "u:admin-1",
+      user_type: "logged_in",
+      actor_email: "admin@example.com",
+      first_seen_at: "2026-06-05T10:00:00Z",
+      last_seen_at: "2026-06-21T10:00:00Z",
+      runs_count: "4",
+      unique_links_submitted: "2",
+      saved_places_count: "2",
+      edited_count: "0",
+      reused_count: "0",
+      app_opened_count: "1",
+      login_seen_count: "1",
+    },
+    {
+      actor_key: "u:user-1",
+      user_type: "logged_in",
+      actor_email: "customer@wandreel.com",
+      first_seen_at: "2026-06-10T10:00:00Z",
+      last_seen_at: "2026-06-21T11:00:00Z",
+      runs_count: "1",
+      unique_links_submitted: "1",
+      saved_places_count: "1",
+      edited_count: "0",
+      reused_count: "0",
+      app_opened_count: "1",
+      login_seen_count: "1",
+    },
+    {
+      actor_key: "a:test-anon-1",
+      user_type: "anonymous",
+      actor_email: null,
+      first_seen_at: "2026-06-10T09:00:00Z",
+      last_seen_at: "2026-06-10T09:30:00Z",
+      runs_count: "1",
+      unique_links_submitted: "1",
+      saved_places_count: "0",
+      edited_count: "0",
+      reused_count: "0",
+      app_opened_count: "1",
+      login_seen_count: "0",
+    },
+  ]]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+  });
+
+  const result = await getAdminUsageOverview({
+    from: "2026-06-01",
+    to: "2026-06-21",
+  });
+
+  assert.equal(result.uniqueUsers, 1);
+  assert.equal(result.loggedInUsers, 1);
+  assert.equal(result.anonymousUsers, 0);
+  assert.equal(result.totalSavedPlaces, 1);
+});
+
 test("getAdminUsageUsers paginates, filters, and masks actor keys", async () => {
   const mock = createDatabaseMock([[
     {
@@ -928,4 +990,51 @@ test("getAdminUsageUsers includes app event actors with no runs", async () => {
   assert.ok(result.rows[0]?.statusBadges.includes("opened_app"));
   assert.ok(result.rows[0]?.statusBadges.includes("logged_in"));
   assert.ok(result.rows[0]?.statusBadges.includes("no_link_submitted"));
+});
+
+test("getAdminUsageUsers can include admin and test actors when exclusion is disabled", async () => {
+  process.env.ADMIN_EMAILS = "admin@example.com";
+  const mock = createDatabaseMock([[
+    {
+      actor_key: "u:admin-1",
+      user_type: "logged_in",
+      actor_email: "admin@example.com",
+      first_seen_at: "2026-06-05T10:00:00Z",
+      last_seen_at: "2026-06-21T10:00:00Z",
+      runs_count: "2",
+      unique_links_submitted: "1",
+      saved_places_count: "1",
+      edited_count: "0",
+      reused_count: "0",
+      app_opened_count: "1",
+      login_seen_count: "1",
+    },
+    {
+      actor_key: "a:test-anon-1",
+      user_type: "anonymous",
+      actor_email: null,
+      first_seen_at: "2026-06-05T09:00:00Z",
+      last_seen_at: "2026-06-05T09:30:00Z",
+      runs_count: "0",
+      unique_links_submitted: "0",
+      saved_places_count: "0",
+      edited_count: "0",
+      reused_count: "0",
+      app_opened_count: "1",
+      login_seen_count: "0",
+    },
+  ]]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+  });
+
+  const result = await getAdminUsageUsers({
+    excludeTestUsers: false,
+    page: 1,
+    pageSize: 10,
+  });
+
+  assert.equal(result.total, 2);
+  assert.ok(result.rows.every((row) => !JSON.stringify(row).includes("admin@example.com")));
 });

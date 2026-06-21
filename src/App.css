@@ -4,6 +4,11 @@
   overflow: hidden;
 }
 
+.app-shell-root.wr-admin-page-active {
+  min-height: 100dvh;
+  overflow: visible;
+}
+
 .splash-layer {
   position: fixed;
   inset: 0;
@@ -15,6 +20,9 @@
 .splash-layer.is-exit { opacity: 0; transform: translateY(-8px); pointer-events: none; }
 
 .main-layer { min-height: 100vh; transition: opacity 220ms ease; }
+.app-shell-root.wr-admin-page-active .main-layer {
+  min-height: 100dvh;
+}
 .main-layer.is-hidden { opacity: 0; }
 .main-layer.is-visible { opacity: 1; }
 

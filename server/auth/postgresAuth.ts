@@ -320,6 +320,7 @@ export type AdminObservabilityLinksResult = {
 type AdminUsageActorRow = {
   actor_key: string;
   user_type: "logged_in" | "anonymous";
+  actor_email?: string | null;
   first_seen_at: string;
   last_seen_at: string;
   runs_count: number | string | null;
@@ -336,6 +337,7 @@ export type AdminUsageInput = {
   to?: string | null;
   platform?: string | null;
   userType?: "logged_in" | "anonymous" | null;
+  excludeTestUsers?: boolean | null;
 };
 
 export type AdminUsageOverviewResult = {
@@ -384,6 +386,11 @@ export type AdminUsageUserRowResult = {
   linksPerUser: number;
   savesPerUser: number;
   statusBadges: Array<"new" | "active" | "saved_place" | "repeat_user" | "dropped_after_extraction" | "opened_app" | "logged_in" | "no_link_submitted">;
+};
+
+type AdminUsageActorInternalRow = AdminUsageUserRowResult & {
+  actorKeyRaw: string;
+  actorEmail: string | null;
 };
 
 export type AdminUsageUsersResult = {
@@ -1952,6 +1959,12 @@ function normalizeNumericResult(value: number | string | null | undefined): numb
   return Number.isFinite(numeric) ? numeric : 0;
 }
 
+function normalizeOptionalDateInput(value: unknown): string | null {
+  const normalized = String(value || "").trim();
+  if (!normalized) return null;
+  return Number.isFinite(new Date(normalized).getTime()) ? normalized : null;
+}
+
 function maskActorKey(actorKey: string, userType: "logged_in" | "anonymous") {
   const digest = hashValue(actorKey).slice(0, 8);
   return `${userType === "logged_in" ? "usr" : "anon"}_${digest}`;
@@ -2010,10 +2023,46 @@ function isMissingAppUsageEventsTableError(error: unknown) {
   return code === "42P01" || /app_usage_events/i.test(message);
 }
 
+function normalizeEmailForFiltering(email: string | null | undefined) {
+  return String(email || "").trim().toLowerCase();
+}
+
+function isLikelyUsageTestEmail(email: string | null | undefined) {
+  const normalized = normalizeEmailForFiltering(email);
+  if (!normalized) return false;
+  const [localPart = "", domain = ""] = normalized.split("@");
+  return (
+    domain === "example.com" ||
+    /(^|[+._-])(test|qa|demo|seed|local)([+._-]|$)/.test(localPart) ||
+    /^(test|qa|demo|seed|local)/.test(localPart)
+  );
+}
+
+function isLikelyUsageTestActorKey(actorKey: string, userType: "logged_in" | "anonymous") {
+  if (userType !== "anonymous") return false;
+  const normalized = actorKey.toLowerCase();
+  return ["test", "qa", "demo", "seed", "local", "admin"].some((token) => normalized.includes(token));
+}
+
+function shouldExcludeUsageActor(row: AdminUsageActorInternalRow, excludeTestUsers: boolean) {
+  if (!excludeTestUsers) return false;
+  const adminEmails = String(process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  const normalizedEmail = normalizeEmailForFiltering(row.actorEmail);
+  if (normalizedEmail && (adminEmails.includes(normalizedEmail) || isLikelyUsageTestEmail(normalizedEmail))) {
+    return true;
+  }
+  return isLikelyUsageTestActorKey(row.actorKeyRaw, row.userType);
+}
+
 function mapAdminUsageActorRows(rows: AdminUsageActorRow[], from: string | null, to: string | null) {
   return rows.map((row) => {
-    const mapped: AdminUsageUserRowResult = {
+    const mapped: AdminUsageActorInternalRow = {
       actorKey: maskActorKey(row.actor_key, row.user_type),
+      actorKeyRaw: row.actor_key,
+      actorEmail: row.actor_email ? String(row.actor_email) : null,
       userType: row.user_type,
       firstSeenAt: row.first_seen_at,
       lastSeenAt: row.last_seen_at,
@@ -2040,11 +2089,12 @@ function mapAdminUsageActorRows(rows: AdminUsageActorRow[], from: string | null,
   });
 }
 
-async function getAdminUsageActorRows(input: AdminUsageInput): Promise<AdminUsageUserRowResult[]> {
-  const from = input.from ? String(input.from).trim() : null;
-  const to = input.to ? String(input.to).trim() : null;
+async function getAdminUsageActorRows(input: AdminUsageInput): Promise<AdminUsageActorInternalRow[]> {
+  const from = normalizeOptionalDateInput(input.from);
+  const to = normalizeOptionalDateInput(input.to);
   const platform = input.platform ? String(input.platform).trim() : null;
   const userType = input.userType ? String(input.userType).trim() : null;
+  const excludeTestUsers = input.excludeTestUsers !== false;
 
   try {
     const result = await database.query<AdminUsageActorRow>(
@@ -2173,10 +2223,21 @@ async function getAdminUsageActorRows(input: AdminUsageInput): Promise<AdminUsag
           ($1::timestamptz is null or usp.created_at >= $1::timestamptz)
           and ($2::timestamptz is null or usp.created_at < ($2::timestamptz + interval '1 day'))
         group by 1
+      ),
+      actor_profile as (
+        select
+          scope.actor_key,
+          max(u.email) as actor_email
+        from actor_scope scope
+        left join users u
+          on scope.user_type = 'logged_in'
+          and scope.actor_key = 'u:' || u.id::text
+        group by scope.actor_key
       )
       select
         scope.actor_key,
         scope.user_type,
+        profile.actor_email,
         coalesce(
           least(rr.first_seen_at, aer.first_seen_at),
           rr.first_seen_at,
@@ -2199,12 +2260,13 @@ async function getAdminUsageActorRows(input: AdminUsageInput): Promise<AdminUsag
       left join saved_place_rollup spr on spr.actor_key = scope.actor_key
       left join reuse_rollup reuse on reuse.actor_key = scope.actor_key
       left join app_event_rollup aer on aer.actor_key = scope.actor_key
+      left join actor_profile profile on profile.actor_key = scope.actor_key
       order by last_seen_at desc nulls last, scope.actor_key asc
-      `,
+    `,
       [from, to, platform, userType],
     );
 
-    return mapAdminUsageActorRows(result.rows, from, to);
+    return mapAdminUsageActorRows(result.rows, from, to).filter((row) => !shouldExcludeUsageActor(row, excludeTestUsers));
   } catch (error) {
     if (!isMissingAppUsageEventsTableError(error)) {
       throw error;
@@ -2268,10 +2330,21 @@ async function getAdminUsageActorRows(input: AdminUsageInput): Promise<AdminUsag
             ($1::timestamptz is null or usp.created_at >= $1::timestamptz)
             and ($2::timestamptz is null or usp.created_at < ($2::timestamptz + interval '1 day'))
           group by 1
+        ),
+        actor_profile as (
+          select
+            rr.actor_key,
+            max(u.email) as actor_email
+          from run_rollup rr
+          left join users u
+            on rr.user_type = 'logged_in'
+            and rr.actor_key = 'u:' || u.id::text
+          group by rr.actor_key
         )
         select
           rr.actor_key,
           rr.user_type,
+          profile.actor_email,
           rr.first_seen_at,
           greatest(
             coalesce(rr.last_seen_at, spr.last_saved_at),
@@ -2287,12 +2360,13 @@ async function getAdminUsageActorRows(input: AdminUsageInput): Promise<AdminUsag
         from run_rollup rr
         left join saved_place_rollup spr on spr.actor_key = rr.actor_key
         left join reuse_rollup reuse on reuse.actor_key = rr.actor_key
+        left join actor_profile profile on profile.actor_key = rr.actor_key
         order by last_seen_at desc nulls last, rr.actor_key asc
       `,
       [from, to, platform, userType],
     );
 
-    return mapAdminUsageActorRows(fallbackResult.rows, from, to);
+    return mapAdminUsageActorRows(fallbackResult.rows, from, to).filter((row) => !shouldExcludeUsageActor(row, excludeTestUsers));
   }
 }
 
@@ -2648,8 +2722,8 @@ export async function getAdminObservabilityLinks(
 export async function getAdminUsageOverview(
   input: AdminUsageInput,
 ): Promise<AdminUsageOverviewResult> {
-  const from = input.from ? String(input.from).trim() : null;
-  const to = input.to ? String(input.to).trim() : null;
+  const from = normalizeOptionalDateInput(input.from);
+  const to = normalizeOptionalDateInput(input.to);
   const rows = await getAdminUsageActorRows(input);
   const loggedInUsers = rows.filter((row) => row.userType === "logged_in").length;
   const anonymousUsers = rows.filter((row) => row.userType === "anonymous").length;
@@ -2724,7 +2798,7 @@ export async function getAdminUsageUsers(
   const totalPages = Math.ceil(total / pageSize);
 
   return {
-    rows: filteredRows.slice(offset, offset + pageSize),
+    rows: filteredRows.slice(offset, offset + pageSize).map(({ actorKeyRaw: _actorKeyRaw, actorEmail: _actorEmail, ...row }) => row),
     total,
     page,
     pageSize,
