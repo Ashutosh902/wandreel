@@ -167,8 +167,64 @@ export type AdminLinkDetailResponse = AdminApiBase & {
   runs?: AdminLinkDetailRun[];
 };
 
-export async function fetchAdminOverview(): Promise<AdminOverviewResponse> {
-  const res = await fetch(`${API_BASE}/api/admin/observability/overview`, { credentials: "include" });
+export type AdminUsageOverviewResponse = AdminApiBase & {
+  summary?: {
+    loggedInUsers?: number;
+    anonymousUsers?: number;
+    uniqueUsers?: number;
+    newUsers?: number;
+    returningUsers?: number;
+    repeatUsers?: number;
+    usersSubmittedAtLeastOneLink?: number;
+    usersSavedAtLeastOnePlace?: number;
+    usersWithTwoPlusSavedPlaces?: number;
+    usersSubmittedButDidNotSave?: number;
+    totalSavedPlaces?: number;
+  };
+  rates?: {
+    savesPerUser?: number;
+    linksPerUser?: number;
+    saveRatePerUser?: number;
+  };
+  activity?: {
+    lastActiveAt?: string | null;
+  };
+  definitions?: Record<string, string>;
+};
+
+export type AdminUsageUserRow = {
+  actorKey: string;
+  userType: "logged_in" | "anonymous";
+  firstSeenAt: string;
+  lastSeenAt: string;
+  runsCount: number;
+  uniqueLinksSubmitted: number;
+  savedPlacesCount: number;
+  editedCount: number;
+  reusedCount: number;
+  saveRate: number;
+  linksPerUser: number;
+  savesPerUser: number;
+  statusBadges: Array<"new" | "active" | "saved_place" | "repeat_user" | "dropped_after_extraction">;
+};
+
+export type AdminUsageUsersResponse = AdminApiBase & {
+  rows?: AdminUsageUserRow[];
+  pagination?: {
+    total?: number;
+    page?: number;
+    pageSize?: number;
+    totalPages?: number;
+  };
+};
+
+export async function fetchAdminOverview(params: Record<string, string | number | undefined> = {}): Promise<AdminOverviewResponse> {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && String(v) !== "") query.set(k, String(v));
+  });
+  const querySuffix = query.toString() ? `?${query.toString()}` : "";
+  const res = await fetch(`${API_BASE}/api/admin/observability/overview${querySuffix}`, { credentials: "include" });
   const body = await safeJson(res);
   return { ok: res.ok, status: res.status, ...body };
 }
@@ -183,10 +239,58 @@ export async function fetchAdminLinks(params: Record<string, string | number | u
   return { ok: res.ok, status: res.status, ...body };
 }
 
+export async function fetchAllAdminLinks(params: Record<string, string | number | undefined> = {}): Promise<AdminLinksResponse> {
+  const firstPage = await fetchAdminLinks({ ...params, page: 1, pageSize: 200 });
+  if (!firstPage.ok) return firstPage;
+
+  const rows = [...(firstPage.rows || [])];
+  const totalPages = Number(firstPage.pagination?.totalPages || 1);
+
+  for (let page = 2; page <= totalPages; page += 1) {
+    const nextPage = await fetchAdminLinks({ ...params, page, pageSize: 200 });
+    if (!nextPage.ok) return nextPage;
+    rows.push(...(nextPage.rows || []));
+  }
+
+  return {
+    ...firstPage,
+    rows,
+    pagination: {
+      ...firstPage.pagination,
+      total: rows.length,
+      page: 1,
+      pageSize: rows.length,
+      totalPages,
+    },
+  };
+}
+
 export async function fetchAdminLinkDetail(submittedLinkId: string): Promise<AdminLinkDetailResponse> {
   const res = await fetch(`${API_BASE}/api/admin/observability/links/${encodeURIComponent(submittedLinkId)}?includeRaw=false`, {
     credentials: "include",
   });
+  const body = await safeJson(res);
+  return { ok: res.ok, status: res.status, ...body };
+}
+
+export async function fetchAdminUsageOverview(params: Record<string, string | number | undefined> = {}): Promise<AdminUsageOverviewResponse> {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && String(v) !== "") query.set(k, String(v));
+  });
+  const querySuffix = query.toString() ? `?${query.toString()}` : "";
+  const res = await fetch(`${API_BASE}/api/admin/usage/overview${querySuffix}`, { credentials: "include" });
+  const body = await safeJson(res);
+  return { ok: res.ok, status: res.status, ...body };
+}
+
+export async function fetchAdminUsageUsers(params: Record<string, string | number | undefined> = {}): Promise<AdminUsageUsersResponse> {
+  const query = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v !== undefined && v !== null && String(v) !== "") query.set(k, String(v));
+  });
+  const querySuffix = query.toString() ? `?${query.toString()}` : "";
+  const res = await fetch(`${API_BASE}/api/admin/usage/users${querySuffix}`, { credentials: "include" });
   const body = await safeJson(res);
   return { ok: res.ok, status: res.status, ...body };
 }
