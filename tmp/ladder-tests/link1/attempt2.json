@@ -1,0 +1,445 @@
+﻿{
+    "ok":  true,
+    "mode":  "deep",
+    "metadata":  {
+                     "sourceUrl":  "https://www.instagram.com/reels/DXWyRTOD-GW/",
+                     "canonicalUrl":  "https://www.instagram.com/reels/DXWyRTOD-GW",
+                     "platform":  "instagram",
+                     "title":  "Untitled",
+                     "description":  "Bengaluru\u0027s latest rooftop restaurant 🍂🤎\n\n📍 Beige, Marathahalli @beigebangalore\n\nA desert oasis themed vibe in Bangalore for the first time, this is a unique experience, stunning from the moment you walk in.\n\n(valentines day idea, date spots in bangalore, bangalore, Marathahalli, explore, rooftop, date ideas, aesthetic cafe, Aesthetic cafes in bangalore, brewery, new launch, love, pretty, date night)\n.\n.\n#viral #reels #trending #restaurant #view",
+                     "siteName":  "Instagram",
+                     "imageUrl":  "https://instagram.fixr3-3.fna.fbcdn.net/v/t51.82787-15/670952788_18372011317204166_6819129703947106437_n.jpg?stp=dst-jpg_e15_tt6\u0026_nc_ht=instagram.fixr3-3.fna.fbcdn.net\u0026_nc_cat=102\u0026_nc_oc=Q6cZ2gG1xWsXLr-PlVABo_j3Fa0BRO-qQLinLdDjh4zN6XsasSIfXOyO6A87kywAX4AdfhqG3fvtHYhAqa33kzaP_-QF\u0026_nc_ohc=tp-DUh9bvnMQ7kNvwHTh6D1\u0026_nc_gid=J0NAeZZamYYHEJ6U90tIHQ\u0026edm=ANTKIIoBAAAA\u0026ccb=7-5\u0026oh=00_Af8iYVlS0NDc3P3Q5VLkcd4hA2lgtvjdgIDua_eVmNbe6g\u0026oe=6A342046\u0026_nc_sid=d885a2",
+                     "fetchedAtIso":  "2026-06-14T07:05:20.931Z",
+                     "provider":  "instagram_script",
+                     "commentEvidence":  {
+                                             "attempted":  true,
+                                             "timedOut":  true,
+                                             "pinnedComment":  null,
+                                             "topComments":  [
+
+                                                             ],
+                                             "provider":  "instagram_script",
+                                             "reason":  "timeout"
+                                         }
+                 },
+    "transcript":  {
+                       "attempted":  true,
+                       "used":  true,
+                       "source":  "whisper",
+                       "text":  "Don\u0027t ever come to beach because if you will come here, the other places will disappoint you. Not so many people know about this place. So nice, no hype, just flavors that makes you stay longer.",
+                       "reason":  null
+                   },
+    "ocr":  {
+                "attempted":  true,
+                "used":  true,
+                "text":  "FLAVORS\nNEXT PL\nNEXT",
+                "reason":  null
+            },
+    "visualFallback":  {
+                           "attempted":  false,
+                           "triggered":  false,
+                           "reason":  "not_attempted",
+                           "provider":  "shared_visual_fallback",
+                           "confidence":  "low",
+                           "needsReview":  true,
+                           "screenshots":  [
+
+                                           ],
+                           "textQueries":  [
+
+                                           ],
+                           "visualQueries":  [
+
+                                             ],
+                           "candidates":  [
+
+                                          ],
+                           "selectedCandidate":  null,
+                           "summaryText":  ""
+                       },
+    "attemptInfo":  {
+                        "attemptNumber":  2,
+                        "triggerType":  "retry"
+                    },
+    "source":  "https://www.instagram.com/reels/DXWyRTOD-GW/",
+    "platform":  "instagram",
+    "canonicalUrl":  "https://www.instagram.com/reels/DXWyRTOD-GW",
+    "stageStatus":  {
+                        "basicMetadata":  "success",
+                        "caption":  "success",
+                        "transcript":  "success",
+                        "ocr":  "success",
+                        "visualFallback":  "partial"
+                    },
+    "stages":  {
+                   "basicMetadata":  {
+                                         "status":  "success",
+                                         "provider":  "instagram_script",
+                                         "reason":  null,
+                                         "chars":  461
+                                     },
+                   "caption":  {
+                                   "status":  "success",
+                                   "provider":  "instagram_script",
+                                   "reason":  null,
+                                   "chars":  452
+                               },
+                   "transcript":  {
+                                      "status":  "success",
+                                      "provider":  "whisper",
+                                      "reason":  "not_attempted",
+                                      "chars":  194
+                                  },
+                   "ocr":  {
+                               "status":  "success",
+                               "provider":  "frame_ocr",
+                               "reason":  "not_attempted",
+                               "chars":  20
+                           },
+                   "visualFallback":  {
+                                          "status":  "partial",
+                                          "provider":  "shared_visual_fallback",
+                                          "reason":  "not_attempted",
+                                          "chars":  0
+                                      }
+               },
+    "stageTimingsMs":  {
+                           "basicMetadata":  3032,
+                           "caption":  0,
+                           "transcript":  13699,
+                           "ocr":  28198,
+                           "visualFallback":  0
+                       },
+    "stageFailures":  {
+                          "visualFallback":  "not_attempted"
+                      },
+    "combinedTextRaw":  "Untitled\n\nBengaluru\u0027s latest rooftop restaurant 🍂🤎\n\n📍 Beige, Marathahalli @beigebangalore\n\nA desert oasis themed vibe in Bangalore for the first time, this is a unique experience, stunning from the moment you walk in.\n\n(valentines day idea, date spots in bangalore, bangalore, Marathahalli, explore, rooftop, date ideas, aesthetic cafe, Aesthetic cafes in bangalore, brewery, new launch, love, pretty, date night)\n.\n.\n#viral #reels #trending #restaurant #view\n\nDon\u0027t ever come to beach because if you will come here, the other places will disappoint you. Not so many people know about this place. So nice, no hype, just flavors that makes you stay longer.\n\nFLAVORS\nNEXT PL\nNEXT",
+    "combinedTextClean":  "Untitled Bengaluru\u0027s latest rooftop restaurant 🍂🤎 📍 Beige, Marathahalli @beigebangalore A desert oasis themed vibe in Bangalore for the first time, this is a unique experience, stunning from the moment you walk in. (valentines day idea, date spots in bangalore, bangalore, Marathahalli, explore, rooftop, date ideas, aesthetic cafe, Aesthetic cafes in bangalore, brewery, new launch, love, pretty, date night) Don\u0027t ever come to beach because if you will come here, the other places will disappoint you. Not so many people know about this place. So nice, no hype, just flavors that makes you stay longer. FLAVORS NEXT PL NEXT\n\n#viral #reels #trending #restaurant #view",
+    "cleanupStats":  {
+                         "rawChars":  680,
+                         "cleanChars":  671,
+                         "removedChars":  9,
+                         "droppedLines":  0,
+                         "dedupedLines":  0,
+                         "dedupedHashtags":  0
+                     },
+    "perf":  {
+                 "totalMs":  44931,
+                 "metadataMs":  3032,
+                 "transcriptMs":  13699,
+                 "ocrMs":  28198,
+                 "visualFallbackMs":  0
+             },
+    "sla":  {
+                "totalMs":  44931,
+                "metadataMs":  3032,
+                "transcriptMs":  13699,
+                "ocrMs":  28198,
+                "visualFallbackMs":  0
+            },
+    "cache":  {
+                  "hit":  false,
+                  "key":  "deep:a2:https://www.instagram.com/reels/DXWyRTOD-GW"
+              },
+    "debug":  {
+                  "orchestration":  {
+                                        "attemptNumber":  2,
+                                        "triggerType":  "retry",
+                                        "sourcePlatform":  "instagram",
+                                        "route":  "retry_1_long",
+                                        "transcriptReused":  false,
+                                        "ocrFrameCount":  3,
+                                        "visualFrameCount":  0,
+                                        "decisions":  [
+                                                          {
+                                                              "stage":  "description",
+                                                              "ran":  true,
+                                                              "reason":  "retry_forced_reanalysis"
+                                                          },
+                                                          {
+                                                              "stage":  "transcript",
+                                                              "ran":  true,
+                                                              "reason":  "retry_1_long_lane_transcript"
+                                                          },
+                                                          {
+                                                              "stage":  "ocr",
+                                                              "ran":  true,
+                                                              "reason":  "retry_1_long_lane_frame_ocr"
+                                                          },
+                                                          {
+                                                              "stage":  "visualFallback",
+                                                              "ran":  false,
+                                                              "reason":  "retry_1_skips_visual_fallback"
+                                                          }
+                                                      ],
+                                        "acceptedAfter":  "ocr",
+                                        "inheritedEvidence":  {
+                                                                  "transcriptAttempts":  [
+
+                                                                                         ],
+                                                                  "ocrAttempts":  [
+
+                                                                                  ]
+                                                              }
+                                    },
+                  "mediaIngestion":  {
+                                         "platform":  "instagram",
+                                         "canonicalUrl":  "https://www.instagram.com/reels/DXWyRTOD-GW",
+                                         "metadataProvider":  "instagram_script",
+                                         "platformDetectionResult":  "instagram",
+                                         "instagramUrlDetectionResult":  true,
+                                         "mediaUrlAvailable":  true,
+                                         "thumbnailImageUrlAvailable":  true,
+                                         "metadataFailureReason":  null
+                                     },
+                  "comments":  {
+                                   "attempted":  true,
+                                   "timedOut":  true,
+                                   "provider":  "instagram_script",
+                                   "reason":  "timeout",
+                                   "pinnedCommentIncluded":  false,
+                                   "topCommentCount":  0
+                               },
+                  "frameExtraction":  {
+                                          "didRun":  true,
+                                          "selectionMode":  "anchors",
+                                          "ok":  true,
+                                          "reason":  "frames_extracted",
+                                          "error":  null,
+                                          "count":  3,
+                                          "durationSeconds":  48.785,
+                                          "mediaUrlAvailable":  true,
+                                          "ytDlpExitCode":  0,
+                                          "ytDlpStderrShortPreview":  "[Instagram] Extracting URL: https://www.instagram.com/reels/DXWyRTOD-GW\n[Instagram] DXWyRTOD-GW: Setting up session\n[Instagram] DXWyRTOD-GW: Downloading JSON metadata\n[info] DXWyRTOD-GW: Downloading 1 format(s): 3",
+                                          "ffmpegAvailable":  true,
+                                          "imageioFfmpegAvailable":  true,
+                                          "ffmpegLocation":  "C:\\Users\\ashut\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin",
+                                          "timestamps":  [
+                                                             8.78,
+                                                             21.95,
+                                                             35.13
+                                                         ],
+                                          "frameFilePaths":  [
+                                                                 "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXWyRTOD-GW_u9devnky\\frame_1.jpg",
+                                                                 "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXWyRTOD-GW_u9devnky\\frame_2.jpg",
+                                                                 "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXWyRTOD-GW_u9devnky\\frame_3.jpg"
+                                                             ],
+                                          "frameFileSizes":  [
+                                                                 66932,
+                                                                 70964,
+                                                                 57698
+                                                             ],
+                                          "runtime":  {
+                                                          "script":  "fetch_video_frames.py",
+                                                          "pythonExecutable":  "C:\\Python314\\python.exe",
+                                                          "layer1PydepsPath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wandreel-layer1-pydeps",
+                                                          "sysPathAdditions":  [
+
+                                                                               ],
+                                                          "instaloader":  {
+                                                                              "ok":  true,
+                                                                              "path":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\instaloader\\__init__.py"
+                                                                          },
+                                                          "ytDlp":  {
+                                                                        "ok":  true,
+                                                                        "path":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\yt_dlp\\__init__.py"
+                                                                    },
+                                                          "ytDlpVersion":  {
+                                                                               "ok":  true,
+                                                                               "version":  "2026.03.03"
+                                                                           },
+                                                          "imageioFfmpeg":  {
+                                                                                "ok":  true,
+                                                                                "path":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\imageio_ffmpeg\\__init__.py",
+                                                                                "ffmpegExe":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\imageio_ffmpeg\\binaries\\ffmpeg-win-x86_64-v7.1.exe",
+                                                                                "ffmpegDir":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\imageio_ffmpeg\\binaries"
+                                                                            },
+                                                          "resolvedFfmpegExecutable":  "C:\\Users\\ashut\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin\\ffmpeg.EXE",
+                                                          "resolvedFfmpegPath":  "C:\\Users\\ashut\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin",
+                                                          "ffmpegVersion":  {
+                                                                                "ok":  true,
+                                                                                "version":  "ffmpeg version 8.0.1-full_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers"
+                                                                            }
+                                                      },
+                                          "rawError":  null,
+                                          "tempDir":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXWyRTOD-GW_u9devnky",
+                                          "processingMode":  "sequential_per_frame",
+                                          "perFrameOcr":  [
+                                                              {
+                                                                  "frame":  "frame_1",
+                                                                  "timestampSec":  8.78,
+                                                                  "originalWidth":  640,
+                                                                  "originalHeight":  1136,
+                                                                  "resizedWidth":  640,
+                                                                  "resizedHeight":  1136,
+                                                                  "compressedSizeBytes":  66932,
+                                                                  "ocrDurationMs":  6317,
+                                                                  "ocrTextChars":  15,
+                                                                  "ocrUsed":  true,
+                                                                  "ocrReason":  null
+                                                              },
+                                                              {
+                                                                  "frame":  "frame_2",
+                                                                  "timestampSec":  21.95,
+                                                                  "originalWidth":  640,
+                                                                  "originalHeight":  1136,
+                                                                  "resizedWidth":  640,
+                                                                  "resizedHeight":  1136,
+                                                                  "compressedSizeBytes":  70964,
+                                                                  "ocrDurationMs":  6880,
+                                                                  "ocrTextChars":  26,
+                                                                  "ocrUsed":  true,
+                                                                  "ocrReason":  null
+                                                              },
+                                                              {
+                                                                  "frame":  "frame_3",
+                                                                  "timestampSec":  35.13,
+                                                                  "originalWidth":  640,
+                                                                  "originalHeight":  1136,
+                                                                  "resizedWidth":  640,
+                                                                  "resizedHeight":  1136,
+                                                                  "compressedSizeBytes":  57698,
+                                                                  "ocrDurationMs":  6121,
+                                                                  "ocrTextChars":  4,
+                                                                  "ocrUsed":  true,
+                                                                  "ocrReason":  null
+                                                              }
+                                                          ]
+                                      },
+                  "screenshots":  {
+                                      "count":  3,
+                                      "videoFrameCount":  3,
+                                      "metadataImageCount":  0,
+                                      "sentCandidates":  [
+                                                             {
+                                                                 "origin":  "video_frame",
+                                                                 "label":  "frame_1",
+                                                                 "timestampSec":  8.78,
+                                                                 "sizeBytes":  66932,
+                                                                 "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXWyRTOD-GW_u9devnky\\frame_1.jpg",
+                                                                 "urlKind":  "remote_url"
+                                                             },
+                                                             {
+                                                                 "origin":  "video_frame",
+                                                                 "label":  "frame_2",
+                                                                 "timestampSec":  21.95,
+                                                                 "sizeBytes":  70964,
+                                                                 "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXWyRTOD-GW_u9devnky\\frame_2.jpg",
+                                                                 "urlKind":  "remote_url"
+                                                             },
+                                                             {
+                                                                 "origin":  "video_frame",
+                                                                 "label":  "frame_3",
+                                                                 "timestampSec":  35.13,
+                                                                 "sizeBytes":  57698,
+                                                                 "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXWyRTOD-GW_u9devnky\\frame_3.jpg",
+                                                                 "urlKind":  "remote_url"
+                                                             }
+                                                         ]
+                                  },
+                  "ocr":  {
+                              "attempted":  true,
+                              "used":  true,
+                              "text":  "FLAVORS\nNEXT PL\nNEXT",
+                              "reason":  null,
+                              "confidence":  null,
+                              "sourceImages":  [
+                                                   {
+                                                       "origin":  "video_frame",
+                                                       "label":  "frame_1",
+                                                       "timestampSec":  8.78,
+                                                       "sizeBytes":  66932,
+                                                       "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXWyRTOD-GW_u9devnky\\frame_1.jpg",
+                                                       "urlKind":  "remote_url"
+                                                   },
+                                                   {
+                                                       "origin":  "video_frame",
+                                                       "label":  "frame_2",
+                                                       "timestampSec":  21.95,
+                                                       "sizeBytes":  70964,
+                                                       "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXWyRTOD-GW_u9devnky\\frame_2.jpg",
+                                                       "urlKind":  "remote_url"
+                                                   },
+                                                   {
+                                                       "origin":  "video_frame",
+                                                       "label":  "frame_3",
+                                                       "timestampSec":  35.13,
+                                                       "sizeBytes":  57698,
+                                                       "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXWyRTOD-GW_u9devnky\\frame_3.jpg",
+                                                       "urlKind":  "remote_url"
+                                                   }
+                                               ]
+                          },
+                  "visualRecognition":  {
+                                            "didRun":  false,
+                                            "reason":  "not_attempted"
+                                        },
+                  "candidateVerification":  [
+
+                                            ],
+                  "priorAttemptHypotheses":  [
+
+                                             ],
+                  "evidenceUsage":  {
+                                        "transcriptReused":  false,
+                                        "inheritedTranscriptAttempts":  [
+
+                                                                        ],
+                                        "inheritedOcrAttempts":  [
+
+                                                                 ],
+                                        "inheritedHypothesisAttempts":  [
+
+                                                                        ],
+                                        "ocrFrameCount":  3,
+                                        "visualFrameCount":  0,
+                                        "route":  "retry_1_long"
+                                    },
+                  "timings":  {
+                                  "metadataFetchMs":  3032,
+                                  "metadataMs":  3032,
+                                  "commentsMs":  1519,
+                                  "descriptionFastExtractorMs":  0,
+                                  "descriptionProbeMs":  0,
+                                  "transcriptProbeMs":  0,
+                                  "transcriptMs":  13699,
+                                  "frameExtractionMs":  8868,
+                                  "ocrOnlyMs":  19318,
+                                  "ocrMs":  28198,
+                                  "visualFallbackOnlyMs":  0,
+                                  "visualFallbackMs":  0,
+                                  "extractionTotalMs":  44931,
+                                  "llmCallsBeforeResponse":  0
+                              },
+                  "fastPathIntelligence":  {
+                                               "attempted":  false,
+                                               "accepted":  false,
+                                               "duplicateDescriptionLlmSkipped":  false,
+                                               "result":  null,
+                                               "tinyFastExtractorUsed":  false,
+                                               "tinyFastExtractorMs":  0,
+                                               "tinyFastExtractorAccepted":  false,
+                                               "tinyFastExtractorRejectedReason":  null,
+                                               "modelUsedForTinyExtractor":  null,
+                                               "fullPromptSkipped":  false
+                                           },
+                  "tinyFastExtractorUsed":  false,
+                  "tinyFastExtractorMs":  0,
+                  "tinyFastExtractorAccepted":  false,
+                  "tinyFastExtractorRejectedReason":  null,
+                  "modelUsedForTinyExtractor":  null,
+                  "fullPromptSkipped":  false,
+                  "finalOutput":  {
+                                      "selectedCandidate":  null,
+                                      "possibleMatches":  [
+
+                                                          ],
+                                      "finalEntity":  null,
+                                      "needsReview":  true,
+                                      "locationVerified":  false,
+                                      "confidence":  "low",
+                                      "summaryText":  ""
+                                  }
+              },
+    "localApiResponseMs":  44936
+}

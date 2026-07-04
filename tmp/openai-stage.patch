@@ -1,0 +1,91 @@
+﻿diff --git "a/server/intelligence/providers/openai.ts" "b/server/intelligence/providers/openai.ts"
+index 828e8c5..26e2d42 100644
+--- "a/server/intelligence/providers/openai.ts"
++++ "b/server/intelligence/providers/openai.ts"
+@@ -1,4 +1,5 @@
+ import OpenAI from "openai";
++import { createHash } from "node:crypto";
+ import type { ExtractionResult } from "../../extraction/types";
+ import type { IntelligenceRequest } from "../types";
+ import { buildSystemPrompt, buildTinyCaptionSystemPrompt, buildTinyCaptionUserPrompt, buildUserPrompt } from "../prompts";
+@@ -78,6 +79,31 @@ function shouldUseComplexFallback(source: ExtractionResult, parsed: any): boolea
+   return status === "no_supported_entity_found" || entities.length === 0 || lowConfidenceOnly || multiplePossiblePlaces;
+ }
+ 
++function buildRoutingLogContext(input: {
++  source: ExtractionResult;
++  analytics?: IntelligenceRequest["analytics"];
++  taskType: "default" | "complex_extraction" | "retry_refined" | "retry_final" | "tiny_caption";
++  model: string;
++  fallbackUsed: boolean;
++  fallbackReason: string | null;
++}) {
++  const canonicalUrl = input.source.canonicalUrl || input.source.source || input.source.metadata.sourceUrl || "";
++  const urlHash = canonicalUrl
++    ? createHash("sha1").update(canonicalUrl).digest("hex").slice(0, 12)
++    : null;
++  return {
++    requestId: input.analytics?.requestId ?? null,
++    clientRunId: input.analytics?.clientRunId ?? null,
++    urlHash,
++    attemptNumber: Number(input.analytics?.attemptNumber ?? input.source.attemptInfo?.attemptNumber ?? 1) || 1,
++    probeStage: input.analytics?.probeStage ?? null,
++    selectedModel: input.model,
++    taskType: input.taskType,
++    fallbackUsed: input.fallbackUsed,
++    fallbackReason: input.fallbackReason,
++  };
++}
++
+ async function runStructuredRequest(input: {
+   client: OpenAI;
+   model: string;
+@@ -90,12 +116,7 @@ async function runStructuredRequest(input: {
+   userPrompt: string;
+   maxOutputTokens?: number;
+ }): Promise<OpenAiExtractionResult & { parsed: unknown }> {
+-  console.info("[openai-model-routing]", {
+-    selectedModel: input.model,
+-    taskType: input.taskType,
+-    fallbackUsed: input.fallbackUsed,
+-    fallbackReason: input.fallbackReason,
+-  });
++  console.info("[openai-model-routing]", buildRoutingLogContext(input));
+ 
+   const startedAt = Date.now();
+   const response = await input.client.responses.create({
+@@ -119,10 +140,7 @@ async function runStructuredRequest(input: {
+   };
+   const parsed = extractParsedJson(response as any);
+   console.info("[openai-model-routing]", {
+-    selectedModel: input.model,
+-    taskType: input.taskType,
+-    fallbackUsed: input.fallbackUsed,
+-    fallbackReason: input.fallbackReason,
++    ...buildRoutingLogContext(input),
+     finalModelUsed: input.model,
+   });
+ 
+@@ -147,6 +165,7 @@ export async function callOpenAiStructuredExtraction(
+     complexModel ||
+     defaultModel;
+   const attemptNumber = Number(analytics?.attemptNumber ?? source.attemptInfo?.attemptNumber ?? 1) || 1;
++  const disableComplexFallback = Boolean(analytics?.probeStage);
+ 
+   if (attemptNumber >= 3) {
+     return runStructuredRequest({
+@@ -188,7 +207,12 @@ export async function callOpenAiStructuredExtraction(
+     userPrompt: buildUserPrompt(source, analytics),
+   });
+ 
+-  if (!complexModel || complexModel === defaultModel || !shouldUseComplexFallback(source, firstPass.parsed)) {
++  if (
++    disableComplexFallback ||
++    !complexModel ||
++    complexModel === defaultModel ||
++    !shouldUseComplexFallback(source, firstPass.parsed)
++  ) {
+     return firstPass;
+   }
+ 
+

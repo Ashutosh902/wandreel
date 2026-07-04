@@ -1,0 +1,446 @@
+﻿{
+    "ok":  true,
+    "mode":  "deep",
+    "metadata":  {
+                     "sourceUrl":  "https://www.instagram.com/p/DXTwG1jkpBh/",
+                     "canonicalUrl":  "https://www.instagram.com/p/DXTwG1jkpBh",
+                     "platform":  "instagram",
+                     "title":  "Untitled",
+                     "description":  "Cutest pinteresty café in Sikkim 🌲✨\n\n#sikkim #cafe #sikkimtrip #fyp #explorepage",
+                     "siteName":  "Instagram",
+                     "imageUrl":  "https://instagram.fixr3-2.fna.fbcdn.net/v/t51.82787-15/670773630_18122387398627618_790428239944019965_n.jpg?stp=dst-jpg_e15_tt6\u0026_nc_ht=instagram.fixr3-2.fna.fbcdn.net\u0026_nc_cat=110\u0026_nc_oc=Q6cZ2gG3p5ja35sqgp__OY7wKihPI-lFV-gOg5PLr0XEOEUF2C-M2OrtzRKJXlzBASaaAgQ3RTc8nyH4YSHbP2Bq7phx\u0026_nc_ohc=RZHf7GfG6EkQ7kNvwHXxhrq\u0026_nc_gid=4BzRnKy3AVO1zfM82Mg5Dw\u0026edm=ANTKIIoBAAAA\u0026ccb=7-5\u0026oh=00_Af_2Lhckn3QPBd6Rw2PYY62-THMEV_hSoRLo9v1fXiDRXw\u0026oe=6A342D77\u0026_nc_sid=d885a2",
+                     "fetchedAtIso":  "2026-06-14T07:11:55.719Z",
+                     "provider":  "instagram_script",
+                     "commentEvidence":  {
+                                             "attempted":  false,
+                                             "timedOut":  false,
+                                             "pinnedComment":  null,
+                                             "topComments":  [
+
+                                                             ],
+                                             "provider":  "instagram_script",
+                                             "reason":  null
+                                         }
+                 },
+    "transcript":  {
+                       "attempted":  true,
+                       "used":  false,
+                       "source":  null,
+                       "text":  "",
+                       "reason":  "transcript_not_available"
+                   },
+    "ocr":  {
+                "attempted":  true,
+                "used":  true,
+                "text":  "CAUTION\nWET FLOOR",
+                "reason":  null
+            },
+    "visualFallback":  {
+                           "attempted":  false,
+                           "triggered":  false,
+                           "reason":  "not_attempted",
+                           "provider":  "shared_visual_fallback",
+                           "confidence":  "low",
+                           "needsReview":  true,
+                           "screenshots":  [
+
+                                           ],
+                           "textQueries":  [
+
+                                           ],
+                           "visualQueries":  [
+
+                                             ],
+                           "candidates":  [
+
+                                          ],
+                           "selectedCandidate":  null,
+                           "summaryText":  ""
+                       },
+    "attemptInfo":  {
+                        "attemptNumber":  2,
+                        "triggerType":  "retry"
+                    },
+    "source":  "https://www.instagram.com/p/DXTwG1jkpBh/",
+    "platform":  "instagram",
+    "canonicalUrl":  "https://www.instagram.com/p/DXTwG1jkpBh",
+    "stageStatus":  {
+                        "basicMetadata":  "success",
+                        "caption":  "success",
+                        "transcript":  "partial",
+                        "ocr":  "success",
+                        "visualFallback":  "partial"
+                    },
+    "stages":  {
+                   "basicMetadata":  {
+                                         "status":  "success",
+                                         "provider":  "instagram_script",
+                                         "reason":  null,
+                                         "chars":  90
+                                     },
+                   "caption":  {
+                                   "status":  "success",
+                                   "provider":  "instagram_script",
+                                   "reason":  null,
+                                   "chars":  81
+                               },
+                   "transcript":  {
+                                      "status":  "partial",
+                                      "provider":  "none",
+                                      "reason":  "transcript_not_available",
+                                      "chars":  0
+                                  },
+                   "ocr":  {
+                               "status":  "success",
+                               "provider":  "frame_ocr",
+                               "reason":  "not_attempted",
+                               "chars":  17
+                           },
+                   "visualFallback":  {
+                                          "status":  "partial",
+                                          "provider":  "shared_visual_fallback",
+                                          "reason":  "not_attempted",
+                                          "chars":  0
+                                      }
+               },
+    "stageTimingsMs":  {
+                           "basicMetadata":  4373,
+                           "caption":  0,
+                           "transcript":  18695,
+                           "ocr":  34150,
+                           "visualFallback":  0
+                       },
+    "stageFailures":  {
+                          "transcript":  "transcript_not_available",
+                          "visualFallback":  "not_attempted"
+                      },
+    "combinedTextRaw":  "Untitled\n\nCutest pinteresty café in Sikkim 🌲✨\n\n#sikkim #cafe #sikkimtrip #fyp #explorepage\n\nCAUTION\nWET FLOOR",
+    "combinedTextClean":  "Untitled Cutest pinteresty café in Sikkim 🌲✨ CAUTION WET FLOOR\n\n#sikkim #cafe #sikkimtrip #fyp #explorepage",
+    "cleanupStats":  {
+                         "rawChars":  110,
+                         "cleanChars":  108,
+                         "removedChars":  2,
+                         "droppedLines":  0,
+                         "dedupedLines":  0,
+                         "dedupedHashtags":  0
+                     },
+    "perf":  {
+                 "totalMs":  57220,
+                 "metadataMs":  4373,
+                 "transcriptMs":  18695,
+                 "ocrMs":  34150,
+                 "visualFallbackMs":  0
+             },
+    "sla":  {
+                "totalMs":  57220,
+                "metadataMs":  4373,
+                "transcriptMs":  18695,
+                "ocrMs":  34150,
+                "visualFallbackMs":  0
+            },
+    "cache":  {
+                  "hit":  false,
+                  "key":  "deep:a2:https://www.instagram.com/p/DXTwG1jkpBh"
+              },
+    "debug":  {
+                  "orchestration":  {
+                                        "attemptNumber":  2,
+                                        "triggerType":  "retry",
+                                        "sourcePlatform":  "instagram",
+                                        "route":  "retry_1_refinement",
+                                        "transcriptReused":  false,
+                                        "ocrFrameCount":  3,
+                                        "visualFrameCount":  0,
+                                        "decisions":  [
+                                                          {
+                                                              "stage":  "description",
+                                                              "ran":  true,
+                                                              "reason":  "retry_forced_reanalysis"
+                                                          },
+                                                          {
+                                                              "stage":  "transcript",
+                                                              "ran":  true,
+                                                              "reason":  "retry_1_refinement_transcript_missing_rerun"
+                                                          },
+                                                          {
+                                                              "stage":  "ocr",
+                                                              "ran":  true,
+                                                              "reason":  "retry_1_refinement_frame_ocr"
+                                                          },
+                                                          {
+                                                              "stage":  "visualFallback",
+                                                              "ran":  false,
+                                                              "reason":  "retry_1_skips_visual_fallback"
+                                                          }
+                                                      ],
+                                        "acceptedAfter":  "ocr",
+                                        "inheritedEvidence":  {
+                                                                  "transcriptAttempts":  [
+
+                                                                                         ],
+                                                                  "ocrAttempts":  [
+
+                                                                                  ]
+                                                              }
+                                    },
+                  "mediaIngestion":  {
+                                         "platform":  "instagram",
+                                         "canonicalUrl":  "https://www.instagram.com/p/DXTwG1jkpBh",
+                                         "metadataProvider":  "instagram_script",
+                                         "platformDetectionResult":  "instagram",
+                                         "instagramUrlDetectionResult":  true,
+                                         "mediaUrlAvailable":  true,
+                                         "thumbnailImageUrlAvailable":  true,
+                                         "metadataFailureReason":  null
+                                     },
+                  "comments":  {
+                                   "attempted":  false,
+                                   "timedOut":  false,
+                                   "provider":  "instagram_script",
+                                   "reason":  null,
+                                   "pinnedCommentIncluded":  false,
+                                   "topCommentCount":  0
+                               },
+                  "frameExtraction":  {
+                                          "didRun":  true,
+                                          "selectionMode":  "anchors",
+                                          "ok":  true,
+                                          "reason":  "frames_extracted",
+                                          "error":  null,
+                                          "count":  3,
+                                          "durationSeconds":  24.705,
+                                          "mediaUrlAvailable":  true,
+                                          "ytDlpExitCode":  0,
+                                          "ytDlpStderrShortPreview":  "[Instagram] Extracting URL: https://www.instagram.com/p/DXTwG1jkpBh\n[Instagram] DXTwG1jkpBh: Setting up session\n[Instagram] DXTwG1jkpBh: Downloading JSON metadata\n[info] DXTwG1jkpBh: Downloading 1 format(s): 4",
+                                          "ffmpegAvailable":  true,
+                                          "imageioFfmpegAvailable":  true,
+                                          "ffmpegLocation":  "C:\\Users\\ashut\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin",
+                                          "timestamps":  [
+                                                             4.45,
+                                                             11.12,
+                                                             17.79
+                                                         ],
+                                          "frameFilePaths":  [
+                                                                 "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_r1ggy41e\\frame_1.jpg",
+                                                                 "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_r1ggy41e\\frame_2.jpg",
+                                                                 "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_r1ggy41e\\frame_3.jpg"
+                                                             ],
+                                          "frameFileSizes":  [
+                                                                 46604,
+                                                                 73461,
+                                                                 68801
+                                                             ],
+                                          "runtime":  {
+                                                          "script":  "fetch_video_frames.py",
+                                                          "pythonExecutable":  "C:\\Python314\\python.exe",
+                                                          "layer1PydepsPath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wandreel-layer1-pydeps",
+                                                          "sysPathAdditions":  [
+
+                                                                               ],
+                                                          "instaloader":  {
+                                                                              "ok":  true,
+                                                                              "path":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\instaloader\\__init__.py"
+                                                                          },
+                                                          "ytDlp":  {
+                                                                        "ok":  true,
+                                                                        "path":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\yt_dlp\\__init__.py"
+                                                                    },
+                                                          "ytDlpVersion":  {
+                                                                               "ok":  true,
+                                                                               "version":  "2026.03.03"
+                                                                           },
+                                                          "imageioFfmpeg":  {
+                                                                                "ok":  true,
+                                                                                "path":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\imageio_ffmpeg\\__init__.py",
+                                                                                "ffmpegExe":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\imageio_ffmpeg\\binaries\\ffmpeg-win-x86_64-v7.1.exe",
+                                                                                "ffmpegDir":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\imageio_ffmpeg\\binaries"
+                                                                            },
+                                                          "resolvedFfmpegExecutable":  "C:\\Users\\ashut\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin\\ffmpeg.EXE",
+                                                          "resolvedFfmpegPath":  "C:\\Users\\ashut\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin",
+                                                          "ffmpegVersion":  {
+                                                                                "ok":  true,
+                                                                                "version":  "ffmpeg version 8.0.1-full_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers"
+                                                                            }
+                                                      },
+                                          "rawError":  null,
+                                          "tempDir":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_r1ggy41e",
+                                          "processingMode":  "sequential_per_frame",
+                                          "perFrameOcr":  [
+                                                              {
+                                                                  "frame":  "frame_1",
+                                                                  "timestampSec":  4.45,
+                                                                  "originalWidth":  750,
+                                                                  "originalHeight":  1333,
+                                                                  "resizedWidth":  640,
+                                                                  "resizedHeight":  1137,
+                                                                  "compressedSizeBytes":  46604,
+                                                                  "ocrDurationMs":  10904,
+                                                                  "ocrTextChars":  17,
+                                                                  "ocrUsed":  true,
+                                                                  "ocrReason":  null
+                                                              },
+                                                              {
+                                                                  "frame":  "frame_2",
+                                                                  "timestampSec":  11.12,
+                                                                  "originalWidth":  750,
+                                                                  "originalHeight":  1333,
+                                                                  "resizedWidth":  640,
+                                                                  "resizedHeight":  1137,
+                                                                  "compressedSizeBytes":  73461,
+                                                                  "ocrDurationMs":  6164,
+                                                                  "ocrTextChars":  17,
+                                                                  "ocrUsed":  true,
+                                                                  "ocrReason":  null
+                                                              },
+                                                              {
+                                                                  "frame":  "frame_3",
+                                                                  "timestampSec":  17.79,
+                                                                  "originalWidth":  750,
+                                                                  "originalHeight":  1333,
+                                                                  "resizedWidth":  640,
+                                                                  "resizedHeight":  1137,
+                                                                  "compressedSizeBytes":  68801,
+                                                                  "ocrDurationMs":  4701,
+                                                                  "ocrTextChars":  26,
+                                                                  "ocrUsed":  true,
+                                                                  "ocrReason":  null
+                                                              }
+                                                          ]
+                                      },
+                  "screenshots":  {
+                                      "count":  3,
+                                      "videoFrameCount":  3,
+                                      "metadataImageCount":  0,
+                                      "sentCandidates":  [
+                                                             {
+                                                                 "origin":  "video_frame",
+                                                                 "label":  "frame_1",
+                                                                 "timestampSec":  4.45,
+                                                                 "sizeBytes":  46604,
+                                                                 "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_r1ggy41e\\frame_1.jpg",
+                                                                 "urlKind":  "remote_url"
+                                                             },
+                                                             {
+                                                                 "origin":  "video_frame",
+                                                                 "label":  "frame_2",
+                                                                 "timestampSec":  11.12,
+                                                                 "sizeBytes":  73461,
+                                                                 "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_r1ggy41e\\frame_2.jpg",
+                                                                 "urlKind":  "remote_url"
+                                                             },
+                                                             {
+                                                                 "origin":  "video_frame",
+                                                                 "label":  "frame_3",
+                                                                 "timestampSec":  17.79,
+                                                                 "sizeBytes":  68801,
+                                                                 "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_r1ggy41e\\frame_3.jpg",
+                                                                 "urlKind":  "remote_url"
+                                                             }
+                                                         ]
+                                  },
+                  "ocr":  {
+                              "attempted":  true,
+                              "used":  true,
+                              "text":  "CAUTION\nWET FLOOR",
+                              "reason":  null,
+                              "confidence":  null,
+                              "sourceImages":  [
+                                                   {
+                                                       "origin":  "video_frame",
+                                                       "label":  "frame_1",
+                                                       "timestampSec":  4.45,
+                                                       "sizeBytes":  46604,
+                                                       "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_r1ggy41e\\frame_1.jpg",
+                                                       "urlKind":  "remote_url"
+                                                   },
+                                                   {
+                                                       "origin":  "video_frame",
+                                                       "label":  "frame_2",
+                                                       "timestampSec":  11.12,
+                                                       "sizeBytes":  73461,
+                                                       "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_r1ggy41e\\frame_2.jpg",
+                                                       "urlKind":  "remote_url"
+                                                   },
+                                                   {
+                                                       "origin":  "video_frame",
+                                                       "label":  "frame_3",
+                                                       "timestampSec":  17.79,
+                                                       "sizeBytes":  68801,
+                                                       "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_r1ggy41e\\frame_3.jpg",
+                                                       "urlKind":  "remote_url"
+                                                   }
+                                               ]
+                          },
+                  "visualRecognition":  {
+                                            "didRun":  false,
+                                            "reason":  "not_attempted"
+                                        },
+                  "candidateVerification":  [
+
+                                            ],
+                  "priorAttemptHypotheses":  [
+
+                                             ],
+                  "evidenceUsage":  {
+                                        "transcriptReused":  false,
+                                        "inheritedTranscriptAttempts":  [
+
+                                                                        ],
+                                        "inheritedOcrAttempts":  [
+
+                                                                 ],
+                                        "inheritedHypothesisAttempts":  [
+
+                                                                        ],
+                                        "ocrFrameCount":  3,
+                                        "visualFrameCount":  0,
+                                        "route":  "retry_1_refinement"
+                                    },
+                  "timings":  {
+                                  "metadataFetchMs":  4373,
+                                  "metadataMs":  4373,
+                                  "commentsMs":  0,
+                                  "descriptionFastExtractorMs":  0,
+                                  "descriptionProbeMs":  0,
+                                  "transcriptProbeMs":  0,
+                                  "transcriptMs":  18695,
+                                  "frameExtractionMs":  12368,
+                                  "ocrOnlyMs":  21769,
+                                  "ocrMs":  34150,
+                                  "visualFallbackOnlyMs":  0,
+                                  "visualFallbackMs":  0,
+                                  "extractionTotalMs":  57220,
+                                  "llmCallsBeforeResponse":  0
+                              },
+                  "fastPathIntelligence":  {
+                                               "attempted":  false,
+                                               "accepted":  false,
+                                               "duplicateDescriptionLlmSkipped":  false,
+                                               "result":  null,
+                                               "tinyFastExtractorUsed":  false,
+                                               "tinyFastExtractorMs":  0,
+                                               "tinyFastExtractorAccepted":  false,
+                                               "tinyFastExtractorRejectedReason":  null,
+                                               "modelUsedForTinyExtractor":  null,
+                                               "fullPromptSkipped":  false
+                                           },
+                  "tinyFastExtractorUsed":  false,
+                  "tinyFastExtractorMs":  0,
+                  "tinyFastExtractorAccepted":  false,
+                  "tinyFastExtractorRejectedReason":  null,
+                  "modelUsedForTinyExtractor":  null,
+                  "fullPromptSkipped":  false,
+                  "finalOutput":  {
+                                      "selectedCandidate":  null,
+                                      "possibleMatches":  [
+
+                                                          ],
+                                      "finalEntity":  null,
+                                      "needsReview":  true,
+                                      "locationVerified":  false,
+                                      "confidence":  "low",
+                                      "summaryText":  ""
+                                  }
+              },
+    "localApiResponseMs":  57226
+}

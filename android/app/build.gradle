@@ -1,5 +1,11 @@
 apply plugin: 'com.android.application'
 
+def hasReleaseSigningConfig =
+        project.hasProperty('WANDREEL_RELEASE_STORE_FILE') &&
+        project.hasProperty('WANDREEL_RELEASE_STORE_PASSWORD') &&
+        project.hasProperty('WANDREEL_RELEASE_KEY_ALIAS') &&
+        project.hasProperty('WANDREEL_RELEASE_KEY_PASSWORD')
+
 android {
     namespace = "com.wandreel.app"
     compileSdk = rootProject.ext.compileSdkVersion
@@ -16,10 +22,23 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    signingConfigs {
+        if (hasReleaseSigningConfig) {
+            release {
+                storeFile file(project.property('WANDREEL_RELEASE_STORE_FILE'))
+                storePassword project.property('WANDREEL_RELEASE_STORE_PASSWORD')
+                keyAlias project.property('WANDREEL_RELEASE_KEY_ALIAS')
+                keyPassword project.property('WANDREEL_RELEASE_KEY_PASSWORD')
+            }
+        }
+    }
     buildTypes {
         release {
             minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (hasReleaseSigningConfig) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }
@@ -40,6 +59,8 @@ dependencies {
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
     implementation project(':capacitor-cordova-android-plugins')
+    implementation platform('com.google.firebase:firebase-bom:34.15.0')
+    implementation 'com.google.firebase:firebase-analytics'
 }
 
 apply from: 'capacitor.build.gradle'

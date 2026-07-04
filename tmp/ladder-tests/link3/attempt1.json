@@ -1,0 +1,579 @@
+﻿{
+    "ok":  true,
+    "mode":  "deep",
+    "metadata":  {
+                     "sourceUrl":  "https://www.instagram.com/p/DXTwG1jkpBh/",
+                     "canonicalUrl":  "https://www.instagram.com/p/DXTwG1jkpBh",
+                     "platform":  "instagram",
+                     "title":  "Untitled",
+                     "description":  "Cutest pinteresty café in Sikkim 🌲✨\n\n#sikkim #cafe #sikkimtrip #fyp #explorepage",
+                     "siteName":  "Instagram",
+                     "imageUrl":  "https://instagram.fixr3-2.fna.fbcdn.net/v/t51.82787-15/670773630_18122387398627618_790428239944019965_n.jpg?stp=dst-jpg_e15_tt6\u0026_nc_ht=instagram.fixr3-2.fna.fbcdn.net\u0026_nc_cat=110\u0026_nc_oc=Q6cZ2gEsHkzJDp6w1i_pvYIrOXshEbycr5fJ1K9vx40JXhPDFtRj7Vk3EIlzrKY-Cmz8K7q_svYVF0k8NeUjOjGQpjIZ\u0026_nc_ohc=RZHf7GfG6EkQ7kNvwHXxhrq\u0026_nc_gid=pvnZ4KDWRfeQd__KKe2jQA\u0026edm=ANTKIIoBAAAA\u0026ccb=7-5\u0026oh=00_Af9_Hg69zlj4wPWTlGVyUplCNyWiyZzDdHSUVEqhUYvysw\u0026oe=6A342D77\u0026_nc_sid=d885a2",
+                     "fetchedAtIso":  "2026-06-14T07:10:21.927Z",
+                     "provider":  "instagram_script",
+                     "commentEvidence":  {
+                                             "attempted":  true,
+                                             "timedOut":  true,
+                                             "pinnedComment":  null,
+                                             "topComments":  [
+
+                                                             ],
+                                             "provider":  "instagram_script",
+                                             "reason":  "timeout"
+                                         }
+                 },
+    "transcript":  {
+                       "attempted":  true,
+                       "used":  false,
+                       "source":  null,
+                       "text":  "",
+                       "reason":  "transcript_not_available"
+                   },
+    "ocr":  {
+                "attempted":  true,
+                "used":  true,
+                "text":  "CAUTION\nWET FLOOR\nMENU",
+                "reason":  null
+            },
+    "visualFallback":  {
+                           "attempted":  false,
+                           "triggered":  false,
+                           "reason":  "not_attempted",
+                           "provider":  "shared_visual_fallback",
+                           "confidence":  "low",
+                           "needsReview":  true,
+                           "screenshots":  [
+
+                                           ],
+                           "textQueries":  [
+
+                                           ],
+                           "visualQueries":  [
+
+                                             ],
+                           "candidates":  [
+
+                                          ],
+                           "selectedCandidate":  null,
+                           "summaryText":  ""
+                       },
+    "attemptInfo":  {
+                        "attemptNumber":  1,
+                        "triggerType":  "initial"
+                    },
+    "source":  "https://www.instagram.com/p/DXTwG1jkpBh/",
+    "platform":  "instagram",
+    "canonicalUrl":  "https://www.instagram.com/p/DXTwG1jkpBh",
+    "stageStatus":  {
+                        "basicMetadata":  "success",
+                        "caption":  "success",
+                        "transcript":  "partial",
+                        "ocr":  "success",
+                        "visualFallback":  "partial"
+                    },
+    "stages":  {
+                   "basicMetadata":  {
+                                         "status":  "success",
+                                         "provider":  "instagram_script",
+                                         "reason":  null,
+                                         "chars":  90
+                                     },
+                   "caption":  {
+                                   "status":  "success",
+                                   "provider":  "instagram_script",
+                                   "reason":  null,
+                                   "chars":  81
+                               },
+                   "transcript":  {
+                                      "status":  "partial",
+                                      "provider":  "none",
+                                      "reason":  "transcript_not_available",
+                                      "chars":  0
+                                  },
+                   "ocr":  {
+                               "status":  "success",
+                               "provider":  "frame_ocr",
+                               "reason":  "not_attempted",
+                               "chars":  22
+                           },
+                   "visualFallback":  {
+                                          "status":  "partial",
+                                          "provider":  "shared_visual_fallback",
+                                          "reason":  "not_attempted",
+                                          "chars":  0
+                                      }
+               },
+    "stageTimingsMs":  {
+                           "basicMetadata":  4957,
+                           "caption":  0,
+                           "transcript":  19404,
+                           "ocr":  35505,
+                           "visualFallback":  0
+                       },
+    "stageFailures":  {
+                          "transcript":  "transcript_not_available",
+                          "visualFallback":  "not_attempted"
+                      },
+    "combinedTextRaw":  "Untitled\n\nCutest pinteresty café in Sikkim 🌲✨\n\n#sikkim #cafe #sikkimtrip #fyp #explorepage\n\nCAUTION\nWET FLOOR\nMENU",
+    "combinedTextClean":  "Untitled Cutest pinteresty café in Sikkim 🌲✨ CAUTION WET FLOOR MENU\n\n#sikkim #cafe #sikkimtrip #fyp #explorepage",
+    "cleanupStats":  {
+                         "rawChars":  115,
+                         "cleanChars":  113,
+                         "removedChars":  2,
+                         "droppedLines":  0,
+                         "dedupedLines":  0,
+                         "dedupedHashtags":  0
+                     },
+    "perf":  {
+                 "totalMs":  94352,
+                 "metadataMs":  4957,
+                 "transcriptMs":  19404,
+                 "ocrMs":  35505,
+                 "visualFallbackMs":  0
+             },
+    "sla":  {
+                "totalMs":  94352,
+                "metadataMs":  4957,
+                "transcriptMs":  19404,
+                "ocrMs":  35505,
+                "visualFallbackMs":  0
+            },
+    "cache":  {
+                  "hit":  false,
+                  "key":  "deep:a1:https://www.instagram.com/p/DXTwG1jkpBh"
+              },
+    "debug":  {
+                  "orchestration":  {
+                                        "attemptNumber":  1,
+                                        "triggerType":  "initial",
+                                        "sourcePlatform":  "instagram",
+                                        "route":  "attempt_1",
+                                        "transcriptReused":  false,
+                                        "ocrFrameCount":  3,
+                                        "visualFrameCount":  0,
+                                        "decisions":  [
+                                                          {
+                                                              "stage":  "description",
+                                                              "ran":  true,
+                                                              "reason":  "tiny_caption_low"
+                                                          },
+                                                          {
+                                                              "stage":  "transcript",
+                                                              "ran":  true,
+                                                              "reason":  "transcript_probe_low"
+                                                          },
+                                                          {
+                                                              "stage":  "ocr",
+                                                              "ran":  true,
+                                                              "reason":  "attempt_1_frame_ocr_after_transcript_probe"
+                                                          },
+                                                          {
+                                                              "stage":  "visualFallback",
+                                                              "ran":  false,
+                                                              "reason":  "initial_attempt_only"
+                                                          }
+                                                      ],
+                                        "acceptedAfter":  "ocr",
+                                        "inheritedEvidence":  {
+                                                                  "transcriptAttempts":  [
+
+                                                                                         ],
+                                                                  "ocrAttempts":  [
+
+                                                                                  ]
+                                                              }
+                                    },
+                  "mediaIngestion":  {
+                                         "platform":  "instagram",
+                                         "canonicalUrl":  "https://www.instagram.com/p/DXTwG1jkpBh",
+                                         "metadataProvider":  "instagram_script",
+                                         "platformDetectionResult":  "instagram",
+                                         "instagramUrlDetectionResult":  true,
+                                         "mediaUrlAvailable":  true,
+                                         "thumbnailImageUrlAvailable":  true,
+                                         "metadataFailureReason":  null
+                                     },
+                  "comments":  {
+                                   "attempted":  true,
+                                   "timedOut":  true,
+                                   "provider":  "instagram_script",
+                                   "reason":  "timeout",
+                                   "pinnedCommentIncluded":  false,
+                                   "topCommentCount":  0
+                               },
+                  "frameExtraction":  {
+                                          "didRun":  true,
+                                          "selectionMode":  "anchors",
+                                          "ok":  true,
+                                          "reason":  "frames_extracted",
+                                          "error":  null,
+                                          "count":  3,
+                                          "durationSeconds":  24.705,
+                                          "mediaUrlAvailable":  true,
+                                          "ytDlpExitCode":  0,
+                                          "ytDlpStderrShortPreview":  "[Instagram] Extracting URL: https://www.instagram.com/p/DXTwG1jkpBh\n[Instagram] DXTwG1jkpBh: Setting up session\n[Instagram] DXTwG1jkpBh: Downloading JSON metadata\n[info] DXTwG1jkpBh: Downloading 1 format(s): 4",
+                                          "ffmpegAvailable":  true,
+                                          "imageioFfmpegAvailable":  true,
+                                          "ffmpegLocation":  "C:\\Users\\ashut\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin",
+                                          "timestamps":  [
+                                                             4.45,
+                                                             11.12,
+                                                             17.79
+                                                         ],
+                                          "frameFilePaths":  [
+                                                                 "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_j1jindl2\\frame_1.jpg",
+                                                                 "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_j1jindl2\\frame_2.jpg",
+                                                                 "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_j1jindl2\\frame_3.jpg"
+                                                             ],
+                                          "frameFileSizes":  [
+                                                                 46604,
+                                                                 73461,
+                                                                 68801
+                                                             ],
+                                          "runtime":  {
+                                                          "script":  "fetch_video_frames.py",
+                                                          "pythonExecutable":  "C:\\Python314\\python.exe",
+                                                          "layer1PydepsPath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wandreel-layer1-pydeps",
+                                                          "sysPathAdditions":  [
+
+                                                                               ],
+                                                          "instaloader":  {
+                                                                              "ok":  true,
+                                                                              "path":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\instaloader\\__init__.py"
+                                                                          },
+                                                          "ytDlp":  {
+                                                                        "ok":  true,
+                                                                        "path":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\yt_dlp\\__init__.py"
+                                                                    },
+                                                          "ytDlpVersion":  {
+                                                                               "ok":  true,
+                                                                               "version":  "2026.03.03"
+                                                                           },
+                                                          "imageioFfmpeg":  {
+                                                                                "ok":  true,
+                                                                                "path":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\imageio_ffmpeg\\__init__.py",
+                                                                                "ffmpegExe":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\imageio_ffmpeg\\binaries\\ffmpeg-win-x86_64-v7.1.exe",
+                                                                                "ffmpegDir":  "C:\\Users\\ashut\\AppData\\Roaming\\Python\\Python314\\site-packages\\imageio_ffmpeg\\binaries"
+                                                                            },
+                                                          "resolvedFfmpegExecutable":  "C:\\Users\\ashut\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin\\ffmpeg.EXE",
+                                                          "resolvedFfmpegPath":  "C:\\Users\\ashut\\AppData\\Local\\Microsoft\\WinGet\\Packages\\Gyan.FFmpeg_Microsoft.Winget.Source_8wekyb3d8bbwe\\ffmpeg-8.0.1-full_build\\bin",
+                                                          "ffmpegVersion":  {
+                                                                                "ok":  true,
+                                                                                "version":  "ffmpeg version 8.0.1-full_build-www.gyan.dev Copyright (c) 2000-2025 the FFmpeg developers"
+                                                                            }
+                                                      },
+                                          "rawError":  null,
+                                          "tempDir":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_j1jindl2",
+                                          "processingMode":  "sequential_per_frame",
+                                          "perFrameOcr":  [
+                                                              {
+                                                                  "frame":  "frame_1",
+                                                                  "timestampSec":  4.45,
+                                                                  "originalWidth":  750,
+                                                                  "originalHeight":  1333,
+                                                                  "resizedWidth":  640,
+                                                                  "resizedHeight":  1137,
+                                                                  "compressedSizeBytes":  46604,
+                                                                  "ocrDurationMs":  8788,
+                                                                  "ocrTextChars":  17,
+                                                                  "ocrUsed":  true,
+                                                                  "ocrReason":  null
+                                                              },
+                                                              {
+                                                                  "frame":  "frame_2",
+                                                                  "timestampSec":  11.12,
+                                                                  "originalWidth":  750,
+                                                                  "originalHeight":  1333,
+                                                                  "resizedWidth":  640,
+                                                                  "resizedHeight":  1137,
+                                                                  "compressedSizeBytes":  73461,
+                                                                  "ocrDurationMs":  7077,
+                                                                  "ocrTextChars":  4,
+                                                                  "ocrUsed":  true,
+                                                                  "ocrReason":  null
+                                                              },
+                                                              {
+                                                                  "frame":  "frame_3",
+                                                                  "timestampSec":  17.79,
+                                                                  "originalWidth":  750,
+                                                                  "originalHeight":  1333,
+                                                                  "resizedWidth":  640,
+                                                                  "resizedHeight":  1137,
+                                                                  "compressedSizeBytes":  68801,
+                                                                  "ocrDurationMs":  9303,
+                                                                  "ocrTextChars":  26,
+                                                                  "ocrUsed":  true,
+                                                                  "ocrReason":  null
+                                                              }
+                                                          ]
+                                      },
+                  "screenshots":  {
+                                      "count":  3,
+                                      "videoFrameCount":  3,
+                                      "metadataImageCount":  0,
+                                      "sentCandidates":  [
+                                                             {
+                                                                 "origin":  "video_frame",
+                                                                 "label":  "frame_1",
+                                                                 "timestampSec":  4.45,
+                                                                 "sizeBytes":  46604,
+                                                                 "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_j1jindl2\\frame_1.jpg",
+                                                                 "urlKind":  "remote_url"
+                                                             },
+                                                             {
+                                                                 "origin":  "video_frame",
+                                                                 "label":  "frame_2",
+                                                                 "timestampSec":  11.12,
+                                                                 "sizeBytes":  73461,
+                                                                 "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_j1jindl2\\frame_2.jpg",
+                                                                 "urlKind":  "remote_url"
+                                                             },
+                                                             {
+                                                                 "origin":  "video_frame",
+                                                                 "label":  "frame_3",
+                                                                 "timestampSec":  17.79,
+                                                                 "sizeBytes":  68801,
+                                                                 "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_j1jindl2\\frame_3.jpg",
+                                                                 "urlKind":  "remote_url"
+                                                             }
+                                                         ]
+                                  },
+                  "ocr":  {
+                              "attempted":  true,
+                              "used":  true,
+                              "text":  "CAUTION\nWET FLOOR\nMENU",
+                              "reason":  null,
+                              "confidence":  null,
+                              "sourceImages":  [
+                                                   {
+                                                       "origin":  "video_frame",
+                                                       "label":  "frame_1",
+                                                       "timestampSec":  4.45,
+                                                       "sizeBytes":  46604,
+                                                       "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_j1jindl2\\frame_1.jpg",
+                                                       "urlKind":  "remote_url"
+                                                   },
+                                                   {
+                                                       "origin":  "video_frame",
+                                                       "label":  "frame_2",
+                                                       "timestampSec":  11.12,
+                                                       "sizeBytes":  73461,
+                                                       "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_j1jindl2\\frame_2.jpg",
+                                                       "urlKind":  "remote_url"
+                                                   },
+                                                   {
+                                                       "origin":  "video_frame",
+                                                       "label":  "frame_3",
+                                                       "timestampSec":  17.79,
+                                                       "sizeBytes":  68801,
+                                                       "sourcePath":  "C:\\Users\\ashut\\AppData\\Local\\Temp\\wr_frames_DXTwG1jkpBh_j1jindl2\\frame_3.jpg",
+                                                       "urlKind":  "remote_url"
+                                                   }
+                                               ]
+                          },
+                  "visualRecognition":  {
+                                            "didRun":  false,
+                                            "reason":  "not_attempted"
+                                        },
+                  "candidateVerification":  [
+
+                                            ],
+                  "priorAttemptHypotheses":  [
+
+                                             ],
+                  "evidenceUsage":  {
+                                        "transcriptReused":  false,
+                                        "inheritedTranscriptAttempts":  [
+
+                                                                        ],
+                                        "inheritedOcrAttempts":  [
+
+                                                                 ],
+                                        "inheritedHypothesisAttempts":  [
+
+                                                                        ],
+                                        "ocrFrameCount":  3,
+                                        "visualFrameCount":  0,
+                                        "route":  "attempt_1"
+                                    },
+                  "timings":  {
+                                  "metadataFetchMs":  4957,
+                                  "metadataMs":  4957,
+                                  "commentsMs":  1520,
+                                  "descriptionFastExtractorMs":  4010,
+                                  "descriptionProbeMs":  4010,
+                                  "transcriptProbeMs":  30474,
+                                  "transcriptMs":  19404,
+                                  "frameExtractionMs":  10326,
+                                  "ocrOnlyMs":  25168,
+                                  "ocrMs":  35505,
+                                  "visualFallbackOnlyMs":  0,
+                                  "visualFallbackMs":  0,
+                                  "extractionTotalMs":  94352,
+                                  "llmCallsBeforeResponse":  2
+                              },
+                  "fastPathIntelligence":  {
+                                               "attempted":  true,
+                                               "accepted":  false,
+                                               "duplicateDescriptionLlmSkipped":  false,
+                                               "result":  {
+                                                              "output":  {
+                                                                             "source":  {
+                                                                                            "url":  "https://www.instagram.com/p/DXTwG1jkpBh",
+                                                                                            "platform":  "instagram",
+                                                                                            "title":  "Untitled",
+                                                                                            "creator":  null,
+                                                                                            "sourceType":  "mixed_discovery"
+                                                                                        },
+                                                                             "placeCollections":  [
+
+                                                                                                  ],
+                                                                             "categoriesPresent":  [
+                                                                                                       "eat"
+                                                                                                   ],
+                                                                             "weakMentions":  [
+                                                                                                  {
+                                                                                                      "text":  "café",
+                                                                                                      "reason":  "Generic venue type without a clear named place."
+                                                                                                  }
+                                                                                              ],
+                                                                             "showIn":  {
+                                                                                            "eat":  true,
+                                                                                            "do":  false,
+                                                                                            "stay":  false,
+                                                                                            "see":  false
+                                                                                        },
+                                                                             "structuredEntities":  [
+                                                                                                        {
+                                                                                                            "name":  "cutest pinteresty café",
+                                                                                                            "category":  "eat",
+                                                                                                            "locality":  "Tadong",
+                                                                                                            "city":  "Gangtok",
+                                                                                                            "state":  "Sikkim",
+                                                                                                            "country":  "India",
+                                                                                                            "address":  "Upper Tadong, Tadong, Gangtok, Sikkim 737102, India",
+                                                                                                            "confidence":  "low",
+                                                                                                            "googleMapsQuery":  "cafe Sikkim India",
+                                                                                                            "evidenceText":  "Cutest pinteresty café in Sikkim",
+                                                                                                            "intent":  {
+                                                                                                                           "l1":  "taste",
+                                                                                                                           "l2":  "Cafe",
+                                                                                                                           "l3":  [
+                                                                                                                                      "pinteresty"
+                                                                                                                                  ]
+                                                                                                                       },
+                                                                                                            "placeId":  "ChIJhW_TPoyl5jkRDhqQ74kOsEE",
+                                                                                                            "photoUrl":  "https://lh3.googleusercontent.com/place-photos/AJRVUZOVN4qnJxey1pesmLqO-c7uR7XAwHzDBbH7V4MaXkS7HNuhdE_yzhOhgYnVSZDSa9az7eqSVWZWm19dzdkjrTIxBbnF0QmK0IxIUOHPwflTbqNH2LJ4hxILpxI7f-06-NWpZbK1brLQ9O0Rkw=s1600-w1200",
+                                                                                                            "lat":  27.3168867,
+                                                                                                            "lng":  88.59572320000001,
+                                                                                                            "resolvedBy":  "google_maps",
+                                                                                                            "resolutionConfidence":  "high"
+                                                                                                        }
+                                                                                                    ],
+                                                                             "entities":  [
+                                                                                              {
+                                                                                                  "category":  "eat",
+                                                                                                  "name":  "cutest pinteresty café",
+                                                                                                  "entityType":  "place",
+                                                                                                  "city":  "Gangtok",
+                                                                                                  "state":  "Sikkim",
+                                                                                                  "country":  "India",
+                                                                                                  "locality":  "Tadong",
+                                                                                                  "tags":  [
+
+                                                                                                           ],
+                                                                                                  "details":  {
+                                                                                                                  "address":  "Upper Tadong, Tadong, Gangtok, Sikkim 737102, India",
+                                                                                                                  "placeId":  "ChIJhW_TPoyl5jkRDhqQ74kOsEE",
+                                                                                                                  "photoUrl":  "https://lh3.googleusercontent.com/place-photos/AJRVUZOVN4qnJxey1pesmLqO-c7uR7XAwHzDBbH7V4MaXkS7HNuhdE_yzhOhgYnVSZDSa9az7eqSVWZWm19dzdkjrTIxBbnF0QmK0IxIUOHPwflTbqNH2LJ4hxILpxI7f-06-NWpZbK1brLQ9O0Rkw=s1600-w1200",
+                                                                                                                  "lat":  27.3168867,
+                                                                                                                  "lng":  88.59572320000001,
+                                                                                                                  "resolvedBy":  "google_maps",
+                                                                                                                  "resolutionConfidence":  "high"
+                                                                                                              },
+                                                                                                  "level2":  {
+                                                                                                                 "category":  "eat",
+                                                                                                                 "cuisineType":  null,
+                                                                                                                 "mealType":  null,
+                                                                                                                 "dietaryTags":  [
+
+                                                                                                                                 ],
+                                                                                                                 "vibeTags":  [
+
+                                                                                                                              ],
+                                                                                                                 "priceTier":  null
+                                                                                                             },
+                                                                                                  "googleMapsQuery":  "cafe Sikkim India",
+                                                                                                  "sourceEvidence":  "Cutest pinteresty café in Sikkim",
+                                                                                                  "confidence":  "low",
+                                                                                                  "intent":  {
+                                                                                                                 "l1":  "taste",
+                                                                                                                 "l2":  "Cafe",
+                                                                                                                 "l3":  [
+                                                                                                                            "pinteresty"
+                                                                                                                        ]
+                                                                                                             }
+                                                                                              }
+                                                                                          ],
+                                                                             "visibility":  {
+                                                                                                "showIn":  [
+                                                                                                               "eat"
+                                                                                                           ],
+                                                                                                "doNotShowIn":  [
+                                                                                                                    "do",
+                                                                                                                    "stay",
+                                                                                                                    "see"
+                                                                                                                ],
+                                                                                                "reason":  "Derived from tiny caption response."
+                                                                                            },
+                                                                             "status":  "needs_review"
+                                                                         },
+                                                              "validationErrors":  [
+
+                                                                                   ],
+                                                              "fixed":  false,
+                                                              "timingsMs":  {
+                                                                                "total":  4010,
+                                                                                "provider":  2548,
+                                                                                "schemaFirstPass":  0,
+                                                                                "normalize":  0,
+                                                                                "schemaSecondPass":  0
+                                                                            },
+                                                              "providerMeta":  {
+                                                                                   "model":  "gpt-5.4-mini",
+                                                                                   "fallbackUsed":  false,
+                                                                                   "taskType":  "tiny_caption"
+                                                                               },
+                                                              "usage":  {
+                                                                            "inputTokens":  711,
+                                                                            "outputTokens":  185,
+                                                                            "totalTokens":  896
+                                                                        }
+                                                          },
+                                               "tinyFastExtractorUsed":  true,
+                                               "tinyFastExtractorMs":  4010,
+                                               "tinyFastExtractorAccepted":  false,
+                                               "tinyFastExtractorRejectedReason":  "tiny_extractor_low",
+                                               "modelUsedForTinyExtractor":  "gpt-5.4-mini",
+                                               "fullPromptSkipped":  false
+                                           },
+                  "tinyFastExtractorUsed":  true,
+                  "tinyFastExtractorMs":  4010,
+                  "tinyFastExtractorAccepted":  false,
+                  "tinyFastExtractorRejectedReason":  "tiny_extractor_low",
+                  "modelUsedForTinyExtractor":  "gpt-5.4-mini",
+                  "fullPromptSkipped":  false,
+                  "finalOutput":  {
+                                      "selectedCandidate":  null,
+                                      "possibleMatches":  [
+
+                                                          ],
+                                      "finalEntity":  null,
+                                      "needsReview":  true,
+                                      "locationVerified":  false,
+                                      "confidence":  "low",
+                                      "summaryText":  ""
+                                  }
+              },
+    "localApiResponseMs":  94359
+}

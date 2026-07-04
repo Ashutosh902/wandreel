@@ -1,9 +1,7 @@
 import "dotenv/config";
-import { createHash } from "node:crypto";
 import express from "express";
-import { OAuth2Client, type TokenPayload } from "google-auth-library";
 import { extractionJobStore, runExtractionPipeline, type ExtractionMode } from "./extraction";
-import { intelligenceJobStore, runIntelligencePipeline, sanitizeIntelligenceOutputEntityNames, type IntelligenceMode } from "./intelligence";
+import { intelligenceJobStore, runIntelligencePipeline, type IntelligenceMode } from "./intelligence";
 import { buildDraftIntelligenceOutput } from "./intelligence/draft";
 import { phoneOtpStore } from "./auth/phoneOtpStore";
 import {
@@ -15,34 +13,19 @@ import {
   createSession,
   deleteSavedPlace,
   ensureAuthSchema,
-  findSavedPlaceByUserAndPlaceId,
   finalizeReelAnalyticsAttempt,
   findSessionUser,
-  getAdminObservabilityOverview,
-  getAdminObservabilityLinks,
-  getAdminObservabilityLinkDetail,
-  getAdminUsageOverview,
-  getAdminUsageUsers,
   getReelAnalyticsRunIdByClientRunId,
   getReelJob,
-  getLatestReusableMetadataExtractionByCanonicalUrl,
   getSessionCookieName,
   isPostgresConfigured,
   issueEmailOtp,
-  insertEntityFieldEdits,
   listSavedPlaces,
   markReelAnalyticsEntityOutcome,
   recordReelAnalyticsEvent,
-  recordAppUsageEvent,
-  linkRunToSubmittedLink,
   persistReelAnalyticsAttemptArtifacts,
   revokeSession,
-  updateAttemptPromotedFields,
-  updateRunFinalOutcome,
-  upsertAttemptEvidence,
-  upsertAttemptStageRuns,
   upsertReelAnalyticsEntities,
-  upsertSubmittedLink,
   upsertGoogleVerifiedUser,
   upsertSavedPlace,
   updateDisplayName,
@@ -51,224 +34,21 @@ import {
 import { featureFlags } from "./featureFlags";
 import { saveAttemptHypothesisSummary } from "./attemptHypothesisStore";
 import { buildAttemptHypothesisSummary } from "./intelligence/hypothesisSummary";
-import type { IntelligencePipelineResult, StructuredEntity } from "./intelligence/types";
-import type { ExtractionResult } from "./extraction/types";
-import { canonicalizeUrl } from "./extraction/url";
+import type { IntelligencePipelineResult } from "./intelligence/types";
 
 const app = express();
-const googleIdTokenClient = new OAuth2Client();
-
-class PublicAuthError extends Error {
-  status: number;
-
-  constructor(status: number, message: string) {
-    super(message);
-    this.status = status;
-  }
-}
-
-type VerifiedGoogleProfile = {
-  providerId: string;
-  email: string;
-  emailVerified: boolean;
-  displayName: string | null;
-  avatarUrl: string | null;
-};
-
-function getConfiguredGoogleClientIds() {
-  return Array.from(
-    new Set(
-      [
-        process.env.GOOGLE_WEB_CLIENT_ID,
-        process.env.GOOGLE_CLIENT_ID,
-        process.env.GOOGLE_ANDROID_CLIENT_ID,
-      ]
-        .map((value) => String(value || "").trim())
-        .filter(Boolean),
-    ),
-  );
-}
-
-function isVerifiedGoogleIssuer(value: unknown) {
-  const issuer = String(value || "").trim();
-  return issuer === "accounts.google.com" || issuer === "https://accounts.google.com";
-}
-
-function buildGoogleProfile(input: {
-  sub?: unknown;
-  email?: unknown;
-  emailVerified?: unknown;
-  name?: unknown;
-  picture?: unknown;
-}) {
-  const providerId = String(input.sub || "").trim();
-  const email = String(input.email || "").trim().toLowerCase();
-  const emailVerified = input.emailVerified === true || input.emailVerified === "true";
-  const displayName = typeof input.name === "string" ? input.name.trim() || null : null;
-  const avatarUrl = typeof input.picture === "string" ? input.picture.trim() || null : null;
-
-  if (!providerId || !email) {
-    throw new PublicAuthError(400, "Google account did not return required profile fields.");
-  }
-  if (!emailVerified) {
-    throw new PublicAuthError(400, "Google email is not verified.");
-  }
-
-  return {
-    providerId,
-    email,
-    emailVerified,
-    displayName,
-    avatarUrl,
-  } satisfies VerifiedGoogleProfile;
-}
-
-async function verifyGoogleIdToken(idToken: string) {
-  const audiences = getConfiguredGoogleClientIds();
-  if (!audiences.length) {
-    throw new PublicAuthError(503, "Google login is not configured yet.");
-  }
-
-  let payload: TokenPayload | undefined;
-  try {
-    const ticket = await googleIdTokenClient.verifyIdToken({
-      idToken,
-      audience: audiences,
-    });
-    payload = ticket.getPayload() ?? undefined;
-  } catch (error) {
-    const message = error instanceof Error ? error.message.toLowerCase() : "";
-    if (message.includes("audience") || message.includes("recipient")) {
-      throw new PublicAuthError(401, "Google token audience mismatch.");
-    }
-    throw new PublicAuthError(401, "Invalid Google id token.");
-  }
-
-  if (!payload) {
-    throw new PublicAuthError(401, "Invalid Google id token.");
-  }
-  if (!isVerifiedGoogleIssuer(payload.iss)) {
-    throw new PublicAuthError(401, "Invalid Google id token.");
-  }
-  if (payload.aud && !audiences.includes(String(payload.aud))) {
-    throw new PublicAuthError(401, "Google token audience mismatch.");
-  }
-
-  return buildGoogleProfile({
-    sub: payload.sub,
-    email: payload.email,
-    emailVerified: payload.email_verified,
-    name: payload.name,
-    picture: payload.picture,
-  });
-}
-
-async function verifyGoogleAccessToken(accessToken: string) {
-  const audiences = getConfiguredGoogleClientIds();
-  if (!audiences.length) {
-    throw new PublicAuthError(503, "Google login is not configured yet.");
-  }
-
-  const userInfoResponse = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  });
-
-  if (!userInfoResponse.ok) {
-    throw new PublicAuthError(401, "Invalid Google access token.");
-  }
-
-  const userInfo = (await userInfoResponse.json()) as {
-    sub?: string;
-    name?: string;
-    email?: string;
-    picture?: string;
-    email_verified?: boolean;
-    aud?: string;
-  };
-
-  if (userInfo.aud && !audiences.includes(String(userInfo.aud))) {
-    throw new PublicAuthError(401, "Google token audience mismatch.");
-  }
-
-  return buildGoogleProfile({
-    sub: userInfo.sub,
-    email: userInfo.email,
-    emailVerified: userInfo.email_verified,
-    name: userInfo.name,
-    picture: userInfo.picture,
-  });
-}
-
 const clientOrigin = process.env.CLIENT_ORIGIN || "http://localhost:5173";
-const allowedOrigins = Array.from(
-  new Set(
-    [
-      ...String(process.env.CORS_ALLOWED_ORIGINS || "")
-        .split(",")
-        .map((value) => value.trim())
-        .filter(Boolean),
-      clientOrigin,
-    ].filter(Boolean),
-  ),
-);
 app.use((req, res, next) => {
-  const requestOrigin = String(req.headers.origin || "").trim();
-  const resolvedOrigin =
-    requestOrigin && allowedOrigins.includes(requestOrigin)
-      ? requestOrigin
-      : allowedOrigins[0] || clientOrigin;
-  res.header("Access-Control-Allow-Origin", resolvedOrigin);
+  res.header("Access-Control-Allow-Origin", clientOrigin);
   res.header("Access-Control-Allow-Headers", "Content-Type");
   res.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   res.header("Access-Control-Allow-Credentials", "true");
-  res.header("Vary", "Origin");
   if (req.method === "OPTIONS") {
     return res.sendStatus(204);
   }
   next();
 });
 app.use(express.json({ limit: "1mb" }));
-
-type MetadataExtractionRouteName = "stream" | "non_stream" | "stream_test";
-type TrustedEntityEditField = "title" | "category" | "subtitle" | "placeId" | "finalPlaceId" | "lat" | "lng";
-type MetadataDuplicateInfo = {
-  kind: "link";
-  scope: "same_user" | "different_user";
-  canonicalUrl: string;
-  submittedLinkId: string;
-  reused: true;
-  costSaved: true;
-  reusedRunId: string;
-  reusedAttemptNumber: number | null;
-  priorStatus: string | null;
-};
-type SavedPlaceDuplicateInfo = {
-  kind: "place";
-  scope: "same_user";
-  placeId: string;
-  existingSavedPlaceId: string;
-};
-
-type MetadataExtractionRequestContext = {
-  key: string;
-  requestId: string;
-  clientRunId: string | null;
-  urlHash: string;
-  attemptNumber: number;
-  triggerType: "initial" | "retry";
-  routeName: MetadataExtractionRouteName;
-  mode: ExtractionMode;
-};
-
-type MetadataExtractionInFlightEntry = {
-  context: MetadataExtractionRequestContext;
-  startedAt: number;
-  promise: Promise<Awaited<ReturnType<typeof runExtractionPipeline>>>;
-};
-
-const metadataExtractionInFlight = new Map<string, MetadataExtractionInFlightEntry>();
 
 function parseExtractionRequest(req: express.Request) {
   const url = String(req.body?.url || "").trim();
@@ -295,169 +75,6 @@ function parseExtractionRequest(req: express.Request) {
     attemptNumber,
     triggerType: triggerType as "initial" | "retry",
   };
-}
-
-function buildMetadataUrlHash(url: string): string {
-  const canonicalUrl = canonicalizeUrl(url);
-  return createHash("sha1").update(canonicalUrl).digest("hex").slice(0, 12);
-}
-
-function buildMetadataExtractionContext(input: {
-  url: string;
-  clientRunId?: string | null;
-  attemptNumber: number;
-  triggerType: "initial" | "retry";
-  routeName: MetadataExtractionRouteName;
-  mode: ExtractionMode;
-}): MetadataExtractionRequestContext {
-  const clientRunId = input.clientRunId ? String(input.clientRunId) : null;
-  const urlHash = buildMetadataUrlHash(input.url);
-  return {
-    key: `${clientRunId || "anon"}:${urlHash}:${input.attemptNumber}:${input.triggerType}`,
-    requestId: clientRunId || `${input.routeName}:${urlHash}:${input.attemptNumber}:${input.triggerType}`,
-    clientRunId,
-    urlHash,
-    attemptNumber: input.attemptNumber,
-    triggerType: input.triggerType,
-    routeName: input.routeName,
-    mode: input.mode,
-  };
-}
-
-function isReusableExtractionResultPayload(
-  payload: unknown,
-  canonicalUrl: string,
-): payload is Awaited<ReturnType<typeof runExtractionPipeline>> {
-  if (!payload || typeof payload !== "object") return false;
-  const candidateCanonicalUrl = getCanonicalUrlFromSource(payload);
-  if (!candidateCanonicalUrl || candidateCanonicalUrl !== canonicalUrl) return false;
-  return true;
-}
-
-function getDuplicateScopeForMetadataReuse(input: {
-  currentUserId?: string | null;
-  currentAnonymousId?: string | null;
-  priorUserId?: string | null;
-  priorAnonymousId?: string | null;
-}): "same_user" | "different_user" {
-  if (input.currentUserId && input.priorUserId && input.currentUserId === input.priorUserId) {
-    return "same_user";
-  }
-  if (!input.currentUserId && input.currentAnonymousId && input.priorAnonymousId && input.currentAnonymousId === input.priorAnonymousId) {
-    return "same_user";
-  }
-  return "different_user";
-}
-
-export async function resolveMetadataDuplicateReuse(input: {
-  canonicalUrl: string;
-  userId?: string | null;
-  anonymousId?: string | null;
-}): Promise<{ result: Awaited<ReturnType<typeof runExtractionPipeline>>; duplicate: MetadataDuplicateInfo } | null> {
-  const canonicalUrl = String(input.canonicalUrl || "").trim();
-  if (!canonicalUrl || !isPostgresConfigured()) return null;
-  const reusable = await getLatestReusableMetadataExtractionByCanonicalUrl(canonicalUrl);
-  if (!reusable) return null;
-  if (!isReusableExtractionResultPayload(reusable.extractionResult, canonicalUrl)) return null;
-  return {
-    result: reusable.extractionResult,
-    duplicate: {
-      kind: "link",
-      scope: getDuplicateScopeForMetadataReuse({
-        currentUserId: input.userId ?? null,
-        currentAnonymousId: input.anonymousId ?? null,
-        priorUserId: reusable.userId,
-        priorAnonymousId: reusable.anonymousId,
-      }),
-      canonicalUrl,
-      submittedLinkId: reusable.submittedLinkId,
-      reused: true,
-      costSaved: true,
-      reusedRunId: reusable.runId,
-      reusedAttemptNumber: reusable.attemptNumber,
-      priorStatus: reusable.priorStatus,
-    },
-  };
-}
-
-function getOrStartMetadataExtraction(
-  context: MetadataExtractionRequestContext,
-  work: () => Promise<Awaited<ReturnType<typeof runExtractionPipeline>>>,
-) {
-  const existing = metadataExtractionInFlight.get(context.key);
-  if (existing) {
-    console.warn("[metadata-extraction]", {
-      event: "join_inflight",
-      routeName: context.routeName,
-      existingRouteName: existing.context.routeName,
-      requestId: context.requestId,
-      clientRunId: context.clientRunId,
-      urlHash: context.urlHash,
-      attemptNumber: context.attemptNumber,
-      triggerType: context.triggerType,
-      mode: context.mode,
-    });
-    return {
-      promise: existing.promise,
-      isPrimary: false,
-      existingRouteName: existing.context.routeName,
-    };
-  }
-
-  const startedAt = Date.now();
-  console.info("[metadata-extraction]", {
-    event: "start",
-    routeName: context.routeName,
-    requestId: context.requestId,
-    clientRunId: context.clientRunId,
-    urlHash: context.urlHash,
-    attemptNumber: context.attemptNumber,
-    triggerType: context.triggerType,
-    mode: context.mode,
-  });
-
-  const promise = work().finally(() => {
-    metadataExtractionInFlight.delete(context.key);
-    console.info("[metadata-extraction]", {
-      event: "finish",
-      routeName: context.routeName,
-      requestId: context.requestId,
-      clientRunId: context.clientRunId,
-      urlHash: context.urlHash,
-      attemptNumber: context.attemptNumber,
-      triggerType: context.triggerType,
-      mode: context.mode,
-      elapsedMs: getElapsedMs(startedAt),
-    });
-  });
-  metadataExtractionInFlight.set(context.key, {
-    context,
-    startedAt,
-    promise,
-  });
-  return {
-    promise,
-    isPrimary: true,
-    existingRouteName: null,
-  };
-}
-
-function withMetadataDuplicate<T extends Record<string, unknown>>(payload: T, duplicate?: MetadataDuplicateInfo | null) {
-  return duplicate ? { ...payload, duplicate } : payload;
-}
-
-function resolveSavedPlaceIdFromRequest(req: express.Request): string {
-  const direct = String(req.body?.placeId || req.body?.finalPlaceId || "").trim();
-  if (direct) return direct;
-  const metadata = req.body?.metadata && typeof req.body.metadata === "object" ? req.body.metadata as Record<string, unknown> : null;
-  const metadataPlaceId = String(metadata?.placeId || metadata?.finalPlaceId || "").trim();
-  if (metadataPlaceId) return metadataPlaceId;
-  const title = String(req.body?.title || "").trim();
-  const locality = String(metadata?.locality || "").trim();
-  if (title || locality) {
-    return `manual:${createHash("sha1").update(JSON.stringify({ title, locality })).digest("hex").slice(0, 16)}`;
-  }
-  return "";
 }
 
 function getElapsedMs(startedAt: number): number {
@@ -546,6 +163,7 @@ function inferStreamProgressFromResult(result: any) {
 }
 
 async function executeMetadataExtraction(
+  req: express.Request,
   input: {
     url: string;
     mode: ExtractionMode;
@@ -555,7 +173,7 @@ async function executeMetadataExtraction(
     clientRunId?: string | null;
   },
 ) {
-  return runExtractionPipeline({
+  const result = await runExtractionPipeline({
     url: input.url,
     mode: input.mode,
     debug: input.debug,
@@ -563,12 +181,6 @@ async function executeMetadataExtraction(
     triggerType: input.triggerType,
     clientRunId: input.clientRunId ?? null,
   });
-}
-
-export async function persistMetadataExtractionArtifacts(
-  req: express.Request,
-  result: Awaited<ReturnType<typeof runExtractionPipeline>>,
-) {
   const attemptRecord = await createAnalyticsAttemptFromRequest(req, result);
   if (attemptRecord?.attemptId) {
     try {
@@ -579,52 +191,8 @@ export async function persistMetadataExtractionArtifacts(
     } catch (artifactError) {
       console.error("persist extraction attempt artifacts failed", artifactError);
     }
-    try {
-      await updateAttemptPromotedFields({
-        attemptId: attemptRecord.attemptId,
-        canonicalUrl: getCanonicalUrlFromSource(result),
-        stageStatus: result.stageStatus ?? null,
-        stageTimingsMs: result.stageTimingsMs ?? null,
-        transcriptAttempted: Boolean(result.transcript?.attempted),
-        transcriptSucceeded: Boolean(result.transcript?.used),
-        ocrAttempted: Boolean(result.ocr?.attempted),
-        ocrSucceeded: Boolean(result.ocr?.used),
-        visualAttempted: Boolean(result.visualFallback?.attempted),
-        visualSucceeded: Boolean(result.visualFallback?.selectedCandidate),
-        commentsFetchedCount: result.metadata?.commentEvidence?.commentsFetchedCount ?? null,
-        commentRepliesFetchedCount: result.metadata?.commentEvidence?.commentRepliesFetchedCount ?? null,
-        creatorReplyCount: result.metadata?.commentEvidence?.creatorReplyCount ?? null,
-      });
-    } catch (promotedError) {
-      console.error("persist extraction promoted fields failed", promotedError);
-    }
-    try {
-      const stageRows = buildAttemptStageRowsFromExtraction(result);
-      if (stageRows.length > 0) {
-        await upsertAttemptStageRuns({
-          runId: attemptRecord.runId,
-          attemptId: attemptRecord.attemptId,
-          attemptNumber: getAttemptNumberFromSource(result),
-          stages: stageRows,
-        });
-      }
-    } catch (stageError) {
-      console.error("persist extraction stage runs failed", stageError);
-    }
-    try {
-      const evidenceRows = buildAttemptEvidenceRowsFromExtraction(result);
-      if (evidenceRows.length > 0) {
-        await upsertAttemptEvidence({
-          runId: attemptRecord.runId,
-          attemptId: attemptRecord.attemptId,
-          attemptNumber: getAttemptNumberFromSource(result),
-          evidence: evidenceRows,
-        });
-      }
-    } catch (evidenceError) {
-      console.error("persist extraction evidence failed", evidenceError);
-    }
   }
+  return result;
 }
 
 function parseCookies(headerValue: string | undefined) {
@@ -671,34 +239,7 @@ async function optionalAuth(req: express.Request, _res: express.Response, next: 
   next();
 }
 
-function getAdminEmails() {
-  return new Set(
-    String(process.env.ADMIN_EMAILS || "")
-      .split(",")
-      .map((value) => value.trim().toLowerCase())
-      .filter(Boolean),
-  );
-}
-
-async function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
-  try {
-    const user = await resolveSessionUser(req);
-    if (!user) {
-      return res.status(401).json({ ok: false, error: "Unauthorized" });
-    }
-    const email = String(user.email || "").trim().toLowerCase();
-    if (!email || !getAdminEmails().has(email)) {
-      return res.status(403).json({ ok: false, error: "Forbidden" });
-    }
-    (req as express.Request & { authUser?: NonNullable<typeof user> }).authUser = user;
-    next();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Forbidden";
-    return res.status(403).json({ ok: false, error: message });
-  }
-}
-
-if (isPostgresConfigured() && process.env.NODE_ENV !== "test") {
+if (isPostgresConfigured()) {
   ensureAuthSchema().catch((error) => {
     console.error("auth schema bootstrap failed", error);
   });
@@ -881,58 +422,25 @@ app.get("/api/location/resolve-place", async (req, res) => {
   }
 });
 
-app.post("/api/metadata/extract", optionalAuth, async (req, res) => {
+app.post("/api/metadata/extract", async (req, res) => {
   const { url, mode, debug, attemptNumber, triggerType, clientRunId } = parseExtractionRequest(req);
   try {
     if (!url) {
       return res.status(400).json({ ok: false, error: "url is required" });
     }
-    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
-    const canonicalUrl = canonicalizeUrl(url);
-    const duplicateReuse = await resolveMetadataDuplicateReuse({
-      canonicalUrl,
-      userId: authUser?.userId ?? null,
-      anonymousId: req.body?.analytics?.anonymousId ? String(req.body.analytics.anonymousId).trim() : null,
-    });
-    if (duplicateReuse) {
-      console.info("[metadata-extraction]", {
-        event: "reuse_duplicate_link",
-        clientRunId,
-        canonicalUrl,
-        duplicate: duplicateReuse.duplicate,
-      });
-      await persistMetadataExtractionArtifacts(req, duplicateReuse.result);
-      if (featureFlags.extractionV2) {
-        return res.json(withMetadataDuplicate({ ok: true, ...duplicateReuse.result }, duplicateReuse.duplicate));
-      }
-      const { source, platform, canonicalUrl: reusedCanonicalUrl, stageStatus, stages, stageTimingsMs, stageFailures, sla, ...legacy } = duplicateReuse.result;
-      return res.json(withMetadataDuplicate({ ok: true, ...legacy }, duplicateReuse.duplicate));
-    }
 
-    const context = buildMetadataExtractionContext({
-      url,
-      mode,
-      clientRunId,
-      attemptNumber,
-      triggerType,
-      routeName: "non_stream",
-    });
-    const execution = getOrStartMetadataExtraction(context, () => executeMetadataExtraction({
+    const result = await executeMetadataExtraction(req, {
       url,
       mode,
       debug,
       attemptNumber,
       triggerType,
       clientRunId,
-    }));
-    const result = await execution.promise;
-    if (execution.isPrimary) {
-      await persistMetadataExtractionArtifacts(req, result);
-    }
+    });
     if (featureFlags.extractionV2) {
       return res.json({ ok: true, ...result });
     }
-    const { source, platform, canonicalUrl: resultCanonicalUrl, stageStatus, stages, stageTimingsMs, stageFailures, sla, ...legacy } = result;
+    const { source, platform, canonicalUrl, stageStatus, stages, stageTimingsMs, stageFailures, sla, ...legacy } = result;
     return res.json({ ok: true, ...legacy });
   } catch (error) {
     const message = error instanceof Error ? error.message : "extraction failed";
@@ -961,7 +469,7 @@ app.post("/api/metadata/extract", optionalAuth, async (req, res) => {
   }
 });
 
-app.post("/api/metadata/extract/stream-test", optionalAuth, async (req, res) => {
+app.post("/api/metadata/extract/stream-test", async (req, res) => {
   const { url, mode, debug, attemptNumber, triggerType, clientRunId } = parseExtractionRequest(req);
   if (!url) {
     return res.status(400).json({ ok: false, error: "url is required" });
@@ -1001,53 +509,14 @@ app.post("/api/metadata/extract/stream-test", optionalAuth, async (req, res) => 
   });
 
   try {
-    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
-    const canonicalUrl = canonicalizeUrl(url);
-    const duplicateReuse = await resolveMetadataDuplicateReuse({
-      canonicalUrl,
-      userId: authUser?.userId ?? null,
-      anonymousId: req.body?.analytics?.anonymousId ? String(req.body.analytics.anonymousId).trim() : null,
-    });
-    if (duplicateReuse) {
-      await persistMetadataExtractionArtifacts(req, duplicateReuse.result);
-      sse.writeEvent("completed", {
-        stage: "completed",
-        message: "Extraction reused from cached analysis.",
-        elapsedMs: getElapsedMs(startedAt),
-        attemptNumber,
-        result: withMetadataDuplicate({ ok: true, ...duplicateReuse.result }, duplicateReuse.duplicate),
-      });
-      sse.end();
-      return;
-    }
-    const context = buildMetadataExtractionContext({
-      url,
-      mode,
-      clientRunId,
-      attemptNumber,
-      triggerType,
-      routeName: "stream_test",
-    });
-    const execution = getOrStartMetadataExtraction(context, () => executeMetadataExtraction({
+    const result = await executeMetadataExtraction(req, {
       url,
       mode,
       debug,
       attemptNumber,
       triggerType,
       clientRunId,
-    }));
-    if (!execution.isPrimary) {
-      sse.writeEvent("joined_inflight", {
-        stage: "joined_inflight",
-        message: `Joined existing ${execution.existingRouteName || "metadata"} extraction.`,
-        elapsedMs: getElapsedMs(startedAt),
-        attemptNumber,
-      });
-    }
-    const result = await execution.promise;
-    if (execution.isPrimary) {
-      await persistMetadataExtractionArtifacts(req, result);
-    }
+    });
 
     for (const event of inferStreamProgressFromResult(result)) {
       if (sse.closed) return;
@@ -1113,7 +582,7 @@ app.post("/api/metadata/extract/stream-test", optionalAuth, async (req, res) => 
   }
 });
 
-app.post("/api/metadata/extract/stream", optionalAuth, async (req, res) => {
+app.post("/api/metadata/extract/stream", async (req, res) => {
   const { url, mode, debug, attemptNumber, triggerType, clientRunId } = parseExtractionRequest(req);
   if (!url) {
     return res.status(400).json({ ok: false, error: "url is required" });
@@ -1159,46 +628,10 @@ app.post("/api/metadata/extract/stream", optionalAuth, async (req, res) => {
   }, 12000);
 
   try {
-    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
-    const canonicalUrl = canonicalizeUrl(url);
-    const duplicateReuse = await resolveMetadataDuplicateReuse({
-      canonicalUrl,
-      userId: authUser?.userId ?? null,
-      anonymousId: req.body?.analytics?.anonymousId ? String(req.body.analytics.anonymousId).trim() : null,
-    });
-    if (duplicateReuse) {
-      writeProgressEvent("completed", {
-        stage: "completed",
-        message: "Extraction reused from cached analysis.",
-        elapsedMs: getElapsedMs(startedAt),
-        attemptNumber,
-        result: withMetadataDuplicate({ ok: true, ...duplicateReuse.result }, duplicateReuse.duplicate),
-      });
-      clearHeartbeat();
-      sse.end();
-      void persistMetadataExtractionArtifacts(req, duplicateReuse.result);
-      return;
-    }
-    const context = buildMetadataExtractionContext({
-      url,
-      mode,
-      clientRunId,
-      attemptNumber,
-      triggerType,
-      routeName: "stream",
-    });
-    const execution = getOrStartMetadataExtraction(context, () => executeMetadataExtraction({
-      url,
-      mode,
-      debug,
-      attemptNumber,
-      triggerType,
-      clientRunId,
-    }));
     console.info("[sse] before runExtractionPipeline", { label: "metadata_extract_stream", url, mode, attemptNumber, triggerType });
     writeProgressEvent("started", {
       stage: "started",
-      message: execution.isPrimary ? "Extraction started." : `Joined existing ${execution.existingRouteName || "metadata"} extraction.`,
+      message: "Extraction started.",
       elapsedMs: getElapsedMs(startedAt),
       attemptNumber,
     });
@@ -1210,15 +643,14 @@ app.post("/api/metadata/extract/stream", optionalAuth, async (req, res) => {
         attemptNumber,
       });
     }
-    if (!execution.isPrimary) {
-      writeProgressEvent("joined_inflight", {
-        stage: "joined_inflight",
-        message: `Joined existing ${execution.existingRouteName || "metadata"} extraction.`,
-        elapsedMs: getElapsedMs(startedAt),
-        attemptNumber,
-      });
-    }
-    const result = await execution.promise;
+    const result = await runExtractionPipeline({
+      url,
+      mode,
+      debug,
+      attemptNumber,
+      triggerType,
+      clientRunId,
+    });
     for (const event of inferStreamProgressFromResult(result)) {
       if (seenStages.has(event.stage)) continue;
       writeProgressEvent(event.stage, {
@@ -1239,9 +671,19 @@ app.post("/api/metadata/extract/stream", optionalAuth, async (req, res) => {
       result: { ok: true, ...result },
     });
     sse.end();
-    if (execution.isPrimary) {
-      void persistMetadataExtractionArtifacts(req, result);
-    }
+    void (async () => {
+      const attemptRecord = await createAnalyticsAttemptFromRequest(req, result);
+      if (attemptRecord?.attemptId) {
+        try {
+          await persistReelAnalyticsAttemptArtifacts({
+            attemptId: attemptRecord.attemptId,
+            extractionResult: result,
+          });
+        } catch (artifactError) {
+          console.error("persist extraction attempt artifacts failed", artifactError);
+        }
+      }
+    })();
   } catch (error) {
     clearHeartbeat();
     const message = error instanceof Error ? error.message : "extraction failed";
@@ -1377,7 +819,7 @@ app.get("/api/metadata/jobs/:jobId", async (req, res) => {
   return res.status(404).json({ ok: false, error: "job not found" });
 });
 
-export async function createAnalyticsAttemptFromRequest(
+async function createAnalyticsAttemptFromRequest(
   req: express.Request,
   source: any,
 ) {
@@ -1385,196 +827,20 @@ export async function createAnalyticsAttemptFromRequest(
   const analyticsPayload = req.body?.analytics && typeof req.body.analytics === "object" ? req.body.analytics : null;
   if (!analyticsPayload?.clientRunId) return null;
   const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
-  const canonicalUrl = getCanonicalUrlFromSource(source);
-  const sourcePlatform = getSourcePlatformFromSource(source);
   try {
-    const attemptRecord = await createReelAnalyticsAttempt({
+    return await createReelAnalyticsAttempt({
       clientRunId: String(analyticsPayload.clientRunId),
       userId: authUser?.userId ?? null,
       anonymousId: analyticsPayload?.anonymousId ? String(analyticsPayload.anonymousId) : null,
-      sourceUrl: canonicalUrl || String(source?.metadata?.sourceUrl || source?.source || ""),
-      sourcePlatform,
+      sourceUrl: String(source?.metadata?.canonicalUrl || source?.metadata?.sourceUrl || source?.source || ""),
+      sourcePlatform: source?.metadata?.platform ? String(source.metadata.platform) : null,
       attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
       triggerType: analyticsPayload?.triggerType === "retry" ? "retry" : "initial",
     });
-    if (!attemptRecord) return null;
-    if (canonicalUrl) {
-      try {
-        const submittedLink = await upsertSubmittedLink({
-          canonicalUrl,
-          canonicalUrlHash: buildMetadataUrlHash(canonicalUrl),
-          sourcePlatform,
-          latestTitle: typeof source?.metadata?.title === "string" ? source.metadata.title : null,
-          latestDescription: typeof source?.metadata?.description === "string" ? source.metadata.description : null,
-          latestImageUrl: typeof source?.metadata?.imageUrl === "string" ? source.metadata.imageUrl : null,
-        });
-        if (submittedLink?.id) {
-          await linkRunToSubmittedLink({
-            runId: attemptRecord.runId,
-            submittedLinkId: submittedLink.id,
-            canonicalUrl,
-          });
-        }
-        await updateAttemptPromotedFields({
-          attemptId: attemptRecord.attemptId,
-          canonicalUrl,
-        });
-      } catch (observabilityError) {
-        console.error("create analytics attempt observability setup failed", observabilityError);
-      }
-    }
-    return attemptRecord;
   } catch (attemptError) {
     console.error("create analytics attempt failed", attemptError);
     return null;
   }
-}
-
-export function getCanonicalUrlFromSource(source: any): string | null {
-  const raw = source?.canonicalUrl || source?.metadata?.canonicalUrl || source?.metadata?.sourceUrl || source?.source || "";
-  const normalized = String(raw || "").trim();
-  return normalized || null;
-}
-
-export function getSourcePlatformFromSource(source: any): string | null {
-  const platform = source?.platform || source?.metadata?.platform || null;
-  return typeof platform === "string" && platform.trim() ? platform.trim() : null;
-}
-
-export function getAttemptNumberFromSource(source: any): number {
-  return Number(source?.attemptInfo?.attemptNumber ?? source?.debug?.orchestration?.attemptNumber ?? 1) || 1;
-}
-
-export function buildAttemptStageRowsFromExtraction(result: ExtractionResult): Array<{
-  stageKey: string;
-  status?: string | null;
-  provider?: string | null;
-  reason?: string | null;
-  latencyMs?: number | null;
-  chars?: number | null;
-  metadataJson?: Record<string, unknown> | null;
-}> {
-  const stages = result.stages || {};
-  const stageTimings = result.stageTimingsMs || {};
-  return Object.entries(stages).map(([stageKey, stage]) => ({
-    stageKey,
-    status: stage?.status ?? null,
-    provider: stage?.provider ?? null,
-    reason: stage?.reason ?? null,
-    latencyMs: typeof stageTimings[stageKey as keyof typeof stageTimings] === "number"
-      ? Number(stageTimings[stageKey as keyof typeof stageTimings])
-      : null,
-    chars: typeof stage?.chars === "number" ? stage.chars : null,
-    metadataJson: {
-      source: "extraction_result",
-    },
-  }));
-}
-
-export function buildAttemptEvidenceRowsFromExtraction(result: ExtractionResult): Array<{
-  evidenceType: string;
-  position?: number | null;
-  summaryText?: string | null;
-  sourceRef?: string | null;
-  metricsJson?: Record<string, unknown> | null;
-  rawJson?: Record<string, unknown> | null;
-}> {
-  const evidence: Array<{
-    evidenceType: string;
-    position?: number | null;
-    summaryText?: string | null;
-    sourceRef?: string | null;
-    metricsJson?: Record<string, unknown> | null;
-    rawJson?: Record<string, unknown> | null;
-  }> = [];
-  const commentEvidence = result.metadata?.commentEvidence;
-  if (commentEvidence?.attempted) {
-    evidence.push({
-      evidenceType: "comments",
-      position: 0,
-      summaryText: commentEvidence.pinnedComment || commentEvidence.creatorReplies?.[0] || commentEvidence.topComments?.[0] || null,
-      sourceRef: commentEvidence.provider || null,
-      metricsJson: {
-        commentsFetchedCount: commentEvidence.commentsFetchedCount ?? 0,
-        commentRepliesFetchedCount: commentEvidence.commentRepliesFetchedCount ?? 0,
-        creatorReplyCount: commentEvidence.creatorReplyCount ?? 0,
-        timedOut: Boolean(commentEvidence.timedOut),
-      },
-      rawJson: {
-        reason: commentEvidence.reason ?? null,
-        pinnedComment: commentEvidence.pinnedComment ?? null,
-        topCommentCount: Array.isArray(commentEvidence.topComments) ? commentEvidence.topComments.length : 0,
-      },
-    });
-  }
-  if (result.transcript?.attempted) {
-    evidence.push({
-      evidenceType: "transcript",
-      position: 0,
-      summaryText: String(result.transcript.text || "").trim().slice(0, 240) || null,
-      sourceRef: result.transcript.source || null,
-      metricsJson: {
-        attempted: Boolean(result.transcript.attempted),
-        succeeded: Boolean(result.transcript.used),
-        chars: String(result.transcript.text || "").trim().length,
-      },
-      rawJson: {
-        reason: result.transcript.reason ?? null,
-      },
-    });
-  }
-  if (result.ocr?.attempted) {
-    evidence.push({
-      evidenceType: "ocr",
-      position: 0,
-      summaryText: String(result.ocr.text || "").trim().slice(0, 240) || null,
-      sourceRef: "frame_ocr",
-      metricsJson: {
-        attempted: Boolean(result.ocr.attempted),
-        succeeded: Boolean(result.ocr.used),
-        chars: String(result.ocr.text || "").trim().length,
-      },
-      rawJson: {
-        reason: result.ocr.reason ?? null,
-      },
-    });
-  }
-  if (result.visualFallback?.attempted) {
-    evidence.push({
-      evidenceType: "visual",
-      position: 0,
-      summaryText: result.visualFallback.summaryText || result.visualFallback.selectedCandidate?.candidateName || null,
-      sourceRef: result.visualFallback.provider || null,
-      metricsJson: {
-        attempted: Boolean(result.visualFallback.attempted),
-        selectedCandidate: Boolean(result.visualFallback.selectedCandidate),
-        candidateCount: Array.isArray(result.visualFallback.candidates) ? result.visualFallback.candidates.length : 0,
-      },
-      rawJson: {
-        reason: result.visualFallback.reason ?? null,
-        selectedCandidateName: result.visualFallback.selectedCandidate?.candidateName ?? null,
-        selectedCandidatePlaceId: result.visualFallback.selectedCandidate?.placeId ?? null,
-      },
-    });
-  }
-  return evidence;
-}
-
-export function getAcceptedAfterFromSource(source: any): string | null {
-  const acceptedAfter = source?.debug?.orchestration?.acceptedAfter;
-  return typeof acceptedAfter === "string" && acceptedAfter.trim() ? acceptedAfter.trim() : null;
-}
-
-export function getRouteFromSource(source: any): string | null {
-  const route = source?.debug?.orchestration?.route;
-  return typeof route === "string" && route.trim() ? route.trim() : null;
-}
-
-export function getFinalSelectedPlaceIdFromIntelligenceResult(result: IntelligencePipelineResult): string | null {
-  const entities = Array.isArray(result.output?.structuredEntities) ? result.output.structuredEntities : [];
-  if (entities.length !== 1) return null;
-  const entity = entities[0] as StructuredEntity | undefined;
-  return entity?.placeId && String(entity.placeId).trim() ? String(entity.placeId).trim() : null;
 }
 
 async function persistAnalyticsEntitiesForAttempt(input: {
@@ -1644,47 +910,7 @@ function getAttempt1FastPathIntelligenceResult(source: any): IntelligencePipelin
   const fastPath = source?.debug?.fastPathIntelligence;
   if (attemptNumber !== 1 || acceptedAfter !== "description") return null;
   if (!fastPath || fastPath.accepted !== true || !fastPath.result) return null;
-  const result = fastPath.result as IntelligencePipelineResult;
-  const sanitized = sanitizeIntelligenceOutputEntityNames(result.output);
-  for (const event of sanitized.events) {
-    console.info("[draft-async]", event);
-  }
-  return sanitized.events.length > 0
-    ? {
-        ...result,
-        output: sanitized.output,
-      }
-    : result;
-}
-
-function normalizeEntityEditScalarValue(field: TrustedEntityEditField, value: unknown): string | number | null {
-  if (field === "lat" || field === "lng") {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : null;
-  }
-  const trimmed = String(value ?? "").trim();
-  return trimmed ? trimmed : null;
-}
-
-function parseTrustedEntityEditDiffs(payload: unknown): Array<{ fieldName: TrustedEntityEditField; beforeValue: string | number | null; afterValue: string | number | null }> {
-  if (!payload || typeof payload !== "object") return [];
-  const rawDiffs = Array.isArray((payload as Record<string, unknown>).editDiffs)
-    ? (payload as Record<string, unknown>).editDiffs
-    : [];
-  const allowedFields = new Set<TrustedEntityEditField>(["title", "category", "subtitle", "placeId", "finalPlaceId", "lat", "lng"]);
-  const diffs: Array<{ fieldName: TrustedEntityEditField; beforeValue: string | number | null; afterValue: string | number | null }> = [];
-
-  for (const item of rawDiffs) {
-    if (!item || typeof item !== "object") continue;
-    const fieldName = String((item as Record<string, unknown>).field || "").trim() as TrustedEntityEditField;
-    if (!allowedFields.has(fieldName)) continue;
-    const beforeValue = normalizeEntityEditScalarValue(fieldName, (item as Record<string, unknown>).before);
-    const afterValue = normalizeEntityEditScalarValue(fieldName, (item as Record<string, unknown>).after);
-    if (beforeValue === afterValue) continue;
-    diffs.push({ fieldName, beforeValue, afterValue });
-  }
-
-  return diffs;
+  return fastPath.result as IntelligencePipelineResult;
 }
 
 app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
@@ -1783,30 +1009,12 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
           console.error("create reel job failed", jobError);
         }
       }
-      const draftOutput = sanitizeIntelligenceOutputEntityNames(buildDraftIntelligenceOutput(source));
-      for (const event of draftOutput.events) {
-        console.info("[draft-async]", event);
-      }
-      console.info("[draft-async]", {
-        event: "draft_output",
-        clientRunId: analyticsPayload?.clientRunId ? String(analyticsPayload.clientRunId) : null,
-        attemptNumber: Number(analyticsPayload?.attemptNumber) || 1,
-        acceptedAfter: String(source?.debug?.orchestration?.acceptedAfter || ""),
-        ocrChars: String(source?.ocr?.text || "").trim().length,
-        entityCount: Array.isArray(draftOutput.output.structuredEntities) ? draftOutput.output.structuredEntities.length : 0,
-        entities: (draftOutput.output.structuredEntities || []).map((entity) => ({
-          name: entity.name,
-          category: entity.category,
-          locality: entity.locality,
-          confidence: entity.confidence,
-        })),
-        status: draftOutput.output.status,
-      });
+      const draftOutput = buildDraftIntelligenceOutput(source);
       return res.status(202).json({
         ok: true,
         mode,
         draft: true,
-        output: draftOutput.output,
+        output: draftOutput,
         validationErrors: [],
         fixed: false,
         timingsMs: {
@@ -1826,14 +1034,11 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
     }
 
     if (!featureFlags.intelligenceStructured) {
-      const draftOutput = sanitizeIntelligenceOutputEntityNames(buildDraftIntelligenceOutput(source));
-      for (const event of draftOutput.events) {
-        console.info("[draft-output]", event);
-      }
+      const draftOutput = buildDraftIntelligenceOutput(source);
       return res.json({
         ok: true,
         mode,
-        output: draftOutput.output,
+        output: draftOutput,
         validationErrors: [],
         fixed: false,
         timingsMs: {
@@ -1898,16 +1103,6 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
         console.error("finalize analytics attempt failed", attemptFinalizeError);
       }
       try {
-        await updateAttemptPromotedFields({
-          attemptId: attemptRecord.attemptId,
-          canonicalUrl: getCanonicalUrlFromSource(source),
-          acceptedAfter: getAcceptedAfterFromSource(source),
-          route: getRouteFromSource(source),
-        });
-      } catch (attemptPromotedError) {
-        console.error("persist intelligence promoted fields failed", attemptPromotedError);
-      }
-      try {
         await persistReelAnalyticsAttemptArtifacts({
           attemptId: attemptRecord.attemptId,
           intelligenceResult: result,
@@ -1927,17 +1122,6 @@ app.post("/api/intelligence/extract", optionalAuth, async (req, res) => {
         });
       } catch (entityError) {
         console.error("persist analytics entities failed", entityError);
-      }
-      try {
-        const finalSelectedPlaceId = getFinalSelectedPlaceIdFromIntelligenceResult(result);
-        if (finalSelectedPlaceId) {
-          await updateRunFinalOutcome({
-            runId: attemptRecord.runId,
-            finalSelectedPlaceId,
-          });
-        }
-      } catch (runOutcomeError) {
-        console.error("persist intelligence run final selected place failed", runOutcomeError);
       }
     }
     return res.json({ ok: true, mode, ...result });
@@ -2000,15 +1184,6 @@ app.post("/api/analytics/reel-event", optionalAuth, async (req, res) => {
     try {
       const runId = await getReelAnalyticsRunIdByClientRunId(clientRunId);
       if (runId) {
-        try {
-          await updateRunFinalOutcome({
-            runId,
-            finalUserAction: eventName as "saved" | "edited" | "discarded",
-            finalSelectedPlaceId: req.body?.finalPlaceId ? String(req.body.finalPlaceId).trim() : null,
-          });
-        } catch (runOutcomeError) {
-          console.error("update analytics run final outcome failed", runOutcomeError);
-        }
         const payloadEntityIndex =
           req.body?.payload && typeof req.body.payload === "object" && Number.isFinite(Number((req.body.payload as Record<string, unknown>).entityIndex))
             ? Number((req.body.payload as Record<string, unknown>).entityIndex)
@@ -2021,27 +1196,6 @@ app.post("/api/analytics/reel-event", optionalAuth, async (req, res) => {
           eventName: eventName as "saved" | "edited" | "discarded",
           finalPlaceId: req.body?.finalPlaceId ? String(req.body.finalPlaceId).trim() : null,
         });
-        if (eventName === "edited") {
-          try {
-            const trustedDiffs = parseTrustedEntityEditDiffs(req.body?.payload);
-            if (trustedDiffs.length > 0) {
-              await insertEntityFieldEdits({
-                edits: trustedDiffs.map((diff) => ({
-                  runId,
-                  attemptNumber: Number(req.body?.attemptNumber) || 1,
-                  entityId: req.body?.entityId ? String(req.body.entityId).trim() : null,
-                  entityIndex: Number.isFinite(Number(req.body?.entityIndex)) ? Number(req.body.entityIndex) : payloadEntityIndex,
-                  fieldName: diff.fieldName,
-                  beforeValue: diff.beforeValue,
-                  afterValue: diff.afterValue,
-                  editedByUserId: authUser?.userId ?? null,
-                })),
-              });
-            }
-          } catch (fieldEditError) {
-            console.error("insert entity field edits failed", fieldEditError);
-          }
-        }
       }
     } catch (entityError) {
       console.error("mark analytics entity outcome failed", entityError);
@@ -2049,35 +1203,6 @@ app.post("/api/analytics/reel-event", optionalAuth, async (req, res) => {
     return res.status(201).json({ ok: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not record analytics event";
-    return res.status(400).json({ ok: false, error: message });
-  }
-});
-
-app.post("/api/analytics/app-event", optionalAuth, async (req, res) => {
-  try {
-    if (!isPostgresConfigured()) {
-      return res.status(204).end();
-    }
-    const eventType = String(req.body?.eventType || "").trim();
-    if (eventType !== "app_opened" && eventType !== "login_seen") {
-      return res.status(400).json({ ok: false, error: "Invalid event_type" });
-    }
-    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
-    const anonymousId = req.body?.anonymousId ? String(req.body.anonymousId).trim() : null;
-    try {
-      await recordAppUsageEvent({
-        eventType,
-        userId: authUser?.userId ?? null,
-        anonymousId,
-        metadataJson: null,
-      });
-      return res.status(200).json({ ok: true, recorded: true });
-    } catch (recordError) {
-      console.error("record app usage event failed", recordError);
-      return res.status(200).json({ ok: true, recorded: false });
-    }
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not record app usage event";
     return res.status(400).json({ ok: false, error: message });
   }
 });
@@ -2123,22 +1248,51 @@ app.post("/api/auth/google/verify", async (req, res) => {
       return res.status(503).json({ ok: false, error: "Auth database is not configured." });
     }
 
-    const idToken = String(req.body?.idToken || "").trim();
     const accessToken = String(req.body?.accessToken || "").trim();
-    if (!idToken && !accessToken) {
-      return res.status(400).json({ ok: false, error: "idToken or accessToken is required" });
+    const expectedClientId = String(process.env.GOOGLE_CLIENT_ID || "").trim();
+
+    if (!expectedClientId) {
+      return res.status(503).json({ ok: false, error: "Google login is not configured yet." });
+    }
+    if (!accessToken) {
+      return res.status(400).json({ ok: false, error: "accessToken is required" });
     }
 
-    const googleProfile = idToken
-      ? await verifyGoogleIdToken(idToken)
-      : await verifyGoogleAccessToken(accessToken);
+    const userInfoResponse = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+    });
+
+    if (!userInfoResponse.ok) {
+      return res.status(401).json({ ok: false, error: "Google authentication failed." });
+    }
+
+    const userInfo = (await userInfoResponse.json()) as {
+      sub?: string;
+      name?: string;
+      email?: string;
+      picture?: string;
+      email_verified?: boolean;
+      aud?: string;
+    };
+
+    if (!userInfo?.sub || !userInfo?.email) {
+      return res.status(400).json({ ok: false, error: "Google account did not return required profile fields." });
+    }
+    if (!userInfo.email_verified) {
+      return res.status(400).json({ ok: false, error: "Google email is not verified." });
+    }
+    if (userInfo.aud && userInfo.aud !== expectedClientId) {
+      return res.status(401).json({ ok: false, error: "Google token audience mismatch." });
+    }
 
     const user = await upsertGoogleVerifiedUser({
-      email: googleProfile.email,
-      emailVerified: googleProfile.emailVerified,
-      displayName: googleProfile.displayName,
-      avatarUrl: googleProfile.avatarUrl,
-      providerId: googleProfile.providerId,
+      email: userInfo.email,
+      emailVerified: Boolean(userInfo.email_verified),
+      displayName: userInfo.name || null,
+      avatarUrl: userInfo.picture || null,
+      providerId: userInfo.sub,
     });
     const session = await createSession(user.userId);
     res.setHeader("Set-Cookie", buildSessionCookie(session.rawToken));
@@ -2148,9 +1302,6 @@ app.post("/api/auth/google/verify", async (req, res) => {
       user,
     });
   } catch (error) {
-    if (error instanceof PublicAuthError) {
-      return res.status(error.status).json({ ok: false, error: error.message });
-    }
     const message = error instanceof Error ? error.message : "Google authentication failed.";
     return res.status(500).json({ ok: false, error: message });
   }
@@ -2236,222 +1387,20 @@ app.get("/api/saved-places", requireAuth, async (req, res) => {
 app.post("/api/saved-places", requireAuth, async (req, res) => {
   try {
     const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
-    const placeId = resolveSavedPlaceIdFromRequest(req);
+    const placeId = String(req.body?.placeId || "").trim();
     const title = String(req.body?.title || "").trim();
     const category = req.body?.category ? String(req.body.category).trim() : null;
     const metadata = req.body?.metadata ?? {};
-    const existing = await findSavedPlaceByUserAndPlaceId(authUser!.userId, placeId);
-    if (existing) {
-      const duplicate: SavedPlaceDuplicateInfo = {
-        kind: "place",
-        scope: "same_user",
-        placeId,
-        existingSavedPlaceId: existing.id,
-      };
-      return res.json({ ok: true, alreadySaved: true, duplicate, item: existing });
-    }
 
-    const saveResult = await upsertSavedPlace(authUser!.userId, {
+    const item = await upsertSavedPlace(authUser!.userId, {
       placeId,
       title,
       category,
       metadata,
     });
-    return res.status(201).json({ ok: true, alreadySaved: saveResult.alreadySaved, item: saveResult.item });
+    return res.status(201).json({ ok: true, item });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not save place";
-    return res.status(400).json({ ok: false, error: message });
-  }
-});
-
-app.get("/api/admin/observability/overview", requireAdmin, async (req, res) => {
-  try {
-    const overview = await getAdminObservabilityOverview({
-      from: req.query?.from ? String(req.query.from).trim() : null,
-      to: req.query?.to ? String(req.query.to).trim() : null,
-      platform: req.query?.platform ? String(req.query.platform).trim() : null,
-    });
-    return res.json({
-      ok: true,
-      totals: {
-        submittedLinks: overview.totalSubmittedLinks,
-        runs: overview.totalRuns,
-        attempts: overview.totalAttempts,
-        savedRuns: overview.savedRuns,
-        editedRuns: overview.editedRuns,
-        discardedRuns: overview.discardedRuns,
-      },
-      rates: {
-        saveRate: overview.saveRate,
-        editRate: overview.editRate,
-        discardRate: overview.discardRate,
-      },
-      averages: {
-        attemptCount: overview.averageAttemptCount,
-        extractionTimeMs: overview.averageExtractionTimeMs,
-      },
-      estimates: {
-        cacheReuseCount: overview.estimatedCacheReuseCount,
-        duplicateSavedPlaceCount: overview.estimatedDuplicateSavedPlaceCount,
-        cacheReuseIsEstimated: true,
-        duplicateSavedPlaceIsEstimated: true,
-      },
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not fetch admin overview";
-    return res.status(400).json({ ok: false, error: message });
-  }
-});
-
-app.get("/api/admin/observability/links", requireAdmin, async (req, res) => {
-  try {
-    const result = await getAdminObservabilityLinks({
-      from: req.query?.from ? String(req.query.from).trim() : null,
-      to: req.query?.to ? String(req.query.to).trim() : null,
-      platform: req.query?.platform ? String(req.query.platform).trim() : null,
-      status: req.query?.status ? String(req.query.status).trim() : null,
-      reused: req.query?.reused
-        ? String(req.query.reused).toLowerCase() === "true"
-        : req.query?.reused === "false"
-          ? false
-          : null,
-      acceptedAfter: req.query?.acceptedAfter ? String(req.query.acceptedAfter).trim() : null,
-      q: req.query?.q ? String(req.query.q).trim() : null,
-      page: req.query?.page ? Number(req.query.page) : undefined,
-      pageSize: req.query?.pageSize ? Number(req.query.pageSize) : undefined,
-    });
-    return res.json({
-      ok: true,
-      rows: result.rows,
-      pagination: {
-        total: result.total,
-        page: result.page,
-        pageSize: result.pageSize,
-        totalPages: result.totalPages,
-      },
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not fetch admin links";
-    return res.status(400).json({ ok: false, error: message });
-  }
-});
-
-app.get("/api/admin/observability/links/:submittedLinkId", requireAdmin, async (req, res) => {
-  try {
-    const submittedLinkId = String(req.params?.submittedLinkId || "").trim();
-    const includeRaw = req.query?.includeRaw ? String(req.query.includeRaw).toLowerCase() === "true" : false;
-    const result = await getAdminObservabilityLinkDetail({ submittedLinkId, includeRaw });
-    return res.json({ ok: true, ...result });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not fetch link detail";
-    return res.status(400).json({ ok: false, error: message });
-  }
-});
-
-app.get("/api/admin/usage/overview", requireAdmin, async (req, res) => {
-  try {
-    const normalizeDate = (value: unknown) => {
-      const normalized = String(value || "").trim();
-      return normalized && Number.isFinite(new Date(normalized).getTime()) ? normalized : null;
-    };
-    const userTypeRaw = req.query?.userType ? String(req.query.userType).trim() : "";
-    const userType = userTypeRaw === "logged_in" || userTypeRaw === "anonymous" ? userTypeRaw : null;
-    const platform = req.query?.platform ? String(req.query.platform).trim() : "";
-    const from = normalizeDate(req.query?.from);
-    const to = normalizeDate(req.query?.to);
-    const excludeTestUsersRaw = req.query?.excludeTestUsers ? String(req.query.excludeTestUsers).trim().toLowerCase() : "";
-    const excludeTestUsers = excludeTestUsersRaw === "false" ? false : true;
-    const result = await getAdminUsageOverview({
-      from,
-      to,
-      platform: platform || null,
-      userType,
-      excludeTestUsers,
-    });
-    return res.json({
-      ok: true,
-      summary: {
-        loggedInUsers: result.loggedInUsers,
-        anonymousUsers: result.anonymousUsers,
-        uniqueUsers: result.uniqueUsers,
-        appOpenedUsers: result.appOpenedUsers,
-        loginSeenUsers: result.loginSeenUsers,
-        loggedInButNoRunUsers: result.loggedInButNoRunUsers,
-        newUsers: result.newUsers,
-        returningUsers: result.returningUsers,
-        repeatUsers: result.repeatUsers,
-        usersSubmittedAtLeastOneLink: result.usersSubmittedAtLeastOneLink,
-        usersSavedAtLeastOnePlace: result.usersSavedAtLeastOnePlace,
-        usersWithTwoPlusSavedPlaces: result.usersWithTwoPlusSavedPlaces,
-        usersSubmittedButDidNotSave: result.usersSubmittedButDidNotSave,
-        totalSavedPlaces: result.totalSavedPlaces,
-      },
-      rates: {
-        savesPerUser: result.savesPerUser,
-        linksPerUser: result.linksPerUser,
-        saveRatePerUser: result.saveRatePerUser,
-      },
-      activity: {
-        lastActiveAt: result.lastActiveAt,
-      },
-      definitions: {
-        newUser: "first_seen_at within selected range",
-        returningUser: "active in selected range and first_seen_at before selected range",
-        repeatUser: "runs_count >= 2",
-        droppedAfterExtraction: "unique_links_submitted > 0 and saved_places_count = 0",
-        saveRatePerUser: "users_who_saved / users_who_submitted",
-        rowSaveRate: "saved_places_count / unique_links_submitted",
-      },
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not fetch admin usage overview";
-    return res.status(400).json({ ok: false, error: message });
-  }
-});
-
-app.get("/api/admin/usage/users", requireAdmin, async (req, res) => {
-  try {
-    const normalizeDate = (value: unknown) => {
-      const normalized = String(value || "").trim();
-      return normalized && Number.isFinite(new Date(normalized).getTime()) ? normalized : null;
-    };
-    const userTypeRaw = req.query?.userType ? String(req.query.userType).trim() : "";
-    const statusRaw = req.query?.status ? String(req.query.status).trim() : "";
-    const userType = userTypeRaw === "logged_in" || userTypeRaw === "anonymous" ? userTypeRaw : null;
-    const status = (
-      ["new", "active", "saved_place", "repeat_user", "dropped_after_extraction", "opened_app", "logged_in", "no_link_submitted"] as const
-    ).includes(statusRaw as "new")
-      ? statusRaw as "new" | "active" | "saved_place" | "repeat_user" | "dropped_after_extraction" | "opened_app" | "logged_in" | "no_link_submitted"
-      : null;
-    const platform = req.query?.platform ? String(req.query.platform).trim() : "";
-    const from = normalizeDate(req.query?.from);
-    const to = normalizeDate(req.query?.to);
-    const q = req.query?.q ? String(req.query.q).trim() : "";
-    const excludeTestUsersRaw = req.query?.excludeTestUsers ? String(req.query.excludeTestUsers).trim().toLowerCase() : "";
-    const excludeTestUsers = excludeTestUsersRaw === "false" ? false : true;
-    const result = await getAdminUsageUsers({
-      from,
-      to,
-      platform: platform || null,
-      userType,
-      status,
-      q: q || null,
-      excludeTestUsers,
-      page: req.query?.page ? Number(req.query.page) : undefined,
-      pageSize: req.query?.pageSize ? Number(req.query.pageSize) : undefined,
-    });
-    return res.json({
-      ok: true,
-      rows: result.rows,
-      pagination: {
-        total: result.total,
-        page: result.page,
-        pageSize: result.pageSize,
-        totalPages: result.totalPages,
-      },
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Could not fetch admin usage users";
     return res.status(400).json({ ok: false, error: message });
   }
 });
@@ -2468,10 +1417,6 @@ app.delete("/api/saved-places/:placeId", requireAuth, async (req, res) => {
 });
 
 const port = Number(process.env.PORT || 8787);
-if (process.env.NODE_ENV !== "test") {
-  app.listen(port, () => {
-    console.log(`wandreel api running on http://localhost:${port}`);
-  });
-}
-
-export { app };
+app.listen(port, () => {
+  console.log(`wandreel api running on http://localhost:${port}`);
+});

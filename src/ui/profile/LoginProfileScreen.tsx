@@ -1,3 +1,5 @@
+import { Capacitor } from "@capacitor/core";
+import { SocialLogin, type GoogleLoginResponse } from "@capgo/capacitor-social-login";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, ChevronRight, LogIn, Mail, ShieldCheck, UserRound, X } from "lucide-react";
@@ -41,6 +43,47 @@ type GoogleOauthClient = {
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const GOOGLE_OAUTH_SCOPE = "openid email profile";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+const GOOGLE_NATIVE_SCOPES = ["email", "profile"];
+const GOOGLE_NATIVE_WEB_CLIENT_ID =
+  String(import.meta.env.VITE_GOOGLE_WEB_CLIENT_ID || import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
+
+let nativeGoogleInitPromise: Promise<void> | null = null;
+
+function isNativeAndroidPlatform() {
+  return Capacitor.isNativePlatform() && Capacitor.getPlatform() === "android";
+}
+
+function logNativeGoogleDevError(message: string, error: unknown, details?: Record<string, unknown>) {
+  if (!import.meta.env.DEV) return;
+  console.error("[google-native-auth]", {
+    message,
+    error: error instanceof Error ? error.message : String(error || ""),
+    details: details ?? null,
+  });
+}
+
+function logGoogleDevInfo(message: string, details?: Record<string, unknown>) {
+  if (!import.meta.env.DEV) return;
+  console.info(message, details ?? {});
+}
+
+async function ensureNativeGoogleInitialized() {
+  if (!GOOGLE_NATIVE_WEB_CLIENT_ID) {
+    throw new Error("Google login is not configured yet.");
+  }
+  if (!nativeGoogleInitPromise) {
+    nativeGoogleInitPromise = SocialLogin.initialize({
+      google: {
+        webClientId: GOOGLE_NATIVE_WEB_CLIENT_ID,
+        mode: "online",
+      },
+    }).catch((error) => {
+      nativeGoogleInitPromise = null;
+      throw error;
+    });
+  }
+  return nativeGoogleInitPromise;
+}
 
 function GoogleBrandIcon() {
   return (
@@ -104,8 +147,83 @@ function toFriendlyGoogleError(error: unknown): string {
   const normalized = message.toLowerCase();
   if (normalized.includes("not configured")) return "Google login is not configured yet.";
   if (normalized.includes("popup_closed")) return "Google sign-in was cancelled.";
+  if (normalized.includes("email is not verified")) return "Your Google email is not verified.";
+  if (normalized.includes("audience mismatch")) return "Google login is configured for a different app build.";
+  if (normalized.includes("invalid google id token") || normalized.includes("invalid google access token")) {
+    return "Google sign-in could not be verified. Please try again.";
+  }
   if (normalized.includes("failed to fetch") || normalized.includes("network")) return "Couldn't connect to Google. Please try again.";
   return "Couldn't connect to Google. Please try again.";
+}
+
+function toGoogleDebugErrorDetails(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      code: "code" in error ? String((error as { code?: unknown }).code ?? "") || null : null,
+    };
+  }
+  if (typeof error === "object" && error) {
+    return {
+      name: "name" in error ? String((error as { name?: unknown }).name ?? "") || "UnknownError" : "UnknownError",
+      message: "message" in error ? String((error as { message?: unknown }).message ?? "") : String(error),
+      code: "code" in error ? String((error as { code?: unknown }).code ?? "") || null : null,
+    };
+  }
+  return {
+    name: "UnknownError",
+    message: String(error ?? ""),
+    code: null,
+  };
+}
+
+function toGoogleNativeResultMetadata(result: GoogleLoginResponse | null | undefined) {
+  if (!result) {
+    return {
+      hasResult: false,
+      responseType: null,
+      hasIdToken: false,
+      hasAccessToken: false,
+      accessTokenType: null,
+      scopesCount: 0,
+    };
+  }
+
+  const accessToken = "accessToken" in result ? result.accessToken?.token : undefined;
+  const idToken = "idToken" in result ? result.idToken : undefined;
+
+  return {
+    hasResult: true,
+    responseType: "responseType" in result ? String(result.responseType ?? "") || null : null,
+    hasIdToken: typeof idToken === "string" && idToken.trim().length > 0,
+    hasAccessToken: typeof accessToken === "string" && accessToken.trim().length > 0,
+    accessTokenType:
+      "accessToken" in result && result.accessToken && typeof result.accessToken.tokenType === "string"
+        ? result.accessToken.tokenType
+        : null,
+    scopesCount:
+      "grantedScopes" in result && Array.isArray(result.grantedScopes)
+        ? result.grantedScopes.length
+        : "scopes" in result && Array.isArray(result.scopes)
+          ? result.scopes.length
+          : 0,
+  };
+}
+
+function getNativeGoogleAccessToken(result: GoogleLoginResponse | null | undefined) {
+  if (!result || !("accessToken" in result)) {
+    return "";
+  }
+
+  const rawAccessToken =
+    typeof result.accessToken === "string"
+      ? result.accessToken
+      : result.accessToken && typeof result.accessToken.token === "string"
+        ? result.accessToken.token
+        : "";
+
+  return rawAccessToken.trim();
 }
 
 async function apiFetch(path: string, init?: RequestInit) {
@@ -330,76 +448,143 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
   }, [activeLegalDoc]);
 
   const continueWithGoogle = async () => {
-    const googleClientId = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
-    if (!googleClientId) {
-      setEmailAuthMessage("Google login is not configured yet.");
-      showToast({ message: "Google login is not configured yet.", variant: "error" });
-      return;
-    }
+    const nativeAndroid = isNativeAndroidPlatform();
+    let shouldKeepPendingProvider = false;
+    logGoogleDevInfo("[google-login] handler start", {
+      nativeAndroid,
+      capacitorNativePlatform: Capacitor.isNativePlatform(),
+      platform: Capacitor.getPlatform(),
+      offline: isOffline,
+      socialLoading: isSocialLoading,
+    });
     if (isOffline) {
       setEmailAuthMessage("Couldn’t connect to Google. Please try again.");
       showToast({ message: "Couldn’t connect. Please try again.", variant: "error" });
       return;
     }
 
-    const googleScriptSrc = "https://accounts.google.com/gsi/client";
     setIsSocialLoading(true);
+    setPendingProvider(null);
     setEmailAuthMessage("");
 
     try {
-      if (!(window as Window & { google?: unknown }).google) {
-        await new Promise<void>((resolve, reject) => {
-          const existing = document.querySelector<HTMLScriptElement>(`script[src="${googleScriptSrc}"]`);
-          if (existing) {
-            existing.addEventListener("load", () => resolve(), { once: true });
-            existing.addEventListener("error", () => reject(new Error("Could not load Google SDK")), { once: true });
-            return;
-          }
-          const script = document.createElement("script");
-          script.src = googleScriptSrc;
-          script.async = true;
-          script.defer = true;
-          script.onload = () => resolve();
-          script.onerror = () => reject(new Error("Could not load Google SDK"));
-          document.head.appendChild(script);
-        });
-      }
+      let payload: Awaited<ReturnType<typeof apiFetch>>;
 
-      const google = (window as Window & { google?: GoogleOauthClient }).google;
-      const initTokenClient = google?.accounts?.oauth2?.initTokenClient;
-      if (!initTokenClient) {
-        throw new Error("Google login is not configured yet.");
-      }
-
-      const accessToken = await new Promise<string>((resolve, reject) => {
-        const tokenClient = initTokenClient({
-          client_id: googleClientId,
-          scope: GOOGLE_OAUTH_SCOPE,
-          prompt: "select_account",
-          callback: (response: { access_token?: string; error?: string }) => {
-            if (response?.error) {
-              reject(new Error(response.error));
-              return;
-            }
-            if (!response?.access_token) {
-              reject(new Error("Missing Google access token"));
-              return;
-            }
-            resolve(response.access_token);
+      if (nativeAndroid) {
+        logGoogleDevInfo("[google-login] selected native Android / Capacitor path");
+        await ensureNativeGoogleInitialized();
+        const login = await SocialLogin.login({
+          provider: "google",
+          options: {
+            scopes: GOOGLE_NATIVE_SCOPES,
+            style: "standard",
+            filterByAuthorizedAccounts: false,
           },
         });
-        tokenClient.requestAccessToken();
-      });
+        const loginResult = login.result as GoogleLoginResponse;
+        const loginResultObject = login.result as unknown as Record<string, unknown> | null | undefined;
+        const accessTokenValue = loginResultObject?.accessToken;
+        logGoogleDevInfo("[google-login] native result metadata", toGoogleNativeResultMetadata(loginResult));
+        logGoogleDevInfo("[google-login] native result shape", {
+          resultKeys: loginResultObject ? Object.keys(loginResultObject) : [],
+          accessTokenKeys:
+            accessTokenValue && typeof accessTokenValue === "object"
+              ? Object.keys(accessTokenValue as Record<string, unknown>)
+              : [],
+          accessTokenType: typeof accessTokenValue,
+          hasAccessTokenToken:
+            Boolean(accessTokenValue) &&
+            typeof accessTokenValue === "object" &&
+            Boolean((accessTokenValue as { token?: unknown }).token),
+          hasIdToken: typeof loginResultObject?.idToken === "string" && loginResultObject.idToken.trim().length > 0,
+        });
+        const idToken =
+          loginResult && "idToken" in loginResult && typeof loginResult.idToken === "string"
+            ? loginResult.idToken.trim()
+            : "";
+        const accessToken = getNativeGoogleAccessToken(loginResult);
 
-      const payload = await apiFetch("/api/auth/google/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ accessToken }),
-      });
+        if (!accessToken) {
+          console.error("[google-login] native result missing usable access token", {
+            hasIdToken: idToken.length > 0,
+            metadata: toGoogleNativeResultMetadata(loginResult),
+          });
+          throw new Error("Google sign-in did not return a usable access token.");
+        }
+
+        logGoogleDevInfo("[google-login] native verify payload shape", {
+          usesIdToken: false,
+          usesAccessToken: accessToken.length > 0,
+          selectedField: "accessToken",
+        });
+        payload = await apiFetch("/api/auth/google/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accessToken }),
+        });
+      } else {
+        logGoogleDevInfo("[google-login] selected browser web path");
+        const googleClientId = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
+        if (!googleClientId) {
+          throw new Error("Google login is not configured yet.");
+        }
+
+        const googleScriptSrc = "https://accounts.google.com/gsi/client";
+        if (!(window as Window & { google?: unknown }).google) {
+          await new Promise<void>((resolve, reject) => {
+            const existing = document.querySelector<HTMLScriptElement>(`script[src="${googleScriptSrc}"]`);
+            if (existing) {
+              existing.addEventListener("load", () => resolve(), { once: true });
+              existing.addEventListener("error", () => reject(new Error("Could not load Google SDK")), { once: true });
+              return;
+            }
+            const script = document.createElement("script");
+            script.src = googleScriptSrc;
+            script.async = true;
+            script.defer = true;
+            script.onload = () => resolve();
+            script.onerror = () => reject(new Error("Could not load Google SDK"));
+            document.head.appendChild(script);
+          });
+        }
+
+        const google = (window as Window & { google?: GoogleOauthClient }).google;
+        const initTokenClient = google?.accounts?.oauth2?.initTokenClient;
+        if (!initTokenClient) {
+          throw new Error("Google login is not configured yet.");
+        }
+
+        const accessToken = await new Promise<string>((resolve, reject) => {
+          const tokenClient = initTokenClient({
+            client_id: googleClientId,
+            scope: GOOGLE_OAUTH_SCOPE,
+            prompt: "select_account",
+            callback: (response: { access_token?: string; error?: string }) => {
+              if (response?.error) {
+                reject(new Error(response.error));
+                return;
+              }
+              if (!response?.access_token) {
+                reject(new Error("Missing Google access token"));
+                return;
+              }
+              resolve(response.access_token);
+            },
+          });
+          tokenClient.requestAccessToken();
+        });
+
+        payload = await apiFetch("/api/auth/google/verify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ accessToken }),
+        });
+      }
 
       const user = payload.user;
       setAuthenticatedUser(user, { reason: "google_verify" });
       if (!user.displayName) {
+        shouldKeepPendingProvider = true;
         setPendingProvider("GOOGLE");
         setSheetMode("collectName");
         return;
@@ -408,11 +593,21 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
       void refreshSession({ reason: "google_verify_refresh", force: true });
       closeSheet();
     } catch (error) {
+      console.error("[google-login] handler failed", toGoogleDebugErrorDetails(error));
+      if (nativeAndroid) {
+        logNativeGoogleDevError("native google sign-in failed", error, {
+          platform: Capacitor.getPlatform(),
+          googleNativeConfigured: Boolean(GOOGLE_NATIVE_WEB_CLIENT_ID),
+        });
+      }
       const message = toFriendlyGoogleError(error);
       setEmailAuthMessage(message);
       showToast({ message, variant: "error" });
     } finally {
       setIsSocialLoading(false);
+      if (!shouldKeepPendingProvider) {
+        setPendingProvider(null);
+      }
     }
   };
 

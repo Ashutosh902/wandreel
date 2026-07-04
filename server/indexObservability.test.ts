@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { OAuth2Client } from "google-auth-library";
 import {
   __resetPostgresTestConfig,
   __setPostgresTestConfig,
@@ -27,6 +28,30 @@ function createDatabaseMock(rowsQueue: Array<Array<Record<string, unknown>>> = [
       connect: async () => {
         throw new Error("connect should not be called in this test");
       },
+    },
+  };
+}
+
+function createTransactionalDatabaseMock(
+  handler: (sql: string, params?: unknown[]) => Array<Record<string, unknown>> | undefined,
+) {
+  const calls: QueryCall[] = [];
+  const query = async (sql: string, params?: unknown[]) => {
+    calls.push({ sql, params });
+    return {
+      rows: handler(sql, params) ?? [],
+      rowCount: 1,
+    };
+  };
+
+  return {
+    calls,
+    db: {
+      query,
+      connect: async () => ({
+        query,
+        release: () => undefined,
+      }),
     },
   };
 }
@@ -157,6 +182,144 @@ function buildAuthSessionUserRow(overrides?: Partial<Record<string, unknown>>) {
 test.afterEach(() => {
   __resetPostgresTestConfig();
   delete process.env.ADMIN_EMAILS;
+  delete process.env.GOOGLE_CLIENT_ID;
+  delete process.env.GOOGLE_WEB_CLIENT_ID;
+  delete process.env.GOOGLE_ANDROID_CLIENT_ID;
+});
+
+test("google verify rejects requests without any token", async () => {
+  process.env.NODE_ENV = "test";
+  process.env.GOOGLE_WEB_CLIENT_ID = "web-client-id.apps.googleusercontent.com";
+  const mock = createDatabaseMock([]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+    schemaReadyOverride: false,
+  });
+
+  const { app } = await import("./index");
+  const server = app.listen(0);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/auth/google/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 400);
+    assert.equal(body.ok, false);
+    assert.equal(body.error, "idToken or accessToken is required");
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("google verify accepts native idToken logins and sets a session cookie", async () => {
+  process.env.NODE_ENV = "test";
+  process.env.GOOGLE_WEB_CLIENT_ID = "web-client-id.apps.googleusercontent.com";
+  const mock = createTransactionalDatabaseMock((sql) => {
+    if (/select \* from users where email = \$1 limit 1 for update/i.test(sql)) return [];
+    if (/insert into users/i.test(sql)) {
+      return [
+        buildAuthSessionUserRow({
+          email: "native@example.com",
+          display_name: "Native User",
+          avatar_url: "https://example.com/avatar.png",
+          provider_id: "google-sub-1",
+        }),
+      ];
+    }
+    return [];
+  });
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+    schemaReadyOverride: false,
+  });
+
+  const originalVerifyIdToken = OAuth2Client.prototype.verifyIdToken;
+  OAuth2Client.prototype.verifyIdToken = async function verifyIdTokenMock() {
+    return {
+      getPayload: () => ({
+        iss: "https://accounts.google.com",
+        aud: "web-client-id.apps.googleusercontent.com",
+        sub: "google-sub-1",
+        email: "native@example.com",
+        email_verified: true,
+        name: "Native User",
+        picture: "https://example.com/avatar.png",
+      }),
+    } as any;
+  };
+
+  const { app } = await import("./index");
+  const server = app.listen(0);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/auth/google/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken: "native-id-token" }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.ok, true);
+    assert.equal(body.user?.email, "native@example.com");
+    assert.match(String(response.headers.get("set-cookie") || ""), /wr_session=/);
+    assert.ok(mock.calls.some((call) => /insert into auth_sessions/i.test(call.sql)));
+  } finally {
+    OAuth2Client.prototype.verifyIdToken = originalVerifyIdToken;
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test("google verify rejects native idToken audience mismatches safely", async () => {
+  process.env.NODE_ENV = "test";
+  process.env.GOOGLE_WEB_CLIENT_ID = "web-client-id.apps.googleusercontent.com";
+  const mock = createDatabaseMock([]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+    schemaReadyOverride: false,
+  });
+
+  const originalVerifyIdToken = OAuth2Client.prototype.verifyIdToken;
+  OAuth2Client.prototype.verifyIdToken = async function verifyIdTokenAudienceMismatchMock() {
+    return {
+      getPayload: () => ({
+        iss: "https://accounts.google.com",
+        aud: "wrong-client-id.apps.googleusercontent.com",
+        sub: "google-sub-1",
+        email: "native@example.com",
+        email_verified: true,
+      }),
+    } as any;
+  };
+
+  const { app } = await import("./index");
+  const server = app.listen(0);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/auth/google/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ idToken: "native-id-token" }),
+    });
+    const body = await response.json();
+    assert.equal(response.status, 401);
+    assert.equal(body.ok, false);
+    assert.equal(body.error, "Google token audience mismatch.");
+  } finally {
+    OAuth2Client.prototype.verifyIdToken = originalVerifyIdToken;
+    await new Promise((resolve) => server.close(resolve));
+  }
 });
 
 test("createAnalyticsAttemptFromRequest links submitted link and promotes canonical url", async () => {

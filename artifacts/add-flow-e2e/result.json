@@ -1,0 +1,39 @@
+{
+  "steps": [
+    "App loaded and local/session storage cleared",
+    "Opened Login tab"
+  ],
+  "apiEvents": [],
+  "consoleEvents": [
+    {
+      "type": "error",
+      "text": "Access to fetch at 'http://localhost:8787/api/auth/session/me' from origin 'http://127.0.0.1:5173' has been blocked by CORS policy: The 'Access-Control-Allow-Origin' header has a value 'http://localhost:5173' that is not equal to the supplied origin. Have the server send the header with a valid value."
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: net::ERR_FAILED"
+    },
+    {
+      "type": "error",
+      "text": "Access to fetch at 'http://localhost:8787/api/auth/session/me' from origin 'http://127.0.0.1:5173' has been blocked by CORS policy: The 'Access-Control-Allow-Origin' header has a value 'http://localhost:5173' that is not equal to the supplied origin. Have the server send the header with a valid value."
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: net::ERR_FAILED"
+    },
+    {
+      "type": "error",
+      "text": "Access to fetch at 'http://localhost:8787/api/auth/email/request-otp' from origin 'http://127.0.0.1:5173' has been blocked by CORS policy: Response to preflight request doesn't pass access control check: The 'Access-Control-Allow-Origin' header has a value 'http://localhost:5173' that is not equal to the supplied origin. Have the server send the header with a valid value."
+    },
+    {
+      "type": "error",
+      "text": "Failed to load resource: net::ERR_FAILED"
+    }
+  ],
+  "screenshots": [
+    "01-discover.png",
+    "error-state.png"
+  ],
+  "ok": false,
+  "error": "locator.waitFor: Timeout 30000ms exceeded.\nCall log:\n\u001b[2m  - waiting for getByText('OTP generated for testing:') to be visible\u001b[22m\n"
+}

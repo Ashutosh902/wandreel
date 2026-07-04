@@ -1,0 +1,431 @@
+﻿{
+    "ok":  true,
+    "mode":  "deep",
+    "metadata":  {
+                     "sourceUrl":  "https://www.instagram.com/reels/DXWyRTOD-GW/",
+                     "canonicalUrl":  "https://www.instagram.com/reels/DXWyRTOD-GW",
+                     "platform":  "instagram",
+                     "title":  "Untitled",
+                     "description":  "Bengaluru\u0027s latest rooftop restaurant 🍂🤎\n\n📍 Beige, Marathahalli @beigebangalore\n\nA desert oasis themed vibe in Bangalore for the first time, this is a unique experience, stunning from the moment you walk in.\n\n(valentines day idea, date spots in bangalore, bangalore, Marathahalli, explore, rooftop, date ideas, aesthetic cafe, Aesthetic cafes in bangalore, brewery, new launch, love, pretty, date night)\n.\n.\n#viral #reels #trending #restaurant #view",
+                     "siteName":  "Instagram",
+                     "imageUrl":  "https://instagram.fixr3-3.fna.fbcdn.net/v/t51.82787-15/670952788_18372011317204166_6819129703947106437_n.jpg?stp=dst-jpg_e15_tt6\u0026_nc_ht=instagram.fixr3-3.fna.fbcdn.net\u0026_nc_cat=102\u0026_nc_oc=Q6cZ2gGG2nAtTDDOlQPOZSSJ_W4DDPKH-D9yqYJd3HUBQPW9WbcHv4e38gZl7eQYsgllMV6MoVZs7_E2dj7DeYV8Lnl5\u0026_nc_ohc=tp-DUh9bvnMQ7kNvwHTh6D1\u0026_nc_gid=R-rOk13cT7QmtvRuwvdN6w\u0026edm=ANTKIIoBAAAA\u0026ccb=7-5\u0026oh=00_Af_Z10TxXv4_islqvkOrZYdccSzl40RKGh8ouBDyPk12wg\u0026oe=6A342046\u0026_nc_sid=d885a2",
+                     "fetchedAtIso":  "2026-06-14T07:05:13.607Z",
+                     "provider":  "instagram_script",
+                     "commentEvidence":  {
+                                             "attempted":  true,
+                                             "timedOut":  true,
+                                             "pinnedComment":  null,
+                                             "topComments":  [
+
+                                                             ],
+                                             "provider":  "instagram_script",
+                                             "reason":  "timeout"
+                                         }
+                 },
+    "transcript":  {
+                       "attempted":  false,
+                       "used":  false,
+                       "source":  null,
+                       "text":  "",
+                       "reason":  "skipped_description_accepted"
+                   },
+    "ocr":  {
+                "attempted":  false,
+                "used":  false,
+                "text":  "",
+                "reason":  "skipped_description_accepted"
+            },
+    "visualFallback":  {
+                           "attempted":  false,
+                           "triggered":  false,
+                           "reason":  "skipped_description_accepted",
+                           "provider":  "shared_visual_fallback",
+                           "confidence":  "low",
+                           "needsReview":  true,
+                           "screenshots":  [
+
+                                           ],
+                           "textQueries":  [
+
+                                           ],
+                           "visualQueries":  [
+
+                                             ],
+                           "candidates":  [
+
+                                          ],
+                           "selectedCandidate":  null,
+                           "summaryText":  ""
+                       },
+    "attemptInfo":  {
+                        "attemptNumber":  1,
+                        "triggerType":  "initial"
+                    },
+    "source":  "https://www.instagram.com/reels/DXWyRTOD-GW/",
+    "platform":  "instagram",
+    "canonicalUrl":  "https://www.instagram.com/reels/DXWyRTOD-GW",
+    "stageStatus":  {
+                        "basicMetadata":  "success",
+                        "caption":  "success",
+                        "transcript":  "partial",
+                        "ocr":  "partial",
+                        "visualFallback":  "partial"
+                    },
+    "stages":  {
+                   "basicMetadata":  {
+                                         "status":  "success",
+                                         "provider":  "instagram_script",
+                                         "reason":  null,
+                                         "chars":  461
+                                     },
+                   "caption":  {
+                                   "status":  "success",
+                                   "provider":  "instagram_script",
+                                   "reason":  null,
+                                   "chars":  452
+                               },
+                   "transcript":  {
+                                      "status":  "partial",
+                                      "provider":  "none",
+                                      "reason":  "skipped_description_accepted",
+                                      "chars":  0
+                                  },
+                   "ocr":  {
+                               "status":  "partial",
+                               "provider":  "frame_ocr",
+                               "reason":  "skipped_description_accepted",
+                               "chars":  0
+                           },
+                   "visualFallback":  {
+                                          "status":  "partial",
+                                          "provider":  "shared_visual_fallback",
+                                          "reason":  "skipped_description_accepted",
+                                          "chars":  0
+                                      }
+               },
+    "stageTimingsMs":  {
+                           "basicMetadata":  3155,
+                           "caption":  0,
+                           "transcript":  0,
+                           "ocr":  0,
+                           "visualFallback":  0
+                       },
+    "stageFailures":  {
+                          "transcript":  "skipped_description_accepted",
+                          "ocr":  "skipped_description_accepted",
+                          "visualFallback":  "skipped_description_accepted"
+                      },
+    "combinedTextRaw":  "Untitled\n\nBengaluru\u0027s latest rooftop restaurant 🍂🤎\n\n📍 Beige, Marathahalli @beigebangalore\n\nA desert oasis themed vibe in Bangalore for the first time, this is a unique experience, stunning from the moment you walk in.\n\n(valentines day idea, date spots in bangalore, bangalore, Marathahalli, explore, rooftop, date ideas, aesthetic cafe, Aesthetic cafes in bangalore, brewery, new launch, love, pretty, date night)\n.\n.\n#viral #reels #trending #restaurant #view",
+    "combinedTextClean":  "Untitled Bengaluru\u0027s latest rooftop restaurant 🍂🤎 📍 Beige, Marathahalli @beigebangalore A desert oasis themed vibe in Bangalore for the first time, this is a unique experience, stunning from the moment you walk in. (valentines day idea, date spots in bangalore, bangalore, Marathahalli, explore, rooftop, date ideas, aesthetic cafe, Aesthetic cafes in bangalore, brewery, new launch, love, pretty, date night)\n\n#viral #reels #trending #restaurant #view",
+    "cleanupStats":  {
+                         "rawChars":  462,
+                         "cleanChars":  455,
+                         "removedChars":  7,
+                         "droppedLines":  0,
+                         "dedupedLines":  0,
+                         "dedupedHashtags":  0
+                     },
+    "perf":  {
+                 "totalMs":  7356,
+                 "metadataMs":  3155,
+                 "transcriptMs":  0,
+                 "ocrMs":  0,
+                 "visualFallbackMs":  0
+             },
+    "sla":  {
+                "totalMs":  7356,
+                "metadataMs":  3155,
+                "transcriptMs":  0,
+                "ocrMs":  0,
+                "visualFallbackMs":  0
+            },
+    "cache":  {
+                  "hit":  false,
+                  "key":  "deep:a1:https://www.instagram.com/reels/DXWyRTOD-GW"
+              },
+    "debug":  {
+                  "orchestration":  {
+                                        "attemptNumber":  1,
+                                        "triggerType":  "initial",
+                                        "sourcePlatform":  "instagram",
+                                        "route":  "attempt_1",
+                                        "transcriptReused":  false,
+                                        "ocrFrameCount":  0,
+                                        "visualFrameCount":  0,
+                                        "decisions":  [
+                                                          {
+                                                              "stage":  "description",
+                                                              "ran":  true,
+                                                              "reason":  "accepted_description_tiny_high"
+                                                          },
+                                                          {
+                                                              "stage":  "transcript",
+                                                              "ran":  false,
+                                                              "reason":  "description_confidence_sufficient"
+                                                          },
+                                                          {
+                                                              "stage":  "ocr",
+                                                              "ran":  false,
+                                                              "reason":  "description_confidence_sufficient"
+                                                          },
+                                                          {
+                                                              "stage":  "visualFallback",
+                                                              "ran":  false,
+                                                              "reason":  "initial_attempt_only"
+                                                          }
+                                                      ],
+                                        "acceptedAfter":  "description",
+                                        "inheritedEvidence":  {
+                                                                  "transcriptAttempts":  [
+
+                                                                                         ],
+                                                                  "ocrAttempts":  [
+
+                                                                                  ]
+                                                              }
+                                    },
+                  "mediaIngestion":  {
+                                         "platform":  "instagram",
+                                         "canonicalUrl":  "https://www.instagram.com/reels/DXWyRTOD-GW",
+                                         "metadataProvider":  "instagram_script",
+                                         "platformDetectionResult":  "instagram",
+                                         "instagramUrlDetectionResult":  true,
+                                         "mediaUrlAvailable":  false,
+                                         "thumbnailImageUrlAvailable":  true,
+                                         "metadataFailureReason":  null
+                                     },
+                  "comments":  {
+                                   "attempted":  true,
+                                   "timedOut":  true,
+                                   "provider":  "instagram_script",
+                                   "reason":  "timeout",
+                                   "pinnedCommentIncluded":  false,
+                                   "topCommentCount":  0
+                               },
+                  "frameExtraction":  {
+                                          "didRun":  false,
+                                          "reason":  "not_attempted"
+                                      },
+                  "screenshots":  {
+                                      "count":  0,
+                                      "sentCandidates":  [
+
+                                                         ]
+                                  },
+                  "ocr":  {
+                              "attempted":  false,
+                              "used":  false,
+                              "text":  "",
+                              "reason":  "skipped_description_accepted",
+                              "confidence":  null,
+                              "sourceImages":  [
+
+                                               ]
+                          },
+                  "visualRecognition":  {
+                                            "didRun":  false,
+                                            "reason":  "skipped_description_accepted"
+                                        },
+                  "candidateVerification":  [
+
+                                            ],
+                  "priorAttemptHypotheses":  [
+
+                                             ],
+                  "evidenceUsage":  {
+                                        "transcriptReused":  false,
+                                        "inheritedTranscriptAttempts":  [
+
+                                                                        ],
+                                        "inheritedOcrAttempts":  [
+
+                                                                 ],
+                                        "inheritedHypothesisAttempts":  [
+
+                                                                        ],
+                                        "ocrFrameCount":  0,
+                                        "visualFrameCount":  0,
+                                        "route":  "attempt_1"
+                                    },
+                  "timings":  {
+                                  "metadataFetchMs":  3155,
+                                  "metadataMs":  3155,
+                                  "commentsMs":  1526,
+                                  "descriptionFastExtractorMs":  4196,
+                                  "descriptionProbeMs":  4196,
+                                  "transcriptProbeMs":  0,
+                                  "transcriptMs":  0,
+                                  "frameExtractionMs":  0,
+                                  "ocrOnlyMs":  0,
+                                  "ocrMs":  0,
+                                  "visualFallbackOnlyMs":  0,
+                                  "visualFallbackMs":  0,
+                                  "extractionTotalMs":  7356,
+                                  "llmCallsBeforeResponse":  1
+                              },
+                  "fastPathIntelligence":  {
+                                               "attempted":  true,
+                                               "accepted":  true,
+                                               "duplicateDescriptionLlmSkipped":  true,
+                                               "result":  {
+                                                              "output":  {
+                                                                             "source":  {
+                                                                                            "url":  "https://www.instagram.com/reels/DXWyRTOD-GW",
+                                                                                            "platform":  "instagram",
+                                                                                            "title":  "Untitled",
+                                                                                            "creator":  null,
+                                                                                            "sourceType":  "mixed_discovery"
+                                                                                        },
+                                                                             "placeCollections":  [
+
+                                                                                                  ],
+                                                                             "categoriesPresent":  [
+                                                                                                       "eat"
+                                                                                                   ],
+                                                                             "weakMentions":  [
+
+                                                                                              ],
+                                                                             "showIn":  {
+                                                                                            "eat":  true,
+                                                                                            "do":  false,
+                                                                                            "stay":  false,
+                                                                                            "see":  false
+                                                                                        },
+                                                                             "structuredEntities":  [
+                                                                                                        {
+                                                                                                            "name":  "Beige",
+                                                                                                            "category":  "eat",
+                                                                                                            "locality":  "Marathahalli",
+                                                                                                            "city":  "Bangalore Division",
+                                                                                                            "state":  "Karnataka",
+                                                                                                            "country":  "India",
+                                                                                                            "address":  "Rooftop, Vanshree Towers, Outer Ring Rd, Marathahalli Village, Marathahalli, Bengaluru, Karnataka 560037, India",
+                                                                                                            "confidence":  "high",
+                                                                                                            "googleMapsQuery":  "Beige Marathahalli Bengaluru",
+                                                                                                            "evidenceText":  "Bengaluru\u0027s latest rooftop restaurant 📍 Beige, Marathahalli @beigebangalore",
+                                                                                                            "intent":  {
+                                                                                                                           "l1":  "taste",
+                                                                                                                           "l2":  "Restaurant",
+                                                                                                                           "l3":  [
+                                                                                                                                      "rooftop",
+                                                                                                                                      "aesthetic cafe",
+                                                                                                                                      "brewery"
+                                                                                                                                  ]
+                                                                                                                       },
+                                                                                                            "placeId":  "ChIJ_RTLqL4TrjsR8l6SHZ7q1Ok",
+                                                                                                            "photoUrl":  "https://lh3.googleusercontent.com/place-photos/AJRVUZM8r5dUfBhFmAaq98bLvmwm5sYdeKqxEqhJDAFt2lgzW-EvX5o9eBhU1PzCBJou8DxIxvxx1V7IalP7TUZw9RPijg1LtzPyIIfLieBSyf8JW4k5m6TSZWRV7UX9_Do2RRX5Cpi0dWZXFCf-9E0vRCot=s1600-w1200",
+                                                                                                            "lat":  12.9527603,
+                                                                                                            "lng":  77.6996865,
+                                                                                                            "resolvedBy":  "google_maps",
+                                                                                                            "resolutionConfidence":  "high"
+                                                                                                        }
+                                                                                                    ],
+                                                                             "entities":  [
+                                                                                              {
+                                                                                                  "category":  "eat",
+                                                                                                  "name":  "Beige",
+                                                                                                  "entityType":  "place",
+                                                                                                  "city":  "Bangalore Division",
+                                                                                                  "state":  "Karnataka",
+                                                                                                  "country":  "India",
+                                                                                                  "locality":  "Marathahalli",
+                                                                                                  "tags":  [
+
+                                                                                                           ],
+                                                                                                  "details":  {
+                                                                                                                  "address":  "Rooftop, Vanshree Towers, Outer Ring Rd, Marathahalli Village, Marathahalli, Bengaluru, Karnataka 560037, India",
+                                                                                                                  "placeId":  "ChIJ_RTLqL4TrjsR8l6SHZ7q1Ok",
+                                                                                                                  "photoUrl":  "https://lh3.googleusercontent.com/place-photos/AJRVUZM8r5dUfBhFmAaq98bLvmwm5sYdeKqxEqhJDAFt2lgzW-EvX5o9eBhU1PzCBJou8DxIxvxx1V7IalP7TUZw9RPijg1LtzPyIIfLieBSyf8JW4k5m6TSZWRV7UX9_Do2RRX5Cpi0dWZXFCf-9E0vRCot=s1600-w1200",
+                                                                                                                  "lat":  12.9527603,
+                                                                                                                  "lng":  77.6996865,
+                                                                                                                  "resolvedBy":  "google_maps",
+                                                                                                                  "resolutionConfidence":  "high"
+                                                                                                              },
+                                                                                                  "level2":  {
+                                                                                                                 "category":  "eat",
+                                                                                                                 "cuisineType":  null,
+                                                                                                                 "mealType":  null,
+                                                                                                                 "dietaryTags":  [
+
+                                                                                                                                 ],
+                                                                                                                 "vibeTags":  [
+
+                                                                                                                              ],
+                                                                                                                 "priceTier":  null
+                                                                                                             },
+                                                                                                  "googleMapsQuery":  "Beige Marathahalli Bengaluru",
+                                                                                                  "sourceEvidence":  "Bengaluru\u0027s latest rooftop restaurant 📍 Beige, Marathahalli @beigebangalore",
+                                                                                                  "confidence":  "high",
+                                                                                                  "intent":  {
+                                                                                                                 "l1":  "taste",
+                                                                                                                 "l2":  "Restaurant",
+                                                                                                                 "l3":  [
+                                                                                                                            "rooftop",
+                                                                                                                            "aesthetic cafe",
+                                                                                                                            "brewery"
+                                                                                                                        ]
+                                                                                                             }
+                                                                                              }
+                                                                                          ],
+                                                                             "visibility":  {
+                                                                                                "showIn":  [
+                                                                                                               "eat"
+                                                                                                           ],
+                                                                                                "doNotShowIn":  [
+                                                                                                                    "do",
+                                                                                                                    "stay",
+                                                                                                                    "see"
+                                                                                                                ],
+                                                                                                "reason":  "Derived from tiny caption response."
+                                                                                            },
+                                                                             "status":  "ready"
+                                                                         },
+                                                              "validationErrors":  [
+
+                                                                                   ],
+                                                              "fixed":  false,
+                                                              "timingsMs":  {
+                                                                                "total":  4192,
+                                                                                "provider":  3036,
+                                                                                "schemaFirstPass":  5,
+                                                                                "normalize":  0,
+                                                                                "schemaSecondPass":  0
+                                                                            },
+                                                              "providerMeta":  {
+                                                                                   "model":  "gpt-5.4-mini",
+                                                                                   "fallbackUsed":  false,
+                                                                                   "taskType":  "tiny_caption"
+                                                                               },
+                                                              "usage":  {
+                                                                            "inputTokens":  795,
+                                                                            "outputTokens":  185,
+                                                                            "totalTokens":  980
+                                                                        }
+                                                          },
+                                               "tinyFastExtractorUsed":  true,
+                                               "tinyFastExtractorMs":  4196,
+                                               "tinyFastExtractorAccepted":  true,
+                                               "tinyFastExtractorRejectedReason":  null,
+                                               "modelUsedForTinyExtractor":  "gpt-5.4-mini",
+                                               "fullPromptSkipped":  true
+                                           },
+                  "tinyFastExtractorUsed":  true,
+                  "tinyFastExtractorMs":  4196,
+                  "tinyFastExtractorAccepted":  true,
+                  "tinyFastExtractorRejectedReason":  null,
+                  "modelUsedForTinyExtractor":  "gpt-5.4-mini",
+                  "fullPromptSkipped":  true,
+                  "finalOutput":  {
+                                      "selectedCandidate":  null,
+                                      "possibleMatches":  [
+
+                                                          ],
+                                      "finalEntity":  null,
+                                      "needsReview":  true,
+                                      "locationVerified":  false,
+                                      "confidence":  "low",
+                                      "summaryText":  ""
+                                  }
+              },
+    "localApiResponseMs":  7448
+}

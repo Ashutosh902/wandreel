@@ -43,4 +43,7 @@ android/.cxx/
 android/.externalNativeBuild/
 android/*.jks
 android/*.keystore
+*.jks
 *.keystore
+keystore.properties
+gradle.properties
