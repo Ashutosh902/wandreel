@@ -29,6 +29,9 @@ dist-ssr
 !.dev.vars.example
 .env*
 !.env.example
+.codex-remote-attachments/
+tmp/
+artifacts/add-flow-e2e/
 
 # Android / Gradle generated files
 android/.gradle/
@@ -47,3 +50,6 @@ android/*.keystore
 *.keystore
 keystore.properties
 gradle.properties
+server/extraction/pydeps/
+server/extraction/pydeps_runtime/
+server/extraction/scripts/__pycache__/
