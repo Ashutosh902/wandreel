@@ -1,6 +1,8 @@
 import type { SavedPlaceRecord } from "./savedPlaces";
+import { filterPlacesByResolvedCity, resolveLocationContext } from "./locationContext";
 
 export const FOOD_TRAIL_READY_THRESHOLD = 3;
+export const WEEKEND_PLAN_READY_THRESHOLD = 3;
 
 export type HeroCardEligibilityCard = {
   type: "city_category_insight";
@@ -15,28 +17,20 @@ export type HeroCardEligibilityCard = {
   alternatives?: HeroCardEligibilityCard[];
 };
 
-function normalizeText(value: unknown): string {
-  return typeof value === "string" ? value.trim().toLowerCase() : "";
-}
-
 function getPlaceKey(place: SavedPlaceRecord): string {
   return String(place.placeId || place.id || "").trim();
 }
 
-function getLocationSegments(locationLabel: string): string[] {
-  return locationLabel
-    .split(",")
-    .map((segment) => segment.trim())
-    .filter(Boolean);
-}
-
-function resolveFoodTrailCityLabel(card: HeroCardEligibilityCard, currentLocationLabel: string): string | null {
-  const explicitTargetCity = typeof card.metadata?.targetCity === "string" ? card.metadata.targetCity.trim() : "";
-  if (explicitTargetCity) return explicitTargetCity;
-
-  const segments = getLocationSegments(currentLocationLabel);
-  if (!segments.length) return null;
-  return segments[0] || null;
+function resolveFoodTrailCityLabel(
+  card: HeroCardEligibilityCard,
+  currentLocationLabel: string,
+  places: SavedPlaceRecord[],
+): string | null {
+  return resolveLocationContext(
+    currentLocationLabel,
+    places,
+    typeof card.metadata?.targetCity === "string" ? card.metadata.targetCity.trim() : "",
+  ).cityName;
 }
 
 function getMatchingCityTastePlaces(
@@ -44,16 +38,11 @@ function getMatchingCityTastePlaces(
   card: HeroCardEligibilityCard,
   currentLocationLabel: string,
 ): SavedPlaceRecord[] {
-  const explicitTargetCity = typeof card.metadata?.targetCity === "string" ? card.metadata.targetCity.trim() : "";
-  const candidateSegments = explicitTargetCity ? [explicitTargetCity] : getLocationSegments(currentLocationLabel);
-  const normalizedSegments = new Set(candidateSegments.map((segment) => normalizeText(segment)).filter(Boolean));
-
-  if (!normalizedSegments.size) return [];
-
-  return places.filter((place) => (
-    place.category === "Taste" &&
-    normalizedSegments.has(normalizeText(place.city))
-  ));
+  return filterPlacesByResolvedCity(
+    places.filter((place) => place.category === "Taste"),
+    currentLocationLabel,
+    typeof card.metadata?.targetCity === "string" ? card.metadata.targetCity.trim() : "",
+  ).places;
 }
 
 function buildMatchingPlaceIds(places: SavedPlaceRecord[]): string[] {
@@ -68,7 +57,7 @@ export function applyFoodTrailHeroEligibility(
   if (card.ctaAction !== "build_food_trail") return card;
 
   const cityTastePlaces = getMatchingCityTastePlaces(places, card, currentLocationLabel);
-  const cityLabel = resolveFoodTrailCityLabel(card, currentLocationLabel);
+  const cityLabel = resolveFoodTrailCityLabel(card, currentLocationLabel, places);
   const matchingPlaceIds = buildMatchingPlaceIds(cityTastePlaces);
 
   if (cityTastePlaces.length >= FOOD_TRAIL_READY_THRESHOLD) {
@@ -98,6 +87,64 @@ export function applyFoodTrailHeroEligibility(
         matchingPlaceIds,
         remainingTastePlaces: remaining,
         foodTrailReady: false,
+      },
+    };
+  }
+
+  return null;
+}
+
+function isWeekendPlanCard(card: HeroCardEligibilityCard): boolean {
+  const targetCategory = typeof card.metadata?.targetCategory === "string" ? card.metadata.targetCategory : "";
+  return (
+    card.ctaAction === "view_city_plan" ||
+    card.ctaAction === "plan_weekend_explore" ||
+    card.ctaAction === "create_itinerary" ||
+    (card.ctaAction === "view_dominant_category" && targetCategory === "Explore")
+  );
+}
+
+export function applyWeekendPlanHeroEligibility(
+  card: HeroCardEligibilityCard,
+  places: SavedPlaceRecord[],
+  currentLocationLabel: string,
+): HeroCardEligibilityCard | null {
+  if (!isWeekendPlanCard(card)) return card;
+
+  const { cityName, places: cityPlaces } = filterPlacesByResolvedCity(
+    places,
+    currentLocationLabel,
+    typeof card.metadata?.targetCity === "string" ? card.metadata.targetCity.trim() : "",
+  );
+  const relevantCityPlaces = cityPlaces.filter((place) => (
+    place.category === "Taste" || place.category === "Explore" || place.category === "Activity" || place.category === "Stay"
+  ));
+  const representedCategories = new Set(relevantCityPlaces.map((place) => place.category));
+  const matchingPlaceIds = buildMatchingPlaceIds(relevantCityPlaces);
+
+  if (relevantCityPlaces.length >= WEEKEND_PLAN_READY_THRESHOLD && representedCategories.size >= 2 && cityName) {
+    return {
+      ...card,
+      metadata: {
+        ...card.metadata,
+        targetCity: cityName,
+        matchingPlaceIds,
+      },
+    };
+  }
+
+  if (relevantCityPlaces.length >= 1 && cityName) {
+    return {
+      ...card,
+      title: `${cityName} plan almost ready`,
+      subtitle: "Save a few more food, explore, or activity spots.",
+      ctaLabel: "Add places",
+      ctaAction: "grow_saved_places",
+      metadata: {
+        ...card.metadata,
+        targetCity: cityName,
+        matchingPlaceIds,
+        weekendPlanReady: false,
       },
     };
   }

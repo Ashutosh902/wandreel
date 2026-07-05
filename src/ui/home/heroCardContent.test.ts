@@ -2,6 +2,29 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeHeroCardContent } from "./heroCardContent";
+import type { SavedPlaceRecord } from "./savedPlaces";
+
+function createPlace(overrides: Partial<SavedPlaceRecord> = {}): SavedPlaceRecord {
+  return {
+    id: overrides.id || "place-1",
+    placeId: overrides.placeId || overrides.id || "place-1",
+    title: overrides.title || "Sample Place",
+    category: overrides.category || "Explore",
+    distanceKm: 0.1,
+    metaPrimary: "",
+    metaSecondary: "",
+    locality: overrides.locality || "Dhanaut",
+    city: overrides.city || "Patna",
+    state: overrides.state || "Bihar",
+    country: null,
+    fullAddress: "",
+    videoUrl: "",
+    imageUrl: "",
+    tags: [],
+    createdAtMs: 1,
+    ...overrides,
+  };
+}
 
 function createCard(overrides: Partial<{
   title: string;
@@ -80,4 +103,17 @@ test("explore-dominant cards map to the weekend plan pattern", () => {
 
   assert.equal(card.title, "Jaipur plan is ready");
   assert.equal(card.ctaLabel, "Plan weekend");
+});
+
+test("planning copy uses city over locality when the location label starts with a locality", () => {
+  const card = normalizeHeroCardContent(
+    createCard({ ctaAction: "view_city_plan" }),
+    "Dhanaut, Bihar",
+    [
+      createPlace({ locality: "Dhanaut", city: "Patna", state: "Bihar" }),
+      createPlace({ id: "2", locality: "Kankarbagh", city: "Patna", state: "Bihar" }),
+    ],
+  );
+
+  assert.equal(card.title, "Patna plan is ready");
 });

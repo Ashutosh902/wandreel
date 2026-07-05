@@ -1,3 +1,6 @@
+import type { SavedPlaceRecord } from "./savedPlaces";
+import { resolveLocationContext } from "./locationContext";
+
 type HeroCardContent = {
   title: string;
   subtitle: string;
@@ -10,15 +13,13 @@ function normalizeText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function getLocationCity(locationLabel: string): string {
-  return locationLabel
-    .split(",")
-    .map((segment) => segment.trim())
-    .find(Boolean) || "";
-}
-
-function getHeroCity(card: HeroCardContent, currentLocationLabel: string): string {
-  return normalizeText(card.metadata?.targetCity) || getLocationCity(currentLocationLabel);
+function getHeroCity(card: HeroCardContent, currentLocationLabel: string, visibleSavedPlaces: SavedPlaceRecord[]): string {
+  const context = resolveLocationContext(
+    currentLocationLabel,
+    visibleSavedPlaces,
+    normalizeText(card.metadata?.targetCity) || null,
+  );
+  return context.cityName || context.localityName || "";
 }
 
 function getMatchingCount(card: HeroCardContent): number {
@@ -35,8 +36,12 @@ function formatCityPrefix(city: string, suffix: string): string {
   return city ? `${city} ${suffix}` : suffix.charAt(0).toUpperCase() + suffix.slice(1);
 }
 
-function buildFoodTrailReadyCopy(card: HeroCardContent, currentLocationLabel: string): HeroCardContent {
-  const city = getHeroCity(card, currentLocationLabel);
+function buildFoodTrailReadyCopy(
+  card: HeroCardContent,
+  currentLocationLabel: string,
+  visibleSavedPlaces: SavedPlaceRecord[],
+): HeroCardContent {
+  const city = getHeroCity(card, currentLocationLabel, visibleSavedPlaces);
   const count = getMatchingCount(card);
   return {
     ...card,
@@ -48,8 +53,12 @@ function buildFoodTrailReadyCopy(card: HeroCardContent, currentLocationLabel: st
   };
 }
 
-function buildCityPlanCopy(card: HeroCardContent, currentLocationLabel: string): HeroCardContent {
-  const city = getHeroCity(card, currentLocationLabel);
+function buildCityPlanCopy(
+  card: HeroCardContent,
+  currentLocationLabel: string,
+  visibleSavedPlaces: SavedPlaceRecord[],
+): HeroCardContent {
+  const city = getHeroCity(card, currentLocationLabel, visibleSavedPlaces);
   return {
     ...card,
     title: formatCityPrefix(city, "plan is ready"),
@@ -58,8 +67,12 @@ function buildCityPlanCopy(card: HeroCardContent, currentLocationLabel: string):
   };
 }
 
-function buildAlmostReadyFoodCopy(card: HeroCardContent, currentLocationLabel: string): HeroCardContent {
-  const city = getHeroCity(card, currentLocationLabel);
+function buildAlmostReadyFoodCopy(
+  card: HeroCardContent,
+  currentLocationLabel: string,
+  visibleSavedPlaces: SavedPlaceRecord[],
+): HeroCardContent {
+  const city = getHeroCity(card, currentLocationLabel, visibleSavedPlaces);
   const remaining = getRemainingCount(card);
   return {
     ...card,
@@ -71,8 +84,12 @@ function buildAlmostReadyFoodCopy(card: HeroCardContent, currentLocationLabel: s
   };
 }
 
-function buildDefaultListCopy(card: HeroCardContent, currentLocationLabel: string): HeroCardContent {
-  const city = getHeroCity(card, currentLocationLabel);
+function buildDefaultListCopy(
+  card: HeroCardContent,
+  currentLocationLabel: string,
+  visibleSavedPlaces: SavedPlaceRecord[],
+): HeroCardContent {
+  const city = getHeroCity(card, currentLocationLabel, visibleSavedPlaces);
   return {
     ...card,
     title: city ? `Start your ${city} list` : "Start your list",
@@ -81,14 +98,18 @@ function buildDefaultListCopy(card: HeroCardContent, currentLocationLabel: strin
   };
 }
 
-function buildDominantCategoryCopy(card: HeroCardContent, currentLocationLabel: string): HeroCardContent {
-  const city = getHeroCity(card, currentLocationLabel);
+function buildDominantCategoryCopy(
+  card: HeroCardContent,
+  currentLocationLabel: string,
+  visibleSavedPlaces: SavedPlaceRecord[],
+): HeroCardContent {
+  const city = getHeroCity(card, currentLocationLabel, visibleSavedPlaces);
   const category = normalizeText(card.metadata?.targetCategory);
   if (category === "Explore") {
-    return buildCityPlanCopy(card, currentLocationLabel);
+    return buildCityPlanCopy(card, currentLocationLabel, visibleSavedPlaces);
   }
   if (category === "Taste") {
-    return buildFoodTrailReadyCopy(card, currentLocationLabel);
+    return buildFoodTrailReadyCopy(card, currentLocationLabel, visibleSavedPlaces);
   }
   return {
     ...card,
@@ -98,26 +119,30 @@ function buildDominantCategoryCopy(card: HeroCardContent, currentLocationLabel: 
   };
 }
 
-export function normalizeHeroCardContent<T extends HeroCardContent>(card: T, currentLocationLabel: string): T {
+export function normalizeHeroCardContent<T extends HeroCardContent>(
+  card: T,
+  currentLocationLabel: string,
+  visibleSavedPlaces: SavedPlaceRecord[] = [],
+): T {
   let nextCard: HeroCardContent;
   switch (card.ctaAction) {
     case "build_food_trail":
-      nextCard = buildFoodTrailReadyCopy(card, currentLocationLabel);
+      nextCard = buildFoodTrailReadyCopy(card, currentLocationLabel, visibleSavedPlaces);
       break;
     case "grow_saved_places":
-      nextCard = buildAlmostReadyFoodCopy(card, currentLocationLabel);
+      nextCard = buildAlmostReadyFoodCopy(card, currentLocationLabel, visibleSavedPlaces);
       break;
     case "view_city_plan":
     case "plan_weekend_explore":
     case "create_itinerary":
-      nextCard = buildCityPlanCopy(card, currentLocationLabel);
+      nextCard = buildCityPlanCopy(card, currentLocationLabel, visibleSavedPlaces);
       break;
     case "view_dominant_category":
-      nextCard = buildDominantCategoryCopy(card, currentLocationLabel);
+      nextCard = buildDominantCategoryCopy(card, currentLocationLabel, visibleSavedPlaces);
       break;
     case "add_first_place":
     case "grow_saved_memory":
-      nextCard = buildDefaultListCopy(card, currentLocationLabel);
+      nextCard = buildDefaultListCopy(card, currentLocationLabel, visibleSavedPlaces);
       break;
     default:
       nextCard = card;

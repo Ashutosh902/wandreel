@@ -11,11 +11,12 @@ import {
   FOOD_TRAIL_DEMO_QUERY_PARAM,
   isFoodTrailDemoEnabled,
 } from "./foodTrailPlannerDemo";
-import { applyFoodTrailHeroEligibility } from "./heroCardEligibility";
+import { applyFoodTrailHeroEligibility, applyWeekendPlanHeroEligibility } from "./heroCardEligibility";
 import { normalizeHeroCardContent } from "./heroCardContent";
 import { HeroCard } from "./HeroCard";
 import { LocationSelector } from "./LocationSelector";
 import { RecentlyAddedCarousel } from "./RecentlyAddedCarousel";
+import { WeekendPlannerScreen } from "./WeekendPlannerScreen";
 import { ConnectScreen } from "./ConnectScreen";
 import type { CategoryLabel, NavLabel } from "./home.data";
 import { runHomeDataChecks } from "./home.data";
@@ -57,6 +58,9 @@ import {
   createLocalSavedPlacesPlannerDataSource,
   resolveHeroCardPlannerSelection,
 } from "./heroCardPlannerData";
+import { filterPlacesByResolvedCity, resolveLocationContext } from "./locationContext";
+import { isWeekendPlannerAction } from "./weekendPlanner";
+import { createWeekendPlannerDemoPlaces, isWeekendPlannerDemoEnabled } from "./weekendPlannerDemo";
 import "./home.css";
 
 runHomeDataChecks();
@@ -90,10 +94,15 @@ type HeroNavigationContext = {
   mapCategories: CategoryLabel[] | null;
 };
 
-type PlannerRoute = "home" | "food-trail";
+type PlannerRoute = "home" | "food-trail" | "weekend-plan";
 
 type FoodTrailPlannerContext = {
   matchingPlaceIds: string[] | null;
+};
+
+type WeekendPlannerContext = {
+  matchingPlaceIds: string[] | null;
+  cityName: string | null;
 };
 
 type HeroCardFreshnessState = {
@@ -225,11 +234,17 @@ function buildSavedHeroIdea(card: HeroCardData): SavedHeroIdea {
 }
 
 function getPlannerRouteFromPathname(pathname: string): PlannerRoute {
-  return pathname.startsWith("/trail/food") ? "food-trail" : "home";
+  if (pathname.startsWith("/trail/food")) return "food-trail";
+  if (pathname.startsWith("/plan/weekend")) return "weekend-plan";
+  return "home";
 }
 
 function getFoodTrailDemoPreviewState(url: URL, isDev: boolean): boolean {
   return getPlannerRouteFromPathname(url.pathname) === "food-trail" && isFoodTrailDemoEnabled(url.search, isDev);
+}
+
+function getWeekendPlannerDemoPreviewState(url: URL, isDev: boolean): boolean {
+  return getPlannerRouteFromPathname(url.pathname) === "weekend-plan" && isWeekendPlannerDemoEnabled(url.search, isDev);
 }
 
 function normalizeHeroCandidatesForHome(
@@ -239,7 +254,8 @@ function normalizeHeroCandidatesForHome(
 ): HeroCardData[] {
   return candidates
     .map((candidate) => applyFoodTrailHeroEligibility(candidate, visibleSavedPlaces, currentLocationLabel))
-    .map((candidate) => candidate ? normalizeHeroCardContent(candidate, currentLocationLabel) : null)
+    .map((candidate) => candidate ? applyWeekendPlanHeroEligibility(candidate, visibleSavedPlaces, currentLocationLabel) : null)
+    .map((candidate) => candidate ? normalizeHeroCardContent(candidate, currentLocationLabel, visibleSavedPlaces) : null)
     .filter((candidate): candidate is HeroCardData => candidate !== null);
 }
 
@@ -273,7 +289,7 @@ function DiscoverPage({
   currentLocationLabel: string;
 }) {
   const counts = getSavedPlaceCounts(savedPlacesByCategory);
-  const displayHeroCard = heroCard ? normalizeHeroCardContent(heroCard, currentLocationLabel) : null;
+  const displayHeroCard = heroCard ? normalizeHeroCardContent(heroCard, currentLocationLabel, flattenSavedPlaces(savedPlacesByCategory)) : null;
   const heroMode: HeroMode = heroCard?.metadata.rule === "fallback" || heroCard?.metadata.rule === "default"
     ? "empty-memory"
     : "city-memory";
@@ -413,8 +429,15 @@ export function HomeScreen() {
   const [isFoodTrailDemoPreview, setIsFoodTrailDemoPreview] = useState<boolean>(() => (
     typeof window !== "undefined" ? getFoodTrailDemoPreviewState(new URL(window.location.href), IS_DEV) : false
   ));
+  const [isWeekendPlannerDemoPreview, setIsWeekendPlannerDemoPreview] = useState<boolean>(() => (
+    typeof window !== "undefined" ? getWeekendPlannerDemoPreviewState(new URL(window.location.href), IS_DEV) : false
+  ));
   const [foodTrailPlannerContext, setFoodTrailPlannerContext] = useState<FoodTrailPlannerContext>({
     matchingPlaceIds: null,
+  });
+  const [weekendPlannerContext, setWeekendPlannerContext] = useState<WeekendPlannerContext>({
+    matchingPlaceIds: null,
+    cityName: null,
   });
   const [heroNavigationContext, setHeroNavigationContext] = useState<HeroNavigationContext>({
     filteredPlaceIds: null,
@@ -486,7 +509,7 @@ export function HomeScreen() {
   const setPlannerPath = useCallback((nextRoute: PlannerRoute, replace = false) => {
     if (typeof window === "undefined") return;
     const nextUrl = new URL(window.location.href);
-    nextUrl.pathname = nextRoute === "food-trail" ? "/trail/food" : "/";
+    nextUrl.pathname = nextRoute === "food-trail" ? "/trail/food" : nextRoute === "weekend-plan" ? "/plan/weekend" : "/";
     if (nextRoute !== "food-trail") {
       nextUrl.searchParams.delete(FOOD_TRAIL_DEMO_QUERY_PARAM);
     }
@@ -497,6 +520,7 @@ export function HomeScreen() {
     }
     setPlannerRoute(nextRoute);
     setIsFoodTrailDemoPreview(getFoodTrailDemoPreviewState(nextUrl, IS_DEV));
+    setIsWeekendPlannerDemoPreview(getWeekendPlannerDemoPreviewState(nextUrl, IS_DEV));
   }, []);
   const refreshSavedPlaces = useCallback(() => {
     setSavedPlacesByCategory(isAuthenticated ? readSavedPlacesByCategory() : createEmptySavedPlacesByCategory());
@@ -515,6 +539,7 @@ export function HomeScreen() {
       const url = new URL(window.location.href);
       setPlannerRoute(getPlannerRouteFromPathname(url.pathname));
       setIsFoodTrailDemoPreview(getFoodTrailDemoPreviewState(url, IS_DEV));
+      setIsWeekendPlannerDemoPreview(getWeekendPlannerDemoPreviewState(url, IS_DEV));
     };
 
     window.addEventListener("popstate", handlePopState);
@@ -873,6 +898,16 @@ export function HomeScreen() {
     const allowedIds = new Set(foodTrailPlannerContext.matchingPlaceIds);
     return visibleSavedPlacesByCategory.Taste.filter((place) => allowedIds.has(String(place.placeId || place.id || "").trim()));
   }, [foodTrailPlannerContext.matchingPlaceIds, isFoodTrailDemoPreview, visibleSavedPlacesByCategory]);
+  const weekendPlannerPlaces = useMemo(() => {
+    if (isWeekendPlannerDemoPreview) {
+      return createWeekendPlannerDemoPlaces();
+    }
+    if (!weekendPlannerContext.matchingPlaceIds?.length) {
+      return filterPlacesByResolvedCity(visibleSavedPlaces, currentLocationLabel, weekendPlannerContext.cityName).places;
+    }
+    const allowedIds = new Set(weekendPlannerContext.matchingPlaceIds);
+    return visibleSavedPlaces.filter((place) => allowedIds.has(String(place.placeId || place.id || "").trim()));
+  }, [currentLocationLabel, isWeekendPlannerDemoPreview, visibleSavedPlaces, weekendPlannerContext.cityName, weekendPlannerContext.matchingPlaceIds]);
 
   const page = useMemo(() => {
     if (plannerRoute === "food-trail") {
@@ -885,6 +920,33 @@ export function HomeScreen() {
             setPlannerPath("home", true);
           }}
           onAddTaste={() => {
+            setTransitionDirection(1);
+            setPlannerPath("home", true);
+            setActiveCategory(null);
+            setActiveTab("Add");
+          }}
+        />
+      );
+    }
+
+    if (plannerRoute === "weekend-plan") {
+      return (
+        <WeekendPlannerScreen
+          savedPlaces={weekendPlannerPlaces}
+          cityName={
+            isWeekendPlannerDemoPreview
+              ? "Patna"
+              : weekendPlannerContext.cityName ||
+                resolveLocationContext(currentLocationLabel, visibleSavedPlaces).cityName ||
+                resolveLocationContext(currentLocationLabel, visibleSavedPlaces).localityName ||
+                "Your city"
+          }
+          isDemoPreview={isWeekendPlannerDemoPreview}
+          onBack={() => {
+            setTransitionDirection(-1);
+            setPlannerPath("home", true);
+          }}
+          onAddPlaces={() => {
             setTransitionDirection(1);
             setPlannerPath("home", true);
             setActiveCategory(null);
@@ -951,26 +1013,26 @@ export function HomeScreen() {
               setActiveCategory(category);
             };
 
-            const openCityPlanFromHero = (sourcePlaces: SavedPlaceRecord[]) => {
+            const openWeekendPlanFromHero = (sourcePlaces: SavedPlaceRecord[]) => {
               if (!sourcePlaces.length) {
                 showToast({ message: "No matching saved places found for this city plan yet.", variant: "info", durationMs: 2200 });
                 return;
               }
-              const presentCategories = Array.from(new Set(sourcePlaces.map((place) => place.category))) as CategoryLabel[];
-              setHeroNavigationContext({
-                filteredPlaceIds: null,
-                filteredCity: plannerSelection.targetCity,
-                mapPlaces: sourcePlaces,
-                mapCategories: presentCategories.length ? presentCategories : ["Taste", "Activity", "Stay", "Explore"],
+              const sourcePlaceIds = sourcePlaces.map((place) => String(place.placeId || place.id || "").trim()).filter(Boolean);
+              const resolvedCityName = filterPlacesByResolvedCity(
+                sourcePlaces,
+                currentLocationLabel,
+                plannerSelection.targetCity,
+              ).cityName || plannerSelection.targetCity || null;
+              setWeekendPlannerContext({
+                matchingPlaceIds: sourcePlaceIds.length ? sourcePlaceIds : null,
+                cityName: resolvedCityName,
               });
-              if (presentCategories.length) {
-                setGlobalMapActiveCategories(presentCategories);
-              }
+              clearHeroNavigationContext();
               setTransitionDirection(1);
               setActiveCategory(null);
-              setMapEntryMode("global");
-              setMapSourceCategory(null);
-              setActiveTab("Map");
+              setActiveTab("Discover");
+              setPlannerPath("weekend-plan");
             };
 
             if (
@@ -994,26 +1056,13 @@ export function HomeScreen() {
               return;
             }
 
-            if (
-              card.ctaAction === "plan_weekend_explore" ||
-              card.ctaAction === "view_dominant_category" && plannerSelection.targetCategory === "Explore"
-            ) {
-              openCategoryFromHero("Explore", plannerSelection.getCategoryPlaces("Explore"));
+            if (isWeekendPlannerAction(card.ctaAction, plannerSelection.targetCategory)) {
+              openWeekendPlanFromHero(plannerSelection.getCityPlaces());
               return;
             }
 
             if (card.ctaAction === "view_dominant_category" && plannerSelection.targetCategory) {
               openCategoryFromHero(plannerSelection.targetCategory, plannerSelection.getCategoryPlaces(plannerSelection.targetCategory));
-              return;
-            }
-
-            if (card.ctaAction === "view_city_plan") {
-              openCityPlanFromHero(plannerSelection.getCityPlaces());
-              return;
-            }
-
-            if (card.ctaAction === "create_itinerary") {
-              showToast({ message: "Planner coming soon", variant: "success", durationMs: 1800 });
               return;
             }
 
@@ -1094,7 +1143,10 @@ export function HomeScreen() {
     return <LoginProfileScreen />;
   }, [
     foodTrailPlannerPlaces,
+    weekendPlannerPlaces,
+    weekendPlannerContext.cityName,
     isFoodTrailDemoPreview,
+    isWeekendPlannerDemoPreview,
     activeCategory,
     activeTab,
     allSavedPlaces,
@@ -1110,6 +1162,7 @@ export function HomeScreen() {
     readyNotifications.length,
     recentSavedPlaces,
     showToast,
+    currentLocationLabel,
     visibleSavedPlaces,
     visibleSavedPlacesByCategory,
     plannerRoute,

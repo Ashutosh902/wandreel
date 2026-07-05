@@ -51,7 +51,7 @@ export function BucketlistSummary({
                   <div className="wr-bucket-item-tile">
                     <img src={cat.image} alt={cat.label} className="wr-bucket-item-image" loading="lazy" />
                   </div>
-                  <div>
+                  <div className="wr-bucket-item-text">
                     <p className="wr-bucket-item-title">{cat.label}</p>
                     <p className="wr-bucket-item-count">{counts[cat.label]}</p>
                   </div>
