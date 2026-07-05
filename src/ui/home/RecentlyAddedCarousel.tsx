@@ -20,17 +20,24 @@ export function RecentlyAddedCarousel({
 
   return (
     <section className="wr-recent-wrap">
-      <div className="wr-section-head"><h3>Recently added</h3></div>
+      <div className="wr-section-title-row">
+        <h3>Recently added</h3>
+        <span className="wr-section-view-all" aria-hidden="true">View all</span>
+      </div>
       <div className="wr-recent-scroll" aria-label="Recently added carousel">
         {recentPlaces.length ? recentPlaces.map((card) => (
           <article key={card.id} className="wr-recent-card">
             <div className="wr-recent-image">
-              <img
-                src={card.imageUrl}
-                alt={card.title}
-                className="wr-recent-image-photo"
-                loading="lazy"
-              />
+              {card.imageUrl ? (
+                <img
+                  src={card.imageUrl}
+                  alt={card.title}
+                  className="wr-recent-image-photo"
+                  loading="lazy"
+                />
+              ) : (
+                <div className="wr-recent-image-photo is-placeholder" aria-hidden="true" />
+              )}
             </div>
             <div className="wr-recent-body">
               <p className="wr-recent-title">{card.title}</p>

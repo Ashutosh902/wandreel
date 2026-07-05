@@ -60,7 +60,7 @@ export function BottomNav({ activeTab, onTabChange }: BottomNavProps) {
             aria-current={isActive ? "page" : undefined}
             aria-label={item.label}
           >
-            <Icon size={25} strokeWidth={isActive ? 2.3 : 2.1} />
+            <Icon size={28} strokeWidth={isActive ? 2.3 : 2.1} />
             {item.label}
           </button>
         );

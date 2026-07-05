@@ -11,7 +11,9 @@ export function BucketlistSummary({
 }) {
   return (
     <section className="wr-bucketlist-wrap">
-      <div className="wr-section-head"><h3>Your Bucketlist</h3></div>
+      <div className="wr-section-title-row">
+        <h3>Your Bucketlist</h3>
+      </div>
       <div className="wr-bucketlist-card">
         <div className="wr-bucket-glow wr-bucket-glow-right" />
         <div className="wr-bucket-glow wr-bucket-glow-left" />

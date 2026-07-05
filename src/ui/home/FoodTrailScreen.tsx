@@ -23,9 +23,13 @@ function getNextTiming(current: FoodTrailTiming): FoodTrailTiming {
 export function FoodTrailScreen({
   savedPlaces,
   onBack,
+  onAddTaste,
+  isDemoPreview = false,
 }: {
   savedPlaces: SavedPlaceRecord[];
   onBack: () => void;
+  onAddTaste?: () => void;
+  isDemoPreview?: boolean;
 }) {
   const [selectedTiming, setSelectedTiming] = useState<FoodTrailTiming>(() => resolveDefaultFoodTrailTiming(new Date()));
   const [rebuildSeed, setRebuildSeed] = useState(0);
@@ -44,6 +48,7 @@ export function FoodTrailScreen({
         <div className="wr-food-trail-title-block">
           <p>FOOD TRAIL</p>
           <h2>Build from your saved places</h2>
+          {isDemoPreview ? <small>Demo preview</small> : null}
         </div>
       </header>
 
@@ -53,9 +58,15 @@ export function FoodTrailScreen({
           <h3>{hasEnoughPlaces ? plan.trailStyleLabel : "Food trail planning"}</h3>
           <p>
             {hasEnoughPlaces
-              ? `${plan.summaryLabel}. Start around ${plan.suggestedStartTimeLabel}.`
+              ? `${plan.summaryLabel}. Start ${plan.suggestedStartTimeLabel}.`
               : "Save a few food places first, then Wandreel can build a trail for you."}
           </p>
+          {hasEnoughPlaces ? (
+            <div className="wr-food-trail-start-pill">
+              <Clock3 size={14} />
+              <span>{plan.suggestedStartTimeLabel}</span>
+            </div>
+          ) : null}
         </div>
         <div className="wr-food-trail-hero-mark" aria-hidden="true">
           <UtensilsCrossed size={26} />
@@ -98,11 +109,18 @@ export function FoodTrailScreen({
               </div>
               <span className="wr-food-trail-duration">{plan.totalDurationLabel}</span>
             </div>
+            <p className="wr-food-trail-why-route">
+              <span>Why this route</span>
+              {plan.whyRouteLabel}
+            </p>
 
             <div className="wr-food-trail-stop-list">
               {plan.stops.map((stop, index) => (
                 <article className="wr-food-trail-stop-card" key={`${stop.placeId}-${index}`}>
-                  <div className="wr-food-trail-stop-index">{index + 1}</div>
+                  <div className="wr-food-trail-stop-rail" aria-hidden="true">
+                    <div className="wr-food-trail-stop-index">{index + 1}</div>
+                    {index < plan.stops.length - 1 ? <div className="wr-food-trail-stop-connector" /> : null}
+                  </div>
                   <div className="wr-food-trail-stop-body">
                     <div className="wr-food-trail-stop-topline">
                       <h4>{stop.title}</h4>
@@ -137,7 +155,21 @@ export function FoodTrailScreen({
       ) : (
         <section className="wr-food-trail-empty-state">
           <h3>Not enough saved food places yet</h3>
-          <p>Save a few food places first, then Wandreel can build a trail for you.</p>
+          <p>
+            {savedPlaces.length === 1
+              ? "You already have 1 saved Taste place. Add one more to build a route."
+              : "Save at least 2 Taste places first, then Wandreel can build a route for you."}
+          </p>
+          <div className="wr-food-trail-empty-actions">
+            {onAddTaste ? (
+              <button type="button" className="wr-food-trail-control-primary" onClick={onAddTaste}>
+                Add Taste places
+              </button>
+            ) : null}
+            <button type="button" className="wr-food-trail-control-secondary" onClick={onBack}>
+              Back to Discover
+            </button>
+          </div>
         </section>
       )}
     </section>
