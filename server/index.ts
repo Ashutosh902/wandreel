@@ -460,6 +460,470 @@ function resolveSavedPlaceIdFromRequest(req: express.Request): string {
   return "";
 }
 
+type HeroCardBase = {
+  type: "city_category_insight";
+  cardKey: string;
+  title: string;
+  subtitle: string;
+  ctaLabel: string;
+  ctaAction: string;
+  priorityScore: number;
+  reasonCodes: string[];
+  metadata: Record<string, unknown>;
+};
+
+type HeroCardResponse = HeroCardBase & {
+  alternatives: HeroCardBase[];
+};
+
+type HeroCardSavedPlace = {
+  id?: string;
+  placeId?: string;
+  title?: string;
+  category?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+type HeroCandidateInput = {
+  placeId: string;
+  title: string | null;
+  category: string | null;
+  city: string | null;
+  locality: string | null;
+};
+
+type HeroCardCandidate = HeroCardBase;
+
+function normalizeHeroField(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+}
+
+function titleCaseLabel(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!normalized) return "";
+  return normalized.slice(0, 1).toUpperCase() + normalized.slice(1);
+}
+
+function normalizeHeroComparisonValue(value: string | null | undefined): string {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, " ");
+}
+
+function isHeroAdminRegionCity(value: string | null | undefined): boolean {
+  const normalized = String(value || "").trim();
+  if (!normalized) return false;
+  return /\b(division|district|province|county|region|state|governorate)\s*$/i.test(normalized);
+}
+
+function isUsableHeroCity(value: string | null | undefined): value is string {
+  return Boolean(normalizeHeroField(value) && !isHeroAdminRegionCity(value));
+}
+
+function isVenueLikeHeroLocality(locality: string, title?: string | null): boolean {
+  const normalizedLocality = normalizeHeroComparisonValue(locality);
+  const normalizedTitle = normalizeHeroComparisonValue(title);
+  if (normalizedLocality && normalizedTitle && normalizedLocality === normalizedTitle) {
+    return true;
+  }
+  return /\b(cafe|café|restaurant|kitchen|brew|brewery|bar|lounge|club|bakery|bistro|pub|hotel|resort|villa|mart|house)\b/i.test(locality);
+}
+
+function pickHeroTargetLocality(places: HeroCandidateInput[]): string | null {
+  const localityCounts = new Map<string, number>();
+  const localityLabels = new Map<string, string>();
+
+  for (const place of places) {
+    const locality = normalizeHeroField(place.locality);
+    if (!locality || isVenueLikeHeroLocality(locality, place.title)) continue;
+    const key = locality.toLowerCase();
+    localityCounts.set(key, (localityCounts.get(key) || 0) + 1);
+    if (!localityLabels.has(key)) {
+      localityLabels.set(key, locality);
+    }
+  }
+
+  const sortedLocalities = [...localityCounts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const topLocality = sortedLocalities[0];
+  if (!topLocality) return null;
+
+  const validLocalityCount = [...localityCounts.values()].reduce((sum, count) => sum + count, 0);
+  const topCount = topLocality[1];
+  const topShare = validLocalityCount > 0 ? topCount / validLocalityCount : 0;
+
+  if (topCount < 2) return null;
+  if (topCount < 3 && topShare < 0.3) return null;
+
+  return localityLabels.get(topLocality[0]) || null;
+}
+
+function buildHeroCardKey(input: {
+  type: string;
+  rule?: string | null;
+  ctaAction?: string | null;
+  targetCategory?: string | null;
+  targetCity?: string | null;
+  matchingPlaceIds: string[];
+}): string {
+  return JSON.stringify({
+    type: input.type,
+    rule: normalizeHeroField(input.rule) || "",
+    ctaAction: normalizeHeroField(input.ctaAction) || "",
+    targetCategory: normalizeHeroField(input.targetCategory) || "",
+    targetCity: normalizeHeroField(input.targetCity) || "",
+    matchingPlaceIds: [...input.matchingPlaceIds].map((item) => String(item || "").trim()).filter(Boolean).sort(),
+  });
+}
+
+function buildHeroSemanticIdentity(input: {
+  targetCategory?: string | null;
+  targetCity?: string | null;
+  matchingPlaceIds: string[];
+}): string {
+  return JSON.stringify({
+    targetCategory: normalizeHeroField(input.targetCategory) || "",
+    targetCity: normalizeHeroField(input.targetCity) || "",
+    matchingPlaceIds: [...input.matchingPlaceIds].map((item) => String(item || "").trim()).filter(Boolean).sort(),
+  });
+}
+
+function buildHeroCardMetadata(input: {
+  targetCity?: string | null;
+  targetLocality?: string | null;
+  targetCategory?: string | null;
+  totalSavedPlaces: number;
+  matchingPlaceIds: string[];
+  queryParams?: Record<string, unknown>;
+  reasonCodes: string[];
+  priorityScore: number;
+  rule: string;
+}) {
+  return {
+    rule: input.rule,
+    targetCity: input.targetCity ?? null,
+    targetLocality: input.targetLocality ?? null,
+    targetCategory: input.targetCategory ?? null,
+    totalSavedPlaces: input.totalSavedPlaces,
+    matchingPlaceIds: input.matchingPlaceIds,
+    queryParams: input.queryParams ?? {},
+    reasonCodes: input.reasonCodes,
+    priorityScore: input.priorityScore,
+  };
+}
+
+function buildFallbackHeroCard(totalSaves: number): HeroCardCandidate {
+  const priorityScore = totalSaves > 0 ? 10 : 5;
+  const reasonCodes = totalSaves > 0 ? ["insufficient_data"] : ["no_saved_places"];
+  const metadata = buildHeroCardMetadata({
+    totalSavedPlaces: totalSaves,
+    matchingPlaceIds: [],
+    queryParams: totalSaves > 0 ? { minSavedPlacesNeeded: 3 } : { startSaving: true },
+    reasonCodes,
+    priorityScore,
+    rule: "fallback",
+  });
+  return {
+    type: "city_category_insight",
+    cardKey: buildHeroCardKey({
+      type: "city_category_insight",
+      rule: "fallback",
+      ctaAction: totalSaves > 0 ? "grow_saved_places" : "add_first_place",
+      targetCategory: null,
+      targetCity: null,
+      matchingPlaceIds: [],
+    }),
+    title: totalSaves > 0 ? "Your next Wandreel is taking shape" : "Start building your Wandreel",
+    subtitle: totalSaves > 0
+      ? "Save a few more places and we will start surfacing smarter city and category insights here."
+      : "Save reels, cafes, stays, and spots you love to unlock personalized trip ideas on home.",
+    ctaLabel: totalSaves > 0 ? "Save more places" : "Add your first place",
+    ctaAction: totalSaves > 0 ? "grow_saved_places" : "add_first_place",
+    priorityScore,
+    reasonCodes,
+    metadata,
+  };
+}
+
+function buildHeroCardFromSavedPlaces(items: HeroCardSavedPlace[]): HeroCardResponse {
+  const totalSaves = items.length;
+  if (totalSaves < 3) {
+    return {
+      ...buildFallbackHeroCard(totalSaves),
+      alternatives: [],
+    };
+  }
+
+  const normalizedPlaces: HeroCandidateInput[] = items.map((item, index) => {
+    const metadata = item.metadata && typeof item.metadata === "object"
+      ? item.metadata as Record<string, unknown>
+      : null;
+    const placeId = normalizeHeroField(item.placeId) || normalizeHeroField(item.id) || `saved_place_${index + 1}`;
+    return {
+      placeId,
+      title: normalizeHeroField(item.title),
+      category: (() => {
+        const rawCategory = normalizeHeroField(item.category);
+        return rawCategory ? titleCaseLabel(rawCategory) : null;
+      })(),
+      city: isUsableHeroCity(normalizeHeroField(metadata?.city)) ? normalizeHeroField(metadata?.city) : null,
+      locality: normalizeHeroField(metadata?.locality),
+    };
+  });
+
+  const categoryToPlaces = new Map<string, HeroCandidateInput[]>();
+  const cityToPlaces = new Map<string, HeroCandidateInput[]>();
+
+  for (const place of normalizedPlaces) {
+    if (place.category) {
+      categoryToPlaces.set(place.category, [...(categoryToPlaces.get(place.category) || []), place]);
+    }
+    if (place.city) {
+      cityToPlaces.set(place.city, [...(cityToPlaces.get(place.city) || []), place]);
+    }
+  }
+
+  const categoryEntries = [...categoryToPlaces.entries()].sort((a, b) => b[1].length - a[1].length);
+  const cityEntries = [...cityToPlaces.entries()].sort((a, b) => b[1].length - a[1].length);
+  const topCategoryEntry = categoryEntries[0] || null;
+  const topCityEntry = cityEntries[0] || null;
+  const topCategory = topCategoryEntry?.[0] || null;
+  const topCategoryPlaces = topCategoryEntry?.[1] || [];
+  const topCategoryCount = topCategoryPlaces.length;
+  const topCity = topCityEntry?.[0] || null;
+  const topCityPlaces = topCityEntry?.[1] || [];
+  const topCityCount = topCityPlaces.length;
+  const topCategoryShare = totalSaves > 0 ? topCategoryCount / totalSaves : 0;
+  const topCityShare = totalSaves > 0 ? topCityCount / totalSaves : 0;
+  const candidateCards: HeroCardCandidate[] = [];
+
+  const buildCandidate = (input: {
+    title: string;
+    subtitle: string;
+    ctaLabel: string;
+    ctaAction: string;
+    priorityScore: number;
+    reasonCodes: string[];
+    targetCity?: string | null;
+    targetLocality?: string | null;
+    targetCategory?: string | null;
+    matchingPlaceIds: string[];
+    queryParams: Record<string, unknown>;
+    rule: string;
+  }): HeroCardCandidate => {
+    const metadata = buildHeroCardMetadata({
+      targetCity: input.targetCity,
+      targetLocality: input.targetLocality,
+      targetCategory: input.targetCategory,
+      totalSavedPlaces: totalSaves,
+      matchingPlaceIds: input.matchingPlaceIds,
+      queryParams: input.queryParams,
+      reasonCodes: input.reasonCodes,
+      priorityScore: input.priorityScore,
+      rule: input.rule,
+    });
+    return {
+      type: "city_category_insight",
+      cardKey: buildHeroCardKey({
+        type: "city_category_insight",
+        rule: input.rule,
+        ctaAction: input.ctaAction,
+        targetCategory: input.targetCategory,
+        targetCity: input.targetCity,
+        matchingPlaceIds: input.matchingPlaceIds,
+      }),
+      title: input.title,
+      subtitle: input.subtitle,
+      ctaLabel: input.ctaLabel,
+      ctaAction: input.ctaAction,
+      priorityScore: input.priorityScore,
+      reasonCodes: input.reasonCodes,
+      metadata,
+    };
+  };
+
+  if (topCategory === "Taste" && topCategoryCount >= 5) {
+    const priorityScore = 96 + Math.min(8, Math.floor(topCategoryShare * 10));
+    const reasonCodes = ["taste_heavy", "category_specific", "high_confidence"];
+    candidateCards.push(buildCandidate({
+      title: "Your food trail is ready",
+      subtitle: `You have ${topCategoryCount} Taste saves. Bundle them into a cafe and food crawl for your next outing.`,
+      ctaLabel: "Build food trail",
+      ctaAction: "build_food_trail",
+      priorityScore,
+      reasonCodes,
+      targetCategory: "Taste",
+      targetLocality: pickHeroTargetLocality(topCategoryPlaces),
+      matchingPlaceIds: topCategoryPlaces.map((place) => place.placeId),
+      queryParams: { category: "Taste", placeIds: topCategoryPlaces.map((place) => place.placeId) },
+      rule: "taste_trail",
+    }));
+  }
+
+  if (topCategory === "Explore" && topCategoryCount >= 5) {
+    const priorityScore = 95 + Math.min(8, Math.floor(topCategoryShare * 10));
+    const reasonCodes = ["explore_heavy", "category_specific", "high_confidence"];
+    candidateCards.push(buildCandidate({
+      title: "A weekend explore run is waiting",
+      subtitle: `You already saved ${topCategoryCount} Explore spots. That is enough for a packed weekend circuit.`,
+      ctaLabel: "Plan weekend route",
+      ctaAction: "plan_weekend_explore",
+      priorityScore,
+      reasonCodes,
+      targetCategory: "Explore",
+      targetLocality: pickHeroTargetLocality(topCategoryPlaces),
+      matchingPlaceIds: topCategoryPlaces.map((place) => place.placeId),
+      queryParams: { category: "Explore", placeIds: topCategoryPlaces.map((place) => place.placeId) },
+      rule: "explore_weekend",
+    }));
+  }
+
+  if (topCategory && topCategoryCount >= 4 && topCategoryShare >= 0.4) {
+    const priorityScore = 80 + Math.min(10, Math.round(topCategoryShare * 20));
+    const reasonCodes = ["dominant_category", "category_pattern"];
+    candidateCards.push(buildCandidate({
+      title: `${topCategory} is leading your bucketlist`,
+      subtitle: `${topCategoryCount} of your ${totalSaves} saves are in ${topCategory}. You are building a clear travel pattern.`,
+      ctaLabel: `View ${topCategory}`,
+      ctaAction: "view_dominant_category",
+      priorityScore,
+      reasonCodes,
+      targetCategory: topCategory,
+      targetLocality: pickHeroTargetLocality(topCategoryPlaces),
+      matchingPlaceIds: topCategoryPlaces.map((place) => place.placeId),
+      queryParams: { category: topCategory, placeIds: topCategoryPlaces.map((place) => place.placeId) },
+      rule: "dominant_category",
+    }));
+  }
+
+  const secondaryCategoryEntry = categoryEntries
+    .slice(1)
+    .find(([, places]) => places.length >= 5 && (places.length >= 20 || (totalSaves > 0 ? places.length / totalSaves : 0) >= 0.2));
+  if (secondaryCategoryEntry) {
+    const [secondaryCategory, secondaryCategoryPlaces] = secondaryCategoryEntry;
+    const secondaryCategoryCount = secondaryCategoryPlaces.length;
+    const secondaryCategoryShare = totalSaves > 0 ? secondaryCategoryCount / totalSaves : 0;
+    const matchingPlaceIds = secondaryCategoryPlaces.map((place) => place.placeId);
+
+    if (secondaryCategory === "Taste") {
+      const priorityScore = 88 + Math.min(8, Math.round(secondaryCategoryShare * 20));
+      const reasonCodes = ["secondary_category", "taste_secondary", "category_specific"];
+      candidateCards.push(buildCandidate({
+        title: "Your Taste list deserves an outing",
+        subtitle: `You have ${secondaryCategoryCount} Taste saves ready for a focused cafe or food run.`,
+        ctaLabel: "Build food trail",
+        ctaAction: "build_food_trail",
+        priorityScore,
+        reasonCodes,
+        targetCategory: "Taste",
+        targetLocality: pickHeroTargetLocality(secondaryCategoryPlaces),
+        matchingPlaceIds,
+        queryParams: { category: "Taste", placeIds: matchingPlaceIds },
+        rule: "secondary_taste",
+      }));
+    } else if (secondaryCategory === "Explore") {
+      const priorityScore = 87 + Math.min(8, Math.round(secondaryCategoryShare * 20));
+      const reasonCodes = ["secondary_category", "explore_secondary", "category_specific"];
+      candidateCards.push(buildCandidate({
+        title: "Your Explore list can power a weekend plan",
+        subtitle: `You already have ${secondaryCategoryCount} Explore saves that could turn into a strong route of their own.`,
+        ctaLabel: "Plan weekend route",
+        ctaAction: "plan_weekend_explore",
+        priorityScore,
+        reasonCodes,
+        targetCategory: "Explore",
+        targetLocality: pickHeroTargetLocality(secondaryCategoryPlaces),
+        matchingPlaceIds,
+        queryParams: { category: "Explore", placeIds: matchingPlaceIds },
+        rule: "secondary_explore",
+      }));
+    } else {
+      const priorityScore = 84 + Math.min(8, Math.round(secondaryCategoryShare * 20));
+      const reasonCodes = ["secondary_category", "category_pattern"];
+      candidateCards.push(buildCandidate({
+        title: `${secondaryCategory} is also worth acting on`,
+        subtitle: `${secondaryCategoryCount} of your saves are in ${secondaryCategory}. That is enough to justify its own next step.`,
+        ctaLabel: `View ${secondaryCategory}`,
+        ctaAction: "view_dominant_category",
+        priorityScore,
+        reasonCodes,
+        targetCategory: secondaryCategory,
+        targetLocality: pickHeroTargetLocality(secondaryCategoryPlaces),
+        matchingPlaceIds,
+        queryParams: { category: secondaryCategory, placeIds: matchingPlaceIds },
+        rule: "secondary_category",
+      }));
+    }
+  }
+
+  if (totalSaves >= 12) {
+    const priorityScore = 74 + Math.min(16, Math.floor(totalSaves / 4));
+    const reasonCodes = ["itinerary_ready", "high_save_volume"];
+    candidateCards.push(buildCandidate({
+      title: "You have enough saves for a real itinerary",
+      subtitle: `With ${totalSaves} saved places across Wandreel, your next trip can move from scattered ideas to a proper plan.`,
+      ctaLabel: "Create itinerary",
+      ctaAction: "create_itinerary",
+      priorityScore,
+      reasonCodes,
+      matchingPlaceIds: normalizedPlaces.map((place) => place.placeId),
+      queryParams: { placeIds: normalizedPlaces.map((place) => place.placeId), totalSavedPlaces: totalSaves },
+      rule: "itinerary_ready",
+    }));
+  }
+
+  if (topCity && topCityCount >= 3 && topCityShare >= 0.45) {
+    const priorityScore = 62 + Math.min(18, Math.round(topCityShare * 20));
+    const reasonCodes = ["dominant_city", "strong_city_signal"];
+    candidateCards.push(buildCandidate({
+      title: `${topCity} is clearly your next obsession`,
+      subtitle: `${topCityCount} of your saved places are in ${topCity}. Want to turn them into one tight plan?`,
+      ctaLabel: "See city plan",
+      ctaAction: "view_city_plan",
+      priorityScore,
+      reasonCodes,
+      targetCity: topCity,
+      targetLocality: pickHeroTargetLocality(topCityPlaces),
+      matchingPlaceIds: topCityPlaces.map((place) => place.placeId),
+      queryParams: { city: topCity, placeIds: topCityPlaces.map((place) => place.placeId) },
+      rule: "dominant_city",
+    }));
+  }
+
+  const sortedCandidates = candidateCards
+    .sort((a, b) => b.priorityScore - a.priorityScore);
+  const selectedCard = sortedCandidates[0] || buildFallbackHeroCard(totalSaves);
+  const seenCardKeys = new Set<string>([selectedCard.cardKey]);
+  const seenSemanticIdentities = new Set<string>([
+    buildHeroSemanticIdentity({
+      targetCategory: selectedCard.metadata?.targetCategory as string | null | undefined,
+      targetCity: selectedCard.metadata?.targetCity as string | null | undefined,
+      matchingPlaceIds: Array.isArray(selectedCard.metadata?.matchingPlaceIds) ? selectedCard.metadata.matchingPlaceIds as string[] : [],
+    }),
+  ]);
+  const alternatives: HeroCardCandidate[] = [];
+
+  for (const candidate of sortedCandidates.slice(1)) {
+    const semanticIdentity = buildHeroSemanticIdentity({
+      targetCategory: candidate.metadata?.targetCategory as string | null | undefined,
+      targetCity: candidate.metadata?.targetCity as string | null | undefined,
+      matchingPlaceIds: Array.isArray(candidate.metadata?.matchingPlaceIds) ? candidate.metadata.matchingPlaceIds as string[] : [],
+    });
+    if (seenCardKeys.has(candidate.cardKey) || seenSemanticIdentities.has(semanticIdentity)) {
+      continue;
+    }
+    seenCardKeys.add(candidate.cardKey);
+    seenSemanticIdentities.add(semanticIdentity);
+    alternatives.push(candidate);
+    if (alternatives.length >= 3) break;
+  }
+
+  return {
+    ...selectedCard,
+    alternatives,
+  };
+}
+
 function getElapsedMs(startedAt: number): number {
   return Math.max(0, Date.now() - startedAt);
 }
@@ -2229,6 +2693,18 @@ app.get("/api/saved-places", requireAuth, async (req, res) => {
     return res.json({ ok: true, items });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not fetch saved places";
+    return res.status(400).json({ ok: false, error: message });
+  }
+});
+
+app.get("/api/hero-card", requireAuth, async (req, res) => {
+  try {
+    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+    const items = await listSavedPlaces(authUser!.userId);
+    const card = buildHeroCardFromSavedPlaces(items as HeroCardSavedPlace[]);
+    return res.json(card);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not build hero card";
     return res.status(400).json({ ok: false, error: message });
   }
 });

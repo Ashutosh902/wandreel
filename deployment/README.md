@@ -5,7 +5,7 @@ This folder is the single source of truth for Wandreel production deployment.
 ## Scope
 
 - Frontend hosting and deploys: Cloudflare via `wrangler`
-- API hosting: Fly.io
+- API hosting: Render
 - Database: Neon Postgres
 - Frontend app domain: `app.wandreel.com`
 - Public API domain: `api.wandreel.com`
@@ -22,7 +22,7 @@ Wandreel currently depends on these services in production:
    - DNS/proxy
    - SSL/TLS
 
-2. Fly.io
+2. Render
    - Node/Express API hosting
    - origin behind `api.wandreel.com`
 
@@ -38,6 +38,7 @@ Wandreel currently depends on these services in production:
 - Cloudflare setup: `cloudflare/setup.md`
 - Production env template: `cloudflare/env.production.example`
 - Cutover checklist: `checklists/cutover.md`
+- Frontend production release checklist: `checklists/frontend-production-release.md`
 - Smoke tests: `checklists/smoke-tests.md`
 - Rollback checklist: `checklists/rollback.md`
 - Preflight scripts: `scripts/preflight.mjs`, `scripts/run-preflight.ps1`
@@ -46,12 +47,12 @@ Wandreel currently depends on these services in production:
 
 1. Deploy frontend with `wrangler` / Cloudflare.
 2. Point `app.wandreel.com` to the frontend deployment in Cloudflare.
-3. Deploy the API to Fly and validate the generated `.fly.dev` hostname before any DNS cutover.
-4. Repoint `api.wandreel.com` to the Fly backend origin through Cloudflare DNS/proxy only after validation passes.
+3. Deploy the API to Render and validate the Render service before any DNS cutover.
+4. Repoint `api.wandreel.com` to the Render backend origin through Cloudflare DNS/proxy only after validation passes.
 5. Ensure Neon connection/env vars are set correctly in the backend environment.
-6. Keep Neon as the external Postgres provider; do not create Fly Postgres for this app.
+6. Keep Neon as the external Postgres provider.
 7. Set production env vars and CORS/cookie domain policy.
-8. Set backend secrets with `fly secrets set`; do not commit secrets into the repo.
+8. Set backend secrets/env vars in Render; do not commit secrets into the repo.
 9. Ensure extraction runtime bootstrap is enabled so Python media dependencies and FFmpeg-compatible tooling are available in the container/runtime.
 10. Run smoke tests before announcing release.
 
@@ -63,15 +64,14 @@ Wandreel currently depends on these services in production:
 
 These commands fail fast when env, DNS, HTTP reachability, or CORS checks are not production-ready.
 
-## API Deployment On Fly.io
+## API Deployment On Render
 
-- `fly.toml` defines the API app as `wandreel-api` in region `bom`.
 - `Dockerfile` installs the Node runtime plus Python 3, `pip`, and `ffmpeg` for extraction support.
-- `npm run start:prod` is the provider-neutral production entrypoint and currently matches the existing Render bootstrap.
-- Keep the frontend on Cloudflare; this Fly setup is for the API only.
-- Frontend API calls already use `import.meta.env.VITE_API_BASE_URL` with a localhost fallback, so local dev can keep using `http://localhost:8787` while Cloudflare builds can target Fly by setting `VITE_API_BASE_URL=https://wandreel-api.fly.dev`.
-- Use `fly secrets set` for all backend secrets such as `DATABASE_URL`, OpenAI keys, Google keys, and any Instagram auth fallback tokens.
-- Do not provision Fly Postgres; continue using the external Neon `DATABASE_URL`.
+- `npm run start:prod` is the production entrypoint and should match the Render service start command.
+- Keep the frontend on Cloudflare; Render is the API host.
+- Frontend API calls already use `import.meta.env.VITE_API_BASE_URL` with a localhost fallback, so local dev can keep using `http://localhost:8787` while Cloudflare builds can target Render by setting `VITE_API_BASE_URL=https://api.wandreel.com`.
+- Set Render env vars for backend secrets such as `DATABASE_URL`, OpenAI keys, Google keys, and any Instagram auth fallback tokens.
+- Continue using the external Neon `DATABASE_URL`.
 
 ## Extraction Runtime
 
@@ -87,12 +87,12 @@ Production extraction for both YouTube and Instagram depends on Python-side medi
   - OCR fallback: shared media + Instagram helpers + Pillow/pytesseract
 - `imageio-ffmpeg` is used as the production FFmpeg fallback when system FFmpeg is not present. Startup creates a temporary `ffmpeg` shim on `PATH` so `ffmpeg -version` succeeds even when the executable originates from the Python package rather than the base image.
 
-Recommended Fly workflow:
+Recommended Render workflow:
 
-- Create the app if needed: `fly apps create wandreel-api`
-- Set the primary region: `fly regions set bom -a wandreel-api`
-- Set secrets with `fly secrets set ... -a wandreel-api`
-- Deploy after secrets are present: `fly deploy -a wandreel-api`
+- Ensure the Render service points at the intended branch/commit.
+- Ensure required env vars are present in the Render dashboard.
+- Trigger a Render deploy for the API service.
+- Confirm the deploy uses the intended server code before validating the frontend.
 
 Recommended backend env/secrets:
 
@@ -108,12 +108,12 @@ Recommended source-specific auth/runtime env:
 
 Validation steps after deploy:
 
-- Check the Fly-issued `.fly.dev` URL first before repointing `api.wandreel.com`.
-- To test the hosted frontend against Fly without changing DNS, set the frontend build env `VITE_API_BASE_URL=https://wandreel-api.fly.dev` in Cloudflare Pages for the test build only.
+- Check the Render-hosted API health before relying on `api.wandreel.com`.
+- To test the hosted frontend against a non-production backend, set the frontend build env `VITE_API_BASE_URL=<render-backend-url>` in Cloudflare for the test build only.
 - `POST /api/metadata/extract` with a YouTube URL and confirm `platform: "youtube"` plus non-empty transcript or frame-debug runtime info.
 - `POST /api/metadata/extract` with an Instagram URL and confirm `videoFrameCount > 0` in debug output when the reel is frame-extractable.
 - `python server/extraction/scripts/check_runtime_health.py` or `npm run extract:runtime:check` on the host to verify `instaloader`, `yt_dlp`, and `imageio_ffmpeg` resolve correctly.
-- Check Fly logs for `[extraction-runtime-startup]` and confirm:
+- Check Render logs for `[extraction-runtime-startup]` and confirm:
   - `ytDlpAvailable: true`
   - `ytDlpVersion` is populated
   - `ffmpegAvailable: true`

@@ -986,6 +986,808 @@ test("saved places route saves normally when placeId is missing by using stable 
   assert.match(String(insertCall?.params?.[2] || ""), /^manual:/);
 });
 
+async function fetchHeroCardForSavedPlaces(savedRows: Array<Record<string, unknown>>) {
+  process.env.NODE_ENV = "test";
+  const mock = createDatabaseMock([
+    [buildAuthSessionUserRow()],
+    savedRows,
+  ]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+    schemaReadyOverride: false,
+  });
+
+  const { app } = await import("./index");
+  const server = app.listen(0);
+  const address = server.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/hero-card`, {
+      headers: { Cookie: "wr_session=test-token" },
+    });
+    const body = await response.json() as any;
+    return { response, body };
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+}
+
+test("hero card prefers Taste-heavy insight over a generic dominant city card", async () => {
+  const { response, body } = await fetchHeroCardForSavedPlaces([
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Cafe One",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Anjuna" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Cafe Two",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Vagator" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Cafe Three",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Morjim" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    }, {
+      id: "saved-4",
+      user_id: "user-1",
+      place_id: "place-4",
+      title: "Cafe Four",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Assagao" },
+      created_at: "2026-01-04T00:00:00.000Z",
+      updated_at: "2026-01-04T00:00:00.000Z",
+    }, {
+      id: "saved-5",
+      user_id: "user-1",
+      place_id: "place-5",
+      title: "Cafe Five",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Siolim" },
+      created_at: "2026-01-05T00:00:00.000Z",
+      updated_at: "2026-01-05T00:00:00.000Z",
+    }, {
+      id: "saved-6",
+      user_id: "user-1",
+      place_id: "place-6",
+      title: "Beach Walk",
+      category: "Explore",
+      metadata_json: { city: "Goa", locality: "Calangute" },
+      created_at: "2026-01-06T00:00:00.000Z",
+      updated_at: "2026-01-06T00:00:00.000Z",
+    },
+  ]);
+
+  assert.equal(response.status, 200);
+  assert.equal(body.type, "city_category_insight");
+  assert.equal(body.metadata?.rule, "taste_trail");
+  assert.equal(body.metadata?.targetCategory, "Taste");
+  assert.equal(body.ctaAction, "build_food_trail");
+  assert.ok((body.priorityScore || 0) > 0);
+  assert.equal(typeof body.cardKey, "string");
+  assert.ok(Array.isArray(body.alternatives));
+});
+
+test("hero card prefers Explore-heavy insight over a generic dominant city card", async () => {
+  const { response, body } = await fetchHeroCardForSavedPlaces([
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Spot One",
+      category: "Explore",
+      metadata_json: { city: "Jaipur", locality: "Amer" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Spot Two",
+      category: "Explore",
+      metadata_json: { city: "Jaipur", locality: "Pink City" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Spot Three",
+      category: "Explore",
+      metadata_json: { city: "Jaipur", locality: "Bapu Nagar" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    }, {
+      id: "saved-4",
+      user_id: "user-1",
+      place_id: "place-4",
+      title: "Spot Four",
+      category: "Explore",
+      metadata_json: { city: "Jaipur", locality: "Nahargarh" },
+      created_at: "2026-01-04T00:00:00.000Z",
+      updated_at: "2026-01-04T00:00:00.000Z",
+    }, {
+      id: "saved-5",
+      user_id: "user-1",
+      place_id: "place-5",
+      title: "Spot Five",
+      category: "Explore",
+      metadata_json: { city: "Jaipur", locality: "Jal Mahal" },
+      created_at: "2026-01-05T00:00:00.000Z",
+      updated_at: "2026-01-05T00:00:00.000Z",
+    }, {
+      id: "saved-6",
+      user_id: "user-1",
+      place_id: "place-6",
+      title: "Cafe Six",
+      category: "Taste",
+      metadata_json: { city: "Jaipur", locality: "C Scheme" },
+      created_at: "2026-01-06T00:00:00.000Z",
+      updated_at: "2026-01-06T00:00:00.000Z",
+    },
+  ]);
+
+  assert.equal(response.status, 200);
+  assert.equal(body.metadata?.rule, "explore_weekend");
+  assert.equal(body.metadata?.targetCategory, "Explore");
+  assert.equal(body.ctaAction, "plan_weekend_explore");
+});
+
+test("hero card does not create a city card from locality-only data", async () => {
+  const { response, body } = await fetchHeroCardForSavedPlaces([
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "One",
+      category: "Activity",
+      metadata_json: { locality: "Anjuna" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Two",
+      category: "Activity",
+      metadata_json: { locality: "Anjuna" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Three",
+      category: "Activity",
+      metadata_json: { locality: "Anjuna" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    }, {
+      id: "saved-4",
+      user_id: "user-1",
+      place_id: "place-4",
+      title: "Four",
+      category: "Stay",
+      metadata_json: { locality: "Vagator" },
+      created_at: "2026-01-04T00:00:00.000Z",
+      updated_at: "2026-01-04T00:00:00.000Z",
+    },
+  ]);
+
+  assert.equal(response.status, 200);
+  assert.notEqual(body.metadata?.rule, "dominant_city");
+  assert.equal(body.metadata?.targetCity ?? null, null);
+});
+
+test("hero card can return itinerary-ready when total saves are high", async () => {
+  const savedRows = Array.from({ length: 12 }, (_, index) => ({
+    id: `saved-${index + 1}`,
+    user_id: "user-1",
+    place_id: `place-${index + 1}`,
+    title: `Place ${index + 1}`,
+    category: ["Taste", "Explore", "Stay", "Activity"][index % 4],
+    metadata_json: { city: index < 4 ? "Goa" : index < 8 ? "Jaipur" : "Delhi", locality: `Locality ${index + 1}` },
+    created_at: `2026-01-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
+    updated_at: `2026-01-${String(index + 1).padStart(2, "0")}T00:00:00.000Z`,
+  }));
+  const { response, body } = await fetchHeroCardForSavedPlaces(savedRows);
+
+  assert.equal(response.status, 200);
+  assert.equal(body.metadata?.rule, "itinerary_ready");
+  assert.equal(body.ctaAction, "create_itinerary");
+  assert.equal(body.metadata?.totalSavedPlaces, 12);
+});
+
+test("hero card metadata includes actionable fields for future CTA handlers", async () => {
+  const { response, body } = await fetchHeroCardForSavedPlaces([
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Cafe One",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Anjuna" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Cafe Two",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Vagator" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Cafe Three",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Morjim" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    }, {
+      id: "saved-4",
+      user_id: "user-1",
+      place_id: "place-4",
+      title: "Cafe Four",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Assagao" },
+      created_at: "2026-01-04T00:00:00.000Z",
+      updated_at: "2026-01-04T00:00:00.000Z",
+    }, {
+      id: "saved-5",
+      user_id: "user-1",
+      place_id: "place-5",
+      title: "Cafe Five",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Siolim" },
+      created_at: "2026-01-05T00:00:00.000Z",
+      updated_at: "2026-01-05T00:00:00.000Z",
+    },
+  ]);
+
+  assert.equal(response.status, 200);
+  assert.equal(typeof body.cardKey, "string");
+  assert.ok(Array.isArray(body.reasonCodes));
+  assert.ok(typeof body.priorityScore === "number");
+  assert.equal(body.metadata?.targetCategory, "Taste");
+  assert.equal(body.metadata?.targetCity ?? null, null);
+  assert.ok(Array.isArray(body.metadata?.matchingPlaceIds));
+  assert.ok(body.metadata?.matchingPlaceIds.includes("place-1"));
+  assert.deepEqual(body.metadata?.reasonCodes, body.reasonCodes);
+  assert.equal(body.metadata?.priorityScore, body.priorityScore);
+  assert.equal(body.metadata?.queryParams?.category, "Taste");
+});
+
+test("hero card returns ordered alternatives with stable card keys", async () => {
+  const { response, body } = await fetchHeroCardForSavedPlaces([
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Cafe One",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Anjuna" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Cafe Two",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Vagator" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Cafe Three",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Morjim" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    }, {
+      id: "saved-4",
+      user_id: "user-1",
+      place_id: "place-4",
+      title: "Cafe Four",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Assagao" },
+      created_at: "2026-01-04T00:00:00.000Z",
+      updated_at: "2026-01-04T00:00:00.000Z",
+    }, {
+      id: "saved-5",
+      user_id: "user-1",
+      place_id: "place-5",
+      title: "Cafe Five",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Siolim" },
+      created_at: "2026-01-05T00:00:00.000Z",
+      updated_at: "2026-01-05T00:00:00.000Z",
+    }, {
+      id: "saved-6",
+      user_id: "user-1",
+      place_id: "place-6",
+      title: "Walk One",
+      category: "Explore",
+      metadata_json: { city: "Goa", locality: "Calangute" },
+      created_at: "2026-01-06T00:00:00.000Z",
+      updated_at: "2026-01-06T00:00:00.000Z",
+    }, {
+      id: "saved-7",
+      user_id: "user-1",
+      place_id: "place-7",
+      title: "Walk Two",
+      category: "Explore",
+      metadata_json: { city: "Goa", locality: "Candolim" },
+      created_at: "2026-01-07T00:00:00.000Z",
+      updated_at: "2026-01-07T00:00:00.000Z",
+    }, {
+      id: "saved-8",
+      user_id: "user-1",
+      place_id: "place-8",
+      title: "Hotel One",
+      category: "Stay",
+      metadata_json: { city: "Goa", locality: "Panjim" },
+      created_at: "2026-01-08T00:00:00.000Z",
+      updated_at: "2026-01-08T00:00:00.000Z",
+    }, {
+      id: "saved-9",
+      user_id: "user-1",
+      place_id: "place-9",
+      title: "Activity One",
+      category: "Activity",
+      metadata_json: { city: "Goa", locality: "Mapusa" },
+      created_at: "2026-01-09T00:00:00.000Z",
+      updated_at: "2026-01-09T00:00:00.000Z",
+    }, {
+      id: "saved-10",
+      user_id: "user-1",
+      place_id: "place-10",
+      title: "Activity Two",
+      category: "Activity",
+      metadata_json: { city: "Goa", locality: "Arpora" },
+      created_at: "2026-01-10T00:00:00.000Z",
+      updated_at: "2026-01-10T00:00:00.000Z",
+    }, {
+      id: "saved-11",
+      user_id: "user-1",
+      place_id: "place-11",
+      title: "Explore Three",
+      category: "Explore",
+      metadata_json: { city: "Goa", locality: "Baga" },
+      created_at: "2026-01-11T00:00:00.000Z",
+      updated_at: "2026-01-11T00:00:00.000Z",
+    }, {
+      id: "saved-12",
+      user_id: "user-1",
+      place_id: "place-12",
+      title: "Explore Four",
+      category: "Explore",
+      metadata_json: { city: "Goa", locality: "Colva" },
+      created_at: "2026-01-12T00:00:00.000Z",
+      updated_at: "2026-01-12T00:00:00.000Z",
+    },
+  ]);
+
+  assert.equal(response.status, 200);
+  assert.equal(body.metadata?.rule, "taste_trail");
+  assert.equal(typeof body.cardKey, "string");
+  assert.ok(Array.isArray(body.alternatives));
+  assert.equal(body.alternatives.length, 2);
+  assert.deepEqual(
+    body.alternatives.map((item: any) => item.metadata?.rule),
+    ["dominant_city", "itinerary_ready"],
+  );
+  assert.ok(body.alternatives.every((item: any) => typeof item.cardKey === "string"));
+  assert.ok(body.alternatives.every((item: any) => typeof item.priorityScore === "number"));
+  assert.ok(body.alternatives.every((item: any) => Array.isArray(item.reasonCodes)));
+  assert.ok(body.alternatives.every((item: any) => item.metadata && typeof item.metadata === "object"));
+});
+
+test("hero card keys differ across different rule families", async () => {
+  const tasteTrail = await fetchHeroCardForSavedPlaces([
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Cafe One",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Anjuna" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Cafe Two",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Anjuna" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Cafe Three",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Vagator" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    }, {
+      id: "saved-4",
+      user_id: "user-1",
+      place_id: "place-4",
+      title: "Cafe Four",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Siolim" },
+      created_at: "2026-01-04T00:00:00.000Z",
+      updated_at: "2026-01-04T00:00:00.000Z",
+    }, {
+      id: "saved-5",
+      user_id: "user-1",
+      place_id: "place-5",
+      title: "Cafe Five",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Morjim" },
+      created_at: "2026-01-05T00:00:00.000Z",
+      updated_at: "2026-01-05T00:00:00.000Z",
+    }, {
+      id: "saved-6",
+      user_id: "user-1",
+      place_id: "place-6",
+      title: "Walk One",
+      category: "Explore",
+      metadata_json: { city: "Goa", locality: "Baga" },
+      created_at: "2026-01-06T00:00:00.000Z",
+      updated_at: "2026-01-06T00:00:00.000Z",
+    },
+  ]);
+  const dominantCategory = await fetchHeroCardForSavedPlaces([
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Cafe One",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Anjuna" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Cafe Two",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Anjuna" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Cafe Three",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Vagator" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    }, {
+      id: "saved-4",
+      user_id: "user-1",
+      place_id: "place-4",
+      title: "Cafe Four",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Siolim" },
+      created_at: "2026-01-04T00:00:00.000Z",
+      updated_at: "2026-01-04T00:00:00.000Z",
+    }, {
+      id: "saved-5",
+      user_id: "user-1",
+      place_id: "place-5",
+      title: "Walk One",
+      category: "Explore",
+      metadata_json: { city: "Goa", locality: "Baga" },
+      created_at: "2026-01-05T00:00:00.000Z",
+      updated_at: "2026-01-05T00:00:00.000Z",
+    }, {
+      id: "saved-6",
+      user_id: "user-1",
+      place_id: "place-6",
+      title: "Walk Two",
+      category: "Explore",
+      metadata_json: { city: "Goa", locality: "Candolim" },
+      created_at: "2026-01-06T00:00:00.000Z",
+      updated_at: "2026-01-06T00:00:00.000Z",
+    },
+  ]);
+
+  assert.equal(tasteTrail.body.metadata?.rule, "taste_trail");
+  assert.equal(dominantCategory.body.metadata?.rule, "dominant_category");
+  assert.notEqual(tasteTrail.body.cardKey, dominantCategory.body.cardKey);
+});
+
+test("hero card ignores admin-region city values for city cards", async () => {
+  const { response, body } = await fetchHeroCardForSavedPlaces([
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Spot One",
+      category: "Taste",
+      metadata_json: { city: "Bangalore Division", locality: "Indiranagar" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Spot Two",
+      category: "Explore",
+      metadata_json: { city: "Bangalore Division", locality: "HSR Layout" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Spot Three",
+      category: "Stay",
+      metadata_json: { city: "Bangalore Division", locality: "Whitefield" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    }, {
+      id: "saved-4",
+      user_id: "user-1",
+      place_id: "place-4",
+      title: "Spot Four",
+      category: "Activity",
+      metadata_json: { city: "Bangalore Division", locality: "Koramangala" },
+      created_at: "2026-01-04T00:00:00.000Z",
+      updated_at: "2026-01-04T00:00:00.000Z",
+    },
+  ]);
+
+  assert.equal(response.status, 200);
+  assert.notEqual(body.metadata?.rule, "dominant_city");
+  assert.equal(body.metadata?.targetCity ?? null, null);
+});
+
+test("hero card de-duplicates redundant alternatives", async () => {
+  const { response, body } = await fetchHeroCardForSavedPlaces([
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Cafe One",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Anjuna" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Cafe Two",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Anjuna" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Cafe Three",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Vagator" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    }, {
+      id: "saved-4",
+      user_id: "user-1",
+      place_id: "place-4",
+      title: "Cafe Four",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Siolim" },
+      created_at: "2026-01-04T00:00:00.000Z",
+      updated_at: "2026-01-04T00:00:00.000Z",
+    }, {
+      id: "saved-5",
+      user_id: "user-1",
+      place_id: "place-5",
+      title: "Cafe Five",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Morjim" },
+      created_at: "2026-01-05T00:00:00.000Z",
+      updated_at: "2026-01-05T00:00:00.000Z",
+    }, {
+      id: "saved-6",
+      user_id: "user-1",
+      place_id: "place-6",
+      title: "Walk One",
+      category: "Explore",
+      metadata_json: { city: "Goa", locality: "Calangute" },
+      created_at: "2026-01-06T00:00:00.000Z",
+      updated_at: "2026-01-06T00:00:00.000Z",
+    }, {
+      id: "saved-7",
+      user_id: "user-1",
+      place_id: "place-7",
+      title: "Walk Two",
+      category: "Explore",
+      metadata_json: { city: "Goa", locality: "Candolim" },
+      created_at: "2026-01-07T00:00:00.000Z",
+      updated_at: "2026-01-07T00:00:00.000Z",
+    }, {
+      id: "saved-8",
+      user_id: "user-1",
+      place_id: "place-8",
+      title: "Hotel One",
+      category: "Stay",
+      metadata_json: { city: "Goa", locality: "Panjim" },
+      created_at: "2026-01-08T00:00:00.000Z",
+      updated_at: "2026-01-08T00:00:00.000Z",
+    }, {
+      id: "saved-9",
+      user_id: "user-1",
+      place_id: "place-9",
+      title: "Activity One",
+      category: "Activity",
+      metadata_json: { city: "Goa", locality: "Mapusa" },
+      created_at: "2026-01-09T00:00:00.000Z",
+      updated_at: "2026-01-09T00:00:00.000Z",
+    }, {
+      id: "saved-10",
+      user_id: "user-1",
+      place_id: "place-10",
+      title: "Activity Two",
+      category: "Activity",
+      metadata_json: { city: "Goa", locality: "Arpora" },
+      created_at: "2026-01-10T00:00:00.000Z",
+      updated_at: "2026-01-10T00:00:00.000Z",
+    }, {
+      id: "saved-11",
+      user_id: "user-1",
+      place_id: "place-11",
+      title: "Explore Three",
+      category: "Explore",
+      metadata_json: { city: "Goa", locality: "Baga" },
+      created_at: "2026-01-11T00:00:00.000Z",
+      updated_at: "2026-01-11T00:00:00.000Z",
+    }, {
+      id: "saved-12",
+      user_id: "user-1",
+      place_id: "place-12",
+      title: "Explore Four",
+      category: "Explore",
+      metadata_json: { city: "Goa", locality: "Colva" },
+      created_at: "2026-01-12T00:00:00.000Z",
+      updated_at: "2026-01-12T00:00:00.000Z",
+    },
+  ]);
+
+  assert.equal(response.status, 200);
+  assert.equal(body.metadata?.rule, "taste_trail");
+  assert.ok(Array.isArray(body.alternatives));
+  assert.ok(body.alternatives.every((item: any) => item.cardKey !== body.cardKey));
+  assert.equal(new Set(body.alternatives.map((item: any) => item.cardKey)).size, body.alternatives.length);
+  assert.ok(body.alternatives.every((item: any) => item.metadata?.rule !== "dominant_category"));
+});
+
+test("hero card uses the most frequent representative locality instead of the first locality", async () => {
+  const { response, body } = await fetchHeroCardForSavedPlaces([
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Cafe One",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Firsttown" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Cafe Two",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Indiranagar" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Cafe Three",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Indiranagar" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    }, {
+      id: "saved-4",
+      user_id: "user-1",
+      place_id: "place-4",
+      title: "Cafe Four",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Indiranagar" },
+      created_at: "2026-01-04T00:00:00.000Z",
+      updated_at: "2026-01-04T00:00:00.000Z",
+    }, {
+      id: "saved-5",
+      user_id: "user-1",
+      place_id: "place-5",
+      title: "Cafe Five",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "HSR Layout" },
+      created_at: "2026-01-05T00:00:00.000Z",
+      updated_at: "2026-01-05T00:00:00.000Z",
+    },
+  ]);
+
+  assert.equal(response.status, 200);
+  assert.equal(body.metadata?.rule, "taste_trail");
+  assert.equal(body.metadata?.targetLocality, "Indiranagar");
+});
+
+test("hero card can surface a meaningful secondary category as an alternative", async () => {
+  const savedRows = [
+    ...Array.from({ length: 25 }, (_, index) => ({
+      id: `taste-${index + 1}`,
+      user_id: "user-1",
+      place_id: `taste-place-${index + 1}`,
+      title: `Taste Place ${index + 1}`,
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: index < 8 ? "Anjuna" : "Vagator" },
+      created_at: `2026-02-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
+      updated_at: `2026-02-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
+    })),
+    ...Array.from({ length: 20 }, (_, index) => ({
+      id: `explore-${index + 1}`,
+      user_id: "user-1",
+      place_id: `explore-place-${index + 1}`,
+      title: `Explore Place ${index + 1}`,
+      category: "Explore",
+      metadata_json: { city: "Goa", locality: index < 10 ? "Calangute" : "Candolim" },
+      created_at: `2026-03-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
+      updated_at: `2026-03-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
+    })),
+    ...Array.from({ length: 5 }, (_, index) => ({
+      id: `stay-${index + 1}`,
+      user_id: "user-1",
+      place_id: `stay-place-${index + 1}`,
+      title: `Stay Place ${index + 1}`,
+      category: "Stay",
+      metadata_json: { city: "Goa", locality: "Panjim" },
+      created_at: `2026-04-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
+      updated_at: `2026-04-${String((index % 28) + 1).padStart(2, "0")}T00:00:00.000Z`,
+    })),
+  ];
+  const { response, body } = await fetchHeroCardForSavedPlaces(savedRows);
+
+  assert.equal(response.status, 200);
+  assert.equal(body.metadata?.rule, "taste_trail");
+  assert.ok(Array.isArray(body.alternatives));
+  assert.ok(body.alternatives.some((item: any) => item.metadata?.rule === "secondary_explore"));
+});
+
 test("admin overview requires authentication", async () => {
   process.env.NODE_ENV = "test";
   process.env.ADMIN_EMAILS = "admin@example.com";

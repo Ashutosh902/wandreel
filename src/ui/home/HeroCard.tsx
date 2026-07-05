@@ -6,10 +6,16 @@ export function HeroCard({
   mode,
   title,
   subtitle,
+  ctaLabel,
+  onCtaClick,
+  onSaveIdeaClick,
 }: {
   mode: HeroCardMode;
   title: string;
   subtitle: string;
+  ctaLabel?: string;
+  onCtaClick?: () => void;
+  onSaveIdeaClick?: () => void;
 }) {
   return (
     <section className={`wr-hero-card wr-hero-card-${mode}`}>
@@ -23,6 +29,16 @@ export function HeroCard({
             <Footprints size={25} className="wr-hero-footprints" aria-hidden="true" />
           </h2>
           <p>{subtitle}</p>
+          {ctaLabel ? (
+            <button type="button" className="wr-hero-cta" onClick={onCtaClick}>
+              {ctaLabel}
+            </button>
+          ) : null}
+          {onSaveIdeaClick ? (
+            <button type="button" className="wr-hero-save-idea-btn" onClick={onSaveIdeaClick}>
+              Save idea
+            </button>
+          ) : null}
         </div>
       </div>
     </section>

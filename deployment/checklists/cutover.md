@@ -7,9 +7,9 @@
 - [ ] `npm run test:intelligence` passes.
 - [ ] `npm run deploy:preflight` passes.
 - [ ] Production env vars are set in hosting providers.
-- [ ] Fly app is created as `wandreel-api` and secrets are set with `fly secrets set`.
-- [ ] Fly `.fly.dev` URL passes `/health` and core API smoke checks.
-- [ ] Confirm Neon `DATABASE_URL` is configured; do not create Fly Postgres.
+- [ ] Render API service is configured with the intended branch/start command/env vars.
+- [ ] Render API passes `/health` and core API smoke checks.
+- [ ] Confirm Neon `DATABASE_URL` is configured.
 - [ ] CORS allows `https://wandreel.com`.
 - [ ] SSL/TLS is `Full (strict)`.
 
@@ -18,7 +18,7 @@
 - [ ] Attach `wandreel.com` to Cloudflare Pages project.
 - [ ] Enable `www -> apex` 301 redirect rule.
 - [ ] Switch DNS if not already delegated.
-- [ ] Repoint `api.wandreel.com` to Fly only after `.fly.dev` validation passes.
+- [ ] Repoint `api.wandreel.com` to Render only after backend validation passes.
 - [ ] Purge Cloudflare cache once.
 
 ## Post-cutover (first 30 mins)
