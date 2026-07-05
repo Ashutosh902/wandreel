@@ -64,9 +64,9 @@ test("1-2 city Taste saves become an almost-ready card", () => {
 
   assert.ok(card);
   assert.equal(card?.title, "Food trail almost ready");
-  assert.equal(card?.ctaLabel, "Add food places");
+  assert.equal(card?.ctaLabel, "Add places");
   assert.equal(card?.ctaAction, "grow_saved_places");
-  assert.equal(card?.subtitle, "Save 1 more food places in Bengaluru to build a trail.");
+  assert.equal(card?.subtitle, "Save 1 more food places in Bengaluru.");
 });
 
 test("3+ city Taste saves keep the ready food trail card", () => {
@@ -100,5 +100,5 @@ test("Taste saves in another city do not make the current city ready", () => {
 
   assert.ok(card);
   assert.equal(card?.title, "Food trail almost ready");
-  assert.equal(card?.subtitle, "Save 2 more food places in Bengaluru to build a trail.");
+  assert.equal(card?.subtitle, "Save 2 more food places in Bengaluru.");
 });

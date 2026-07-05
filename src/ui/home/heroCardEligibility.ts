@@ -88,8 +88,8 @@ export function applyFoodTrailHeroEligibility(
     return {
       ...card,
       title: "Food trail almost ready",
-      subtitle: `Save ${remaining} more food places in ${cityLabel} to build a trail.`,
-      ctaLabel: "Add food places",
+      subtitle: `Save ${remaining} more food places in ${cityLabel}.`,
+      ctaLabel: "Add places",
       ctaAction: "grow_saved_places",
       metadata: {
         ...card.metadata,

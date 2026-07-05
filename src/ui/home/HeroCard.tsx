@@ -1,5 +1,3 @@
-import { Footprints } from "lucide-react";
-
 type HeroCardMode = "empty-memory" | "city-memory";
 
 export function HeroCard({
@@ -24,10 +22,7 @@ export function HeroCard({
       <div className="wr-hero-glow wr-hero-glow-left" />
       <div className="wr-hero-content">
         <div className="wr-hero-copy">
-          <h2>
-            {title}
-            <Footprints size={25} className="wr-hero-footprints" aria-hidden="true" />
-          </h2>
+          <h2>{title}</h2>
           <p>{subtitle}</p>
           {ctaLabel ? (
             <button type="button" className="wr-hero-cta" onClick={onCtaClick}>

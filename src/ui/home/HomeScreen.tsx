@@ -12,6 +12,7 @@ import {
   isFoodTrailDemoEnabled,
 } from "./foodTrailPlannerDemo";
 import { applyFoodTrailHeroEligibility } from "./heroCardEligibility";
+import { normalizeHeroCardContent } from "./heroCardContent";
 import { HeroCard } from "./HeroCard";
 import { LocationSelector } from "./LocationSelector";
 import { RecentlyAddedCarousel } from "./RecentlyAddedCarousel";
@@ -113,8 +114,8 @@ type SavedHeroIdea = {
 
 const DEFAULT_DISCOVER_HERO_CARD: HeroCardData = {
   type: "city_category_insight",
-  title: "Your memories will start here",
-  subtitle: "Save places, reels, and ideas to build your city memories.",
+  title: "Start your list",
+  subtitle: "Save places from reels and plan them later.",
   ctaLabel: "Add a place",
   ctaAction: "add_first_place",
   metadata: { rule: "default" },
@@ -238,6 +239,7 @@ function normalizeHeroCandidatesForHome(
 ): HeroCardData[] {
   return candidates
     .map((candidate) => applyFoodTrailHeroEligibility(candidate, visibleSavedPlaces, currentLocationLabel))
+    .map((candidate) => candidate ? normalizeHeroCardContent(candidate, currentLocationLabel) : null)
     .filter((candidate): candidate is HeroCardData => candidate !== null);
 }
 
@@ -254,6 +256,7 @@ function DiscoverPage({
   heroCard,
   onHeroCta,
   onHeroSaveIdea,
+  currentLocationLabel,
 }: {
   activeCategory: CategoryLabel | null;
   onSelectCategory: (category: CategoryLabel) => void;
@@ -267,8 +270,10 @@ function DiscoverPage({
   heroCard: HeroCardData | null;
   onHeroCta: (card: HeroCardData) => void;
   onHeroSaveIdea: (card: HeroCardData) => void;
+  currentLocationLabel: string;
 }) {
   const counts = getSavedPlaceCounts(savedPlacesByCategory);
+  const displayHeroCard = heroCard ? normalizeHeroCardContent(heroCard, currentLocationLabel) : null;
   const heroMode: HeroMode = heroCard?.metadata.rule === "fallback" || heroCard?.metadata.rule === "default"
     ? "empty-memory"
     : "city-memory";
@@ -308,14 +313,14 @@ function DiscoverPage({
         />
       ) : (
         <>
-          {heroCard ? (
+          {displayHeroCard ? (
             <HeroCard
               mode={heroMode}
-              title={heroCard.title}
-              subtitle={heroCard.subtitle}
-              ctaLabel={heroCard.ctaLabel}
-              onCtaClick={() => onHeroCta(heroCard)}
-              onSaveIdeaClick={() => onHeroSaveIdea(heroCard)}
+              title={displayHeroCard.title}
+              subtitle={displayHeroCard.subtitle}
+              ctaLabel={displayHeroCard.ctaLabel}
+              onCtaClick={() => onHeroCta(displayHeroCard)}
+              onSaveIdeaClick={() => onHeroSaveIdea(displayHeroCard)}
             />
           ) : null}
           <BucketlistSummary counts={counts} onSelectCategory={onSelectCategory} onAddLink={onAddLink} />
@@ -913,6 +918,7 @@ export function HomeScreen() {
           savedPlacesByCategory={heroFilteredPlacesByCategory}
           recentSavedPlaces={recentSavedPlaces}
           heroCard={heroCard}
+          currentLocationLabel={currentLocationLabel}
           onHeroCta={(card) => {
             console.info("[hero-card] selected action", card.ctaAction, card.metadata);
             const plannerSelection = resolveHeroCardPlannerSelection(
