@@ -495,6 +495,32 @@
   color: rgba(255, 248, 241, 0.95);
   text-shadow: 0 1px 6px rgba(0, 0, 0, 0.28);
 }
+.wr-hero-cta {
+  margin-top: 0.92rem;
+  min-height: 2.55rem;
+  border: none;
+  border-radius: 999px;
+  padding: 0 0.95rem;
+  background: rgba(255, 252, 248, 0.92);
+  color: #10213f;
+  font-size: 12.2px;
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  box-shadow: 0 10px 22px rgba(17, 24, 39, 0.22);
+}
+.wr-hero-save-idea-btn {
+  margin-top: 0.7rem;
+  display: block;
+  border: 0;
+  background: transparent;
+  color: rgba(255, 248, 241, 0.9);
+  font-size: 12.2px;
+  font-weight: 800;
+  padding: 0;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.16rem;
+}
 .wr-hero-footprints { display: inline-block; margin-left: 0.25rem; margin-top: -0.25rem; vertical-align: middle; }
 .wr-hero-illustration {
   position: absolute;

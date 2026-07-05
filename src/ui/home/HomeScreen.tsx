@@ -52,11 +52,165 @@ const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Login"];
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const ADD_INTELLIGENCE_TIMEOUT_MS = 120000;
 const DISMISSED_READY_NOTIFICATION_IDS_KEY = "wr_dismissed_ready_notification_ids_v1";
+const HERO_CARD_FRESHNESS_STATE_KEY = "wr_hero_card_freshness_v1";
+const HERO_CARD_SAVED_IDEAS_KEY = "wr_hero_card_saved_ideas_v1";
+const HERO_CARD_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 type HeroMode = "empty-memory" | "city-memory";
-const DEFAULT_DISCOVER_HERO_MODE: HeroMode = "empty-memory";
-const DEFAULT_DISCOVER_HERO_TITLE = "Your memories will start here";
-const DEFAULT_DISCOVER_HERO_SUBTITLE = "Save places, reels, and ideas to build your city memories.";
+type HeroCardQueryParams = {
+  category?: unknown;
+  city?: unknown;
+  placeIds?: unknown;
+  totalSavedPlaces?: unknown;
+};
+
+type HeroCardData = {
+  type: "city_category_insight";
+  cardKey?: string;
+  title: string;
+  subtitle: string;
+  ctaLabel: string;
+  ctaAction: string;
+  priorityScore?: number;
+  reasonCodes?: string[];
+  metadata: Record<string, unknown>;
+  alternatives?: HeroCardData[];
+};
+
+type HeroNavigationContext = {
+  filteredPlaceIds: string[] | null;
+  filteredCity: string | null;
+  mapPlaces: SavedPlaceRecord[] | null;
+  mapCategories: CategoryLabel[] | null;
+};
+
+type HeroCardFreshnessState = {
+  lastShownCardKey: string | null;
+  lastShownAtMs: number;
+  dismissedCardKeys: string[];
+};
+
+type SavedHeroIdea = {
+  cardKey: string;
+  title: string;
+  subtitle: string;
+  ctaAction: string;
+  metadata: Record<string, unknown>;
+  matchingPlaceIds: string[];
+  createdAtMs: number;
+};
+
+const DEFAULT_DISCOVER_HERO_CARD: HeroCardData = {
+  type: "city_category_insight",
+  title: "Your memories will start here",
+  subtitle: "Save places, reels, and ideas to build your city memories.",
+  ctaLabel: "Add a place",
+  ctaAction: "add_first_place",
+  metadata: { rule: "default" },
+};
+
+function buildHeroCardFreshnessStorageKey(userId: string | null) {
+  const normalizedUserId = String(userId || "").trim();
+  return normalizedUserId ? `${HERO_CARD_FRESHNESS_STATE_KEY}:${normalizedUserId}` : HERO_CARD_FRESHNESS_STATE_KEY;
+}
+
+function readHeroCardFreshnessState(userId: string | null): HeroCardFreshnessState {
+  try {
+    const raw = window.localStorage.getItem(buildHeroCardFreshnessStorageKey(userId));
+    const parsed = raw ? JSON.parse(raw) : null;
+    return {
+      lastShownCardKey: typeof parsed?.lastShownCardKey === "string" ? parsed.lastShownCardKey : null,
+      lastShownAtMs: typeof parsed?.lastShownAtMs === "number" && Number.isFinite(parsed.lastShownAtMs) ? parsed.lastShownAtMs : 0,
+      dismissedCardKeys: Array.isArray(parsed?.dismissedCardKeys)
+        ? parsed.dismissedCardKeys.filter((item: unknown): item is string => typeof item === "string")
+        : [],
+    };
+  } catch {
+    return {
+      lastShownCardKey: null,
+      lastShownAtMs: 0,
+      dismissedCardKeys: [],
+    };
+  }
+}
+
+function writeHeroCardFreshnessState(userId: string | null, state: HeroCardFreshnessState) {
+  try {
+    window.localStorage.setItem(buildHeroCardFreshnessStorageKey(userId), JSON.stringify(state));
+  } catch {
+    // Ignore persistence failures to keep hero rendering resilient.
+  }
+}
+
+function deriveHeroCardKey(card: HeroCardData): string {
+  if (typeof card.cardKey === "string" && card.cardKey.trim()) {
+    return card.cardKey.trim();
+  }
+  const targetCategory = typeof card.metadata?.targetCategory === "string" ? card.metadata.targetCategory.trim() : "";
+  const targetCity = typeof card.metadata?.targetCity === "string" ? card.metadata.targetCity.trim() : "";
+  const matchingPlaceIds = Array.isArray(card.metadata?.matchingPlaceIds)
+    ? card.metadata.matchingPlaceIds
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .sort()
+    : [];
+  return JSON.stringify({
+    type: card.type,
+    targetCategory,
+    targetCity,
+    matchingPlaceIds,
+  });
+}
+
+function buildHeroCardSavedIdeasStorageKey(userId: string | null) {
+  const normalizedUserId = String(userId || "").trim();
+  return normalizedUserId ? `${HERO_CARD_SAVED_IDEAS_KEY}:${normalizedUserId}` : HERO_CARD_SAVED_IDEAS_KEY;
+}
+
+function readSavedHeroIdeas(userId: string | null): SavedHeroIdea[] {
+  try {
+    const raw = window.localStorage.getItem(buildHeroCardSavedIdeasStorageKey(userId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is SavedHeroIdea => (
+      item &&
+      typeof item === "object" &&
+      typeof item.cardKey === "string" &&
+      typeof item.title === "string" &&
+      typeof item.subtitle === "string" &&
+      typeof item.ctaAction === "string" &&
+      item.metadata &&
+      typeof item.metadata === "object" &&
+      Array.isArray(item.matchingPlaceIds) &&
+      typeof item.createdAtMs === "number"
+    ));
+  } catch {
+    return [];
+  }
+}
+
+function writeSavedHeroIdeas(userId: string | null, ideas: SavedHeroIdea[]) {
+  try {
+    window.localStorage.setItem(buildHeroCardSavedIdeasStorageKey(userId), JSON.stringify(ideas));
+  } catch {
+    // Ignore persistence failures to keep the hero card safe in constrained environments.
+  }
+}
+
+function buildSavedHeroIdea(card: HeroCardData): SavedHeroIdea {
+  const matchingPlaceIds = Array.isArray(card.metadata?.matchingPlaceIds)
+    ? card.metadata.matchingPlaceIds.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  return {
+    cardKey: deriveHeroCardKey(card),
+    title: card.title,
+    subtitle: card.subtitle,
+    ctaAction: card.ctaAction,
+    metadata: card.metadata || {},
+    matchingPlaceIds,
+    createdAtMs: Date.now(),
+  };
+}
 
 function DiscoverPage({
   activeCategory,
@@ -68,7 +222,9 @@ function DiscoverPage({
   onNotificationsClick,
   savedPlacesByCategory,
   recentSavedPlaces,
-  heroMode,
+  heroCard,
+  onHeroCta,
+  onHeroSaveIdea,
 }: {
   activeCategory: CategoryLabel | null;
   onSelectCategory: (category: CategoryLabel) => void;
@@ -79,11 +235,14 @@ function DiscoverPage({
   onNotificationsClick: () => void;
   savedPlacesByCategory: Record<CategoryLabel, SavedPlaceRecord[]>;
   recentSavedPlaces: SavedPlaceRecord[];
-  heroMode: HeroMode;
+  heroCard: HeroCardData | null;
+  onHeroCta: (card: HeroCardData) => void;
+  onHeroSaveIdea: (card: HeroCardData) => void;
 }) {
   const counts = getSavedPlaceCounts(savedPlacesByCategory);
-  const heroTitle = DEFAULT_DISCOVER_HERO_TITLE;
-  const heroSubtitle = DEFAULT_DISCOVER_HERO_SUBTITLE;
+  const heroMode: HeroMode = heroCard?.metadata.rule === "fallback" || heroCard?.metadata.rule === "default"
+    ? "empty-memory"
+    : "city-memory";
 
   return (
     <>
@@ -120,7 +279,16 @@ function DiscoverPage({
         />
       ) : (
         <>
-          <HeroCard mode={heroMode} title={heroTitle} subtitle={heroSubtitle} />
+          {heroCard ? (
+            <HeroCard
+              mode={heroMode}
+              title={heroCard.title}
+              subtitle={heroCard.subtitle}
+              ctaLabel={heroCard.ctaLabel}
+              onCtaClick={() => onHeroCta(heroCard)}
+              onSaveIdeaClick={() => onHeroSaveIdea(heroCard)}
+            />
+          ) : null}
           <BucketlistSummary counts={counts} onSelectCategory={onSelectCategory} onAddLink={onAddLink} />
           <RecentlyAddedCarousel places={recentSavedPlaces} onAddLink={onAddLink} />
         </>
@@ -191,7 +359,7 @@ function ReadyNotificationsSheet({
 export function HomeScreen() {
   const prefersReducedMotion = useReducedMotion();
   const { showToast } = useUx();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, sessionUser } = useAuth();
   const [activeTab, setActiveTab] = useState<NavLabel>("Discover");
   const [activeCategory, setActiveCategory] = useState<CategoryLabel | null>(null);
   const [mapEntryMode, setMapEntryMode] = useState<"global" | "category">("global");
@@ -204,6 +372,13 @@ export function HomeScreen() {
   ]);
   const [savedPlacesByCategory, setSavedPlacesByCategory] = useState(createEmptySavedPlacesByCategory);
   const [readyNotifications, setReadyNotifications] = useState<AddReadyNotification[]>(() => readReadyNotifications());
+  const [heroCard, setHeroCard] = useState<HeroCardData | null>(DEFAULT_DISCOVER_HERO_CARD);
+  const [heroNavigationContext, setHeroNavigationContext] = useState<HeroNavigationContext>({
+    filteredPlaceIds: null,
+    filteredCity: null,
+    mapPlaces: null,
+    mapCategories: null,
+  });
   const [dismissedNotificationIds, setDismissedNotificationIds] = useState<string[]>(() => {
     try {
       const raw = window.localStorage.getItem(DISMISSED_READY_NOTIFICATION_IDS_KEY);
@@ -218,6 +393,7 @@ export function HomeScreen() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const isPollingAddJobsRef = useRef(false);
+  const visibleHeroCardKeyRef = useRef<string | null>(deriveHeroCardKey(DEFAULT_DISCOVER_HERO_CARD));
   const touchStartRef = useRef<{ x: number; y: number; edge: "left" | "right" } | null>(null);
   const pullStartYRef = useRef<number | null>(null);
   const pullDistanceRef = useRef(0);
@@ -251,8 +427,14 @@ export function HomeScreen() {
     () => readyNotifications.filter((item) => !dismissedNotificationIds.includes(item.id)),
     [dismissedNotificationIds, readyNotifications],
   );
-  const heroMode: HeroMode = DEFAULT_DISCOVER_HERO_MODE;
-
+  const clearHeroNavigationContext = useCallback(() => {
+    setHeroNavigationContext({
+      filteredPlaceIds: null,
+      filteredCity: null,
+      mapPlaces: null,
+      mapCategories: null,
+    });
+  }, []);
   const refreshSavedPlaces = useCallback(() => {
     setSavedPlacesByCategory(isAuthenticated ? readSavedPlacesByCategory() : createEmptySavedPlacesByCategory());
   }, [isAuthenticated]);
@@ -439,8 +621,13 @@ export function HomeScreen() {
   }, [refreshSavedPlaces]);
 
   useEffect(() => {
+    visibleHeroCardKeyRef.current = heroCard ? deriveHeroCardKey(heroCard) : null;
+  }, [heroCard]);
+
+  useEffect(() => {
     if (!isAuthenticated) {
       setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
+      setHeroCard(DEFAULT_DISCOVER_HERO_CARD);
       return;
     }
 
@@ -464,6 +651,54 @@ export function HomeScreen() {
       cancelled = true;
     };
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setHeroCard(DEFAULT_DISCOVER_HERO_CARD);
+      return;
+    }
+
+    let cancelled = false;
+
+    const syncHeroCard = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/api/hero-card`, { credentials: "include" });
+        if (!response.ok || cancelled) return;
+        const payload = (await response.json()) as HeroCardData | null;
+        if (!payload || !payload.title || cancelled) return;
+        const userId = sessionUser?.userId ?? null;
+        const freshnessState = readHeroCardFreshnessState(userId);
+        const orderedCandidates = [payload, ...(Array.isArray(payload.alternatives) ? payload.alternatives : [])];
+        const selectedCandidate = orderedCandidates.find((candidate) => {
+          const nextCardKey = deriveHeroCardKey(candidate);
+          const isInCooldown =
+            freshnessState.lastShownCardKey === nextCardKey &&
+            Date.now() - freshnessState.lastShownAtMs < HERO_CARD_COOLDOWN_MS;
+          return !isInCooldown || visibleHeroCardKeyRef.current === nextCardKey;
+        }) || null;
+
+        if (!selectedCandidate) {
+          setHeroCard(null);
+          return;
+        }
+
+        const nextCardKey = deriveHeroCardKey(selectedCandidate);
+        setHeroCard(selectedCandidate);
+        writeHeroCardFreshnessState(userId, {
+          ...freshnessState,
+          lastShownCardKey: nextCardKey,
+          lastShownAtMs: Date.now(),
+        });
+      } catch {
+        if (cancelled) return;
+      }
+    };
+
+    void syncHeroCard();
+    return () => {
+      cancelled = true;
+    };
+  }, [effectiveSavedPlacesByCategory, isAuthenticated, sessionUser?.userId]);
 
   useEffect(() => {
     refreshReadyNotifications();
@@ -506,12 +741,14 @@ export function HomeScreen() {
 
   const handleBackGesture = () => {
     if (activeTab === "Discover" && activeCategory) {
+      clearHeroNavigationContext();
       setTransitionDirection(-1);
       setActiveCategory(null);
       return;
     }
 
     if (activeTab === "Map") {
+      clearHeroNavigationContext();
       setTransitionDirection(-1);
       setActiveTab("Discover");
       if (mapEntryMode === "category" && mapSourceCategory) {
@@ -523,6 +760,7 @@ export function HomeScreen() {
     }
 
     if (activeTab !== "Discover") {
+      clearHeroNavigationContext();
       setTransitionDirection(-1);
       setActiveTab("Discover");
       setActiveCategory(null);
@@ -531,27 +769,168 @@ export function HomeScreen() {
     }
   };
 
+  const heroFilteredPlacesByCategory = useMemo(() => {
+    if (!heroNavigationContext.filteredPlaceIds?.length) return visibleSavedPlacesByCategory;
+    const allowedIds = new Set(heroNavigationContext.filteredPlaceIds);
+    return {
+      Taste: visibleSavedPlacesByCategory.Taste.filter((place) => allowedIds.has(String(place.placeId || place.id || "").trim())),
+      Activity: visibleSavedPlacesByCategory.Activity.filter((place) => allowedIds.has(String(place.placeId || place.id || "").trim())),
+      Stay: visibleSavedPlacesByCategory.Stay.filter((place) => allowedIds.has(String(place.placeId || place.id || "").trim())),
+      Explore: visibleSavedPlacesByCategory.Explore.filter((place) => allowedIds.has(String(place.placeId || place.id || "").trim())),
+    };
+  }, [heroNavigationContext.filteredPlaceIds, visibleSavedPlacesByCategory]);
+
   const page = useMemo(() => {
     if (activeTab === "Discover") {
       return (
           <DiscoverPage
           activeCategory={activeCategory}
-          onSelectCategory={setActiveCategory}
+          onSelectCategory={(category) => {
+            clearHeroNavigationContext();
+            setActiveCategory(category);
+          }}
           onBackCategory={() => {
+            clearHeroNavigationContext();
             setTransitionDirection(-1);
             setActiveCategory(null);
           }}
           onAddLink={() => {
+            clearHeroNavigationContext();
             setTransitionDirection(1);
             setActiveCategory(null);
             setActiveTab("Add");
           }}
-            notificationCount={visibleReadyNotifications.length}
+          notificationCount={visibleReadyNotifications.length}
           onNotificationsClick={() => setIsReadySheetOpen(true)}
-          savedPlacesByCategory={visibleSavedPlacesByCategory}
+          savedPlacesByCategory={heroFilteredPlacesByCategory}
           recentSavedPlaces={recentSavedPlaces}
-          heroMode={heroMode}
+          heroCard={heroCard}
+          onHeroCta={(card) => {
+            console.info("[hero-card] selected action", card.ctaAction, card.metadata);
+            const queryParams = (card.metadata?.queryParams || {}) as HeroCardQueryParams;
+            const targetCategoryRaw =
+              typeof card.metadata?.targetCategory === "string" ? card.metadata.targetCategory : queryParams.category;
+            const targetCity =
+              typeof card.metadata?.targetCity === "string"
+                ? card.metadata.targetCity.trim()
+                : typeof queryParams.city === "string"
+                  ? queryParams.city.trim()
+                  : "";
+            const matchingPlaceIdsRaw = Array.isArray(card.metadata?.matchingPlaceIds)
+              ? card.metadata.matchingPlaceIds
+              : Array.isArray(queryParams.placeIds)
+                ? queryParams.placeIds
+                : [];
+            const matchingPlaceIds = matchingPlaceIdsRaw
+              .map((item) => String(item || "").trim())
+              .filter(Boolean);
+
+            if (card.ctaAction === "add_first_place" || card.ctaAction === "grow_saved_places") {
+              clearHeroNavigationContext();
+              setTransitionDirection(1);
+              setActiveCategory(null);
+              setActiveTab("Add");
+              return;
+            }
+
+            const normalizedTargetCategory = (
+              targetCategoryRaw === "Taste" ||
+              targetCategoryRaw === "Explore" ||
+              targetCategoryRaw === "Stay" ||
+              targetCategoryRaw === "Activity"
+            ) ? targetCategoryRaw : null;
+            const placesByIds = matchingPlaceIds.length
+              ? visibleSavedPlaces.filter((place) => matchingPlaceIds.includes(String(place.placeId || place.id || "").trim()))
+              : [];
+            const placesByCity = targetCity
+              ? visibleSavedPlaces.filter((place) => String(place.city || "").trim().toLowerCase() === targetCity.toLowerCase())
+              : [];
+
+            const openCategoryFromHero = (category: CategoryLabel, sourcePlaces: SavedPlaceRecord[]) => {
+              const categoryPlaces = sourcePlaces.filter((place) => place.category === category);
+              if (!categoryPlaces.length) {
+                showToast({ message: "No matching saved places found for this card yet.", variant: "info", durationMs: 2200 });
+                return;
+              }
+              setHeroNavigationContext({
+                filteredPlaceIds: categoryPlaces.map((place) => String(place.placeId || place.id || "").trim()),
+                filteredCity: targetCity || null,
+                mapPlaces: null,
+                mapCategories: null,
+              });
+              setTransitionDirection(1);
+              setActiveTab("Discover");
+              setActiveCategory(category);
+            };
+
+            const openCityPlanFromHero = (sourcePlaces: SavedPlaceRecord[]) => {
+              if (!sourcePlaces.length) {
+                showToast({ message: "No matching saved places found for this city plan yet.", variant: "info", durationMs: 2200 });
+                return;
+              }
+              const presentCategories = Array.from(new Set(sourcePlaces.map((place) => place.category))) as CategoryLabel[];
+              setHeroNavigationContext({
+                filteredPlaceIds: null,
+                filteredCity: targetCity || null,
+                mapPlaces: sourcePlaces,
+                mapCategories: presentCategories.length ? presentCategories : ["Taste", "Activity", "Stay", "Explore"],
+              });
+              if (presentCategories.length) {
+                setGlobalMapActiveCategories(presentCategories);
+              }
+              setTransitionDirection(1);
+              setActiveCategory(null);
+              setMapEntryMode("global");
+              setMapSourceCategory(null);
+              setActiveTab("Map");
+            };
+
+            if (
+              card.ctaAction === "build_food_trail" ||
+              card.ctaAction === "view_dominant_category" && normalizedTargetCategory === "Taste"
+            ) {
+              openCategoryFromHero("Taste", placesByIds.length ? placesByIds : visibleSavedPlaces);
+              return;
+            }
+
+            if (
+              card.ctaAction === "plan_weekend_explore" ||
+              card.ctaAction === "view_dominant_category" && normalizedTargetCategory === "Explore"
+            ) {
+              openCategoryFromHero("Explore", placesByIds.length ? placesByIds : visibleSavedPlaces);
+              return;
+            }
+
+            if (card.ctaAction === "view_dominant_category" && normalizedTargetCategory) {
+              openCategoryFromHero(normalizedTargetCategory, placesByIds.length ? placesByIds : visibleSavedPlaces);
+              return;
+            }
+
+            if (card.ctaAction === "view_city_plan") {
+              openCityPlanFromHero(placesByIds.length ? placesByIds : placesByCity);
+              return;
+            }
+
+            if (card.ctaAction === "create_itinerary") {
+              showToast({ message: "Planner coming soon", variant: "success", durationMs: 1800 });
+              return;
+            }
+
+            showToast({ message: `${card.ctaLabel} coming soon`, variant: "success", durationMs: 1800 });
+          }}
+          onHeroSaveIdea={(card) => {
+            const userId = sessionUser?.userId ?? null;
+            const nextIdea = buildSavedHeroIdea(card);
+            const existingIdeas = readSavedHeroIdeas(userId);
+            if (existingIdeas.some((idea) => idea.cardKey === nextIdea.cardKey)) {
+              showToast({ message: "Idea already saved.", variant: "info", durationMs: 1800 });
+              return;
+            }
+            writeSavedHeroIdeas(userId, [nextIdea, ...existingIdeas]);
+            showToast({ message: "Idea saved for later.", variant: "success", durationMs: 1800 });
+          }}
           onViewMap={(category) => {
+            clearHeroNavigationContext();
             setTransitionDirection(1);
             setMapEntryMode("category");
             setMapSourceCategory(category);
@@ -566,10 +945,11 @@ export function HomeScreen() {
         <MapScreen
           entryMode={mapEntryMode}
           sourceCategory={mapSourceCategory}
-          globalActiveCategories={globalMapActiveCategories}
+          globalActiveCategories={heroNavigationContext.mapCategories || globalMapActiveCategories}
           onGlobalActiveCategoriesChange={setGlobalMapActiveCategories}
-          savedPlaces={allSavedPlaces}
+          savedPlaces={heroNavigationContext.mapPlaces || allSavedPlaces}
           onAddLink={() => {
+            clearHeroNavigationContext();
             setTransitionDirection(1);
             setActiveTab("Add");
             setActiveCategory(null);
@@ -577,6 +957,7 @@ export function HomeScreen() {
             setMapSourceCategory(null);
           }}
           onBack={() => {
+            clearHeroNavigationContext();
             setTransitionDirection(-1);
             setActiveTab("Discover");
             if (mapEntryMode === "category" && mapSourceCategory) {
@@ -598,6 +979,7 @@ export function HomeScreen() {
         <ConnectScreen
           savedPlacesByCategory={visibleSavedPlacesByCategory}
           onViewSavedPlaces={() => {
+            clearHeroNavigationContext();
             setTransitionDirection(-1);
             setActiveCategory(null);
             setMapEntryMode("global");
@@ -612,12 +994,19 @@ export function HomeScreen() {
   }, [
     activeCategory,
     activeTab,
-    heroMode,
+    allSavedPlaces,
+    clearHeroNavigationContext,
     globalMapActiveCategories,
+    heroFilteredPlacesByCategory,
+    heroCard,
+    heroNavigationContext.mapCategories,
+    heroNavigationContext.mapPlaces,
     mapEntryMode,
     mapSourceCategory,
     readyNotifications.length,
     recentSavedPlaces,
+    showToast,
+    visibleSavedPlaces,
     visibleSavedPlacesByCategory,
   ]);
 
@@ -723,17 +1112,20 @@ export function HomeScreen() {
           onTabChange={(nextTab) => {
             setTransitionDirection(getTabOrderIndex(nextTab) >= getTabOrderIndex(activeTab) ? 1 : -1);
             if (activeTab === "Map" && mapEntryMode === "category" && mapSourceCategory && nextTab === "Discover") {
+              clearHeroNavigationContext();
               setActiveTab("Discover");
               setActiveCategory(mapSourceCategory);
               return;
             }
             if (nextTab === "Map") {
+              clearHeroNavigationContext();
               setMapEntryMode("global");
               setMapSourceCategory(null);
             }
             setActiveTab(nextTab);
             setActiveCategory(null);
             if (nextTab !== "Map") {
+              clearHeroNavigationContext();
               setMapEntryMode("global");
               setMapSourceCategory(null);
             }

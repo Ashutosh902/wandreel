@@ -73,7 +73,7 @@ Fresh React + TypeScript + Vite PWA baseline created for pivot planning.
 - Cloudflare setup: `deployment/cloudflare/setup.md`
 - Production cutover checklist: `deployment/checklists/cutover.md`
 - Deployment preflight scripts: `deployment/scripts/preflight.mjs`
-- Production hosting split: frontend remains on Cloudflare, API runs on Fly.io, and Postgres remains on Neon
+- Production hosting split: frontend remains on Cloudflare, API runs on Render, and Postgres remains on Neon
 - Extraction workflow: `server/extraction/README.md`
 - Intelligence workflow: `server/intelligence/README.md`
 - Interim database model overview: `database/README.md`

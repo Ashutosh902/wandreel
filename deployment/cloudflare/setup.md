@@ -29,7 +29,7 @@ Create a redirect rule:
 - Node version: `20+`
 - Connect repo branch (main/prod branch)
 - Frontend API target is controlled by the build env var `VITE_API_BASE_URL`.
-- For Fly backend validation before DNS cutover, set `VITE_API_BASE_URL=https://wandreel-api.fly.dev`.
+- For backend validation before DNS cutover, set `VITE_API_BASE_URL` to the Render service URL.
 - After `api.wandreel.com` is repointed, switch `VITE_API_BASE_URL` back to `https://api.wandreel.com`.
 
 ## 5) API Route
