@@ -521,6 +521,297 @@
   text-decoration-thickness: 1px;
   text-underline-offset: 0.16rem;
 }
+.wr-food-trail-page {
+  position: relative;
+  z-index: 1;
+  margin-top: 0.95rem;
+  padding-bottom: 6.8rem;
+}
+.wr-food-trail-header {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+.wr-food-trail-back {
+  width: 2.5rem;
+  height: 2.5rem;
+  border-radius: 0.8rem;
+  border: 1px solid rgba(255,255,255,0.85);
+  background: rgba(255,255,255,0.92);
+  color: #10213f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 8px 16px rgba(17,24,39,0.1);
+}
+.wr-food-trail-title-block p {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  color: #b45528;
+}
+.wr-food-trail-title-block h2 {
+  margin: 0.16rem 0 0;
+  font-size: 21px;
+  line-height: 1.08;
+  font-weight: 900;
+  color: #10213f;
+}
+.wr-food-trail-hero {
+  margin-top: 1rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.8rem;
+  border-radius: 1.05rem;
+  padding: 1rem;
+  background: linear-gradient(145deg, #fff3ea 0%, #ffe7da 44%, #fff9f4 100%);
+  border: 1px solid #efd8ca;
+  box-shadow: 0 12px 24px rgba(122, 45, 20, 0.12);
+}
+.wr-food-trail-hero-copy {
+  min-width: 0;
+}
+.wr-food-trail-hero-kicker {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: #9a3412;
+}
+.wr-food-trail-hero h3 {
+  margin: 0.26rem 0 0;
+  font-size: 22px;
+  line-height: 1.08;
+  font-weight: 900;
+  color: #10213f;
+}
+.wr-food-trail-hero p {
+  margin: 0.42rem 0 0;
+  font-size: 13px;
+  line-height: 1.45;
+  font-weight: 700;
+  color: #5d6674;
+}
+.wr-food-trail-hero-mark {
+  width: 3rem;
+  height: 3rem;
+  flex-shrink: 0;
+  border-radius: 0.95rem;
+  background: rgba(194, 65, 12, 0.1);
+  color: #9a3412;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.wr-food-trail-timing-row {
+  margin-top: 0.82rem;
+  display: flex;
+  gap: 0.5rem;
+  overflow-x: auto;
+  padding-bottom: 0.2rem;
+  scrollbar-width: none;
+}
+.wr-food-trail-timing-row::-webkit-scrollbar { display: none; }
+.wr-food-trail-timing-chip {
+  flex-shrink: 0;
+  border: 1px solid #e7ddd4;
+  background: rgba(255,255,255,0.92);
+  color: #5f6772;
+  border-radius: 999px;
+  padding: 0.5rem 0.78rem;
+  font-size: 11.25px;
+  font-weight: 800;
+}
+.wr-food-trail-timing-chip.is-active {
+  border-color: rgba(194, 65, 12, 0.32);
+  background: linear-gradient(135deg, #fff0e2, #ffd9c6);
+  color: #7a2d14;
+}
+.wr-food-trail-summary {
+  margin-top: 0.9rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+.wr-food-trail-summary-card {
+  border-radius: 0.95rem;
+  border: 1px solid #eadfd4;
+  background: rgba(255,255,255,0.95);
+  padding: 0.84rem 0.88rem;
+  box-shadow: 0 6px 14px rgba(17, 24, 39, 0.06);
+}
+.wr-food-trail-summary-card span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 11px;
+  font-weight: 800;
+  color: #7a2d14;
+}
+.wr-food-trail-summary-card strong {
+  margin-top: 0.36rem;
+  display: block;
+  font-size: 16px;
+  line-height: 1.2;
+  font-weight: 900;
+  color: #10213f;
+}
+.wr-food-trail-summary-card small {
+  margin-top: 0.18rem;
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #6b7280;
+}
+.wr-food-trail-route {
+  margin-top: 1rem;
+}
+.wr-food-trail-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+.wr-food-trail-section-head p {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.16em;
+  color: #b45528;
+}
+.wr-food-trail-section-head h3 {
+  margin: 0.16rem 0 0;
+  font-size: 20px;
+  line-height: 1.08;
+  font-weight: 900;
+  color: #10213f;
+}
+.wr-food-trail-duration {
+  flex-shrink: 0;
+  border-radius: 999px;
+  border: 1px solid #ead8cb;
+  background: #fff8f3;
+  padding: 0.38rem 0.62rem;
+  font-size: 11px;
+  font-weight: 800;
+  color: #7a2d14;
+}
+.wr-food-trail-stop-list {
+  margin-top: 0.78rem;
+  display: grid;
+  gap: 0.62rem;
+}
+.wr-food-trail-stop-card {
+  display: grid;
+  grid-template-columns: 2.2rem 1fr;
+  gap: 0.72rem;
+  border-radius: 1rem;
+  border: 1px solid #eadfd7;
+  background: rgba(255,255,255,0.96);
+  padding: 0.8rem;
+  box-shadow: 0 6px 14px rgba(17, 24, 39, 0.05);
+}
+.wr-food-trail-stop-index {
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 0.8rem;
+  background: linear-gradient(180deg, #102a57, #1f4b84);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 900;
+}
+.wr-food-trail-stop-body {
+  min-width: 0;
+}
+.wr-food-trail-stop-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.65rem;
+}
+.wr-food-trail-stop-topline h4 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.2;
+  font-weight: 900;
+  color: #10213f;
+}
+.wr-food-trail-stop-topline span {
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: #fff2e8;
+  color: #9a3412;
+  padding: 0.28rem 0.52rem;
+  font-size: 10.5px;
+  font-weight: 800;
+}
+.wr-food-trail-stop-body p {
+  margin: 0.2rem 0 0;
+  font-size: 12.2px;
+  font-weight: 750;
+  color: #5b6675;
+}
+.wr-food-trail-stop-body small {
+  margin-top: 0.28rem;
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  color: #7b8798;
+}
+.wr-food-trail-controls {
+  margin-top: 0.92rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.6rem;
+}
+.wr-food-trail-control-primary,
+.wr-food-trail-control-secondary {
+  min-height: 2.7rem;
+  border-radius: 0.9rem;
+  font-size: 12px;
+  font-weight: 900;
+}
+.wr-food-trail-control-primary {
+  border: 1px solid #102a57;
+  background: #102a57;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+}
+.wr-food-trail-control-secondary {
+  border: 1px solid #e2d9d0;
+  background: rgba(255,255,255,0.9);
+  color: #10213f;
+  padding: 0 0.95rem;
+}
+.wr-food-trail-empty-state {
+  margin-top: 1rem;
+  border-radius: 1rem;
+  border: 1px dashed #d6dde6;
+  background: rgba(255,255,255,0.82);
+  padding: 1rem;
+}
+.wr-food-trail-empty-state h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 900;
+  color: #10213f;
+}
+.wr-food-trail-empty-state p {
+  margin: 0.42rem 0 0;
+  font-size: 12.8px;
+  line-height: 1.45;
+  font-weight: 700;
+  color: #5d6674;
+}
 .wr-hero-footprints { display: inline-block; margin-left: 0.25rem; margin-top: -0.25rem; vertical-align: middle; }
 .wr-hero-illustration {
   position: absolute;

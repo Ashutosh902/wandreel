@@ -5,6 +5,7 @@ import { BottomNav } from "./BottomNav";
 import { BucketlistSummary } from "./BucketlistSummary";
 import { CategoryDetailPage } from "./CategoryDetailPage";
 import { AddScreen } from "./AddScreen";
+import { FoodTrailScreen } from "./FoodTrailScreen";
 import { HeroCard } from "./HeroCard";
 import { LocationSelector } from "./LocationSelector";
 import { RecentlyAddedCarousel } from "./RecentlyAddedCarousel";
@@ -45,6 +46,10 @@ import {
   type SavedPlaceApiItem,
   type SavedPlaceRecord,
 } from "./savedPlaces";
+import {
+  createLocalSavedPlacesPlannerDataSource,
+  resolveHeroCardPlannerSelection,
+} from "./heroCardPlannerData";
 import "./home.css";
 
 runHomeDataChecks();
@@ -57,13 +62,6 @@ const HERO_CARD_SAVED_IDEAS_KEY = "wr_hero_card_saved_ideas_v1";
 const HERO_CARD_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 type HeroMode = "empty-memory" | "city-memory";
-type HeroCardQueryParams = {
-  category?: unknown;
-  city?: unknown;
-  placeIds?: unknown;
-  totalSavedPlaces?: unknown;
-};
-
 type HeroCardData = {
   type: "city_category_insight";
   cardKey?: string;
@@ -82,6 +80,12 @@ type HeroNavigationContext = {
   filteredCity: string | null;
   mapPlaces: SavedPlaceRecord[] | null;
   mapCategories: CategoryLabel[] | null;
+};
+
+type PlannerRoute = "home" | "food-trail";
+
+type FoodTrailPlannerContext = {
+  matchingPlaceIds: string[] | null;
 };
 
 type HeroCardFreshnessState = {
@@ -210,6 +214,10 @@ function buildSavedHeroIdea(card: HeroCardData): SavedHeroIdea {
     matchingPlaceIds,
     createdAtMs: Date.now(),
   };
+}
+
+function getPlannerRouteFromPathname(pathname: string): PlannerRoute {
+  return pathname.startsWith("/trail/food") ? "food-trail" : "home";
 }
 
 function DiscoverPage({
@@ -373,6 +381,12 @@ export function HomeScreen() {
   const [savedPlacesByCategory, setSavedPlacesByCategory] = useState(createEmptySavedPlacesByCategory);
   const [readyNotifications, setReadyNotifications] = useState<AddReadyNotification[]>(() => readReadyNotifications());
   const [heroCard, setHeroCard] = useState<HeroCardData | null>(DEFAULT_DISCOVER_HERO_CARD);
+  const [plannerRoute, setPlannerRoute] = useState<PlannerRoute>(() => (
+    typeof window !== "undefined" ? getPlannerRouteFromPathname(window.location.pathname) : "home"
+  ));
+  const [foodTrailPlannerContext, setFoodTrailPlannerContext] = useState<FoodTrailPlannerContext>({
+    matchingPlaceIds: null,
+  });
   const [heroNavigationContext, setHeroNavigationContext] = useState<HeroNavigationContext>({
     filteredPlaceIds: null,
     filteredCity: null,
@@ -401,7 +415,12 @@ export function HomeScreen() {
   const isMapTab = activeTab === "Map";
   const isAddTab = activeTab === "Add";
   const isCategoryView = activeTab === "Discover" && activeCategory !== null;
-  const pageKey = activeTab === "Discover" && activeCategory ? `Discover-${activeCategory}` : activeTab;
+  const isFoodTrailRoute = plannerRoute === "food-trail";
+  const pageKey = isFoodTrailRoute
+    ? "trail-food"
+    : activeTab === "Discover" && activeCategory
+      ? `Discover-${activeCategory}`
+      : activeTab;
   const getTabOrderIndex = (tab: NavLabel) => NAV_ORDER.indexOf(tab);
   const effectiveSavedPlacesByCategory = useMemo(
     () => (isAuthenticated ? savedPlacesByCategory : createEmptySavedPlacesByCategory()),
@@ -435,6 +454,17 @@ export function HomeScreen() {
       mapCategories: null,
     });
   }, []);
+  const setPlannerPath = useCallback((nextRoute: PlannerRoute, replace = false) => {
+    if (typeof window === "undefined") return;
+    const nextPath = nextRoute === "food-trail" ? "/trail/food" : "/";
+    const nextUrl = `${nextPath}${window.location.search}${window.location.hash}`;
+    if (replace) {
+      window.history.replaceState({}, "", nextUrl);
+    } else {
+      window.history.pushState({}, "", nextUrl);
+    }
+    setPlannerRoute(nextRoute);
+  }, []);
   const refreshSavedPlaces = useCallback(() => {
     setSavedPlacesByCategory(isAuthenticated ? readSavedPlacesByCategory() : createEmptySavedPlacesByCategory());
   }, [isAuthenticated]);
@@ -445,6 +475,15 @@ export function HomeScreen() {
   const persistDismissedNotificationIds = useCallback((nextIds: string[]) => {
     setDismissedNotificationIds(nextIds);
     window.localStorage.setItem(DISMISSED_READY_NOTIFICATION_IDS_KEY, JSON.stringify(nextIds));
+  }, []);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      setPlannerRoute(getPlannerRouteFromPathname(window.location.pathname));
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   useEffect(() => {
@@ -747,6 +786,12 @@ export function HomeScreen() {
       return;
     }
 
+    if (plannerRoute === "food-trail") {
+      setTransitionDirection(-1);
+      setPlannerPath("home", true);
+      return;
+    }
+
     if (activeTab === "Map") {
       clearHeroNavigationContext();
       setTransitionDirection(-1);
@@ -779,8 +824,27 @@ export function HomeScreen() {
       Explore: visibleSavedPlacesByCategory.Explore.filter((place) => allowedIds.has(String(place.placeId || place.id || "").trim())),
     };
   }, [heroNavigationContext.filteredPlaceIds, visibleSavedPlacesByCategory]);
+  const foodTrailPlannerPlaces = useMemo(() => {
+    if (!foodTrailPlannerContext.matchingPlaceIds?.length) {
+      return visibleSavedPlacesByCategory.Taste;
+    }
+    const allowedIds = new Set(foodTrailPlannerContext.matchingPlaceIds);
+    return visibleSavedPlacesByCategory.Taste.filter((place) => allowedIds.has(String(place.placeId || place.id || "").trim()));
+  }, [foodTrailPlannerContext.matchingPlaceIds, visibleSavedPlacesByCategory]);
 
   const page = useMemo(() => {
+    if (plannerRoute === "food-trail") {
+      return (
+        <FoodTrailScreen
+          savedPlaces={foodTrailPlannerPlaces}
+          onBack={() => {
+            setTransitionDirection(-1);
+            setPlannerPath("home", true);
+          }}
+        />
+      );
+    }
+
     if (activeTab === "Discover") {
       return (
           <DiscoverPage
@@ -807,23 +871,10 @@ export function HomeScreen() {
           heroCard={heroCard}
           onHeroCta={(card) => {
             console.info("[hero-card] selected action", card.ctaAction, card.metadata);
-            const queryParams = (card.metadata?.queryParams || {}) as HeroCardQueryParams;
-            const targetCategoryRaw =
-              typeof card.metadata?.targetCategory === "string" ? card.metadata.targetCategory : queryParams.category;
-            const targetCity =
-              typeof card.metadata?.targetCity === "string"
-                ? card.metadata.targetCity.trim()
-                : typeof queryParams.city === "string"
-                  ? queryParams.city.trim()
-                  : "";
-            const matchingPlaceIdsRaw = Array.isArray(card.metadata?.matchingPlaceIds)
-              ? card.metadata.matchingPlaceIds
-              : Array.isArray(queryParams.placeIds)
-                ? queryParams.placeIds
-                : [];
-            const matchingPlaceIds = matchingPlaceIdsRaw
-              .map((item) => String(item || "").trim())
-              .filter(Boolean);
+            const plannerSelection = resolveHeroCardPlannerSelection(
+              card,
+              createLocalSavedPlacesPlannerDataSource(visibleSavedPlaces),
+            );
 
             if (card.ctaAction === "add_first_place" || card.ctaAction === "grow_saved_places") {
               clearHeroNavigationContext();
@@ -833,19 +884,6 @@ export function HomeScreen() {
               return;
             }
 
-            const normalizedTargetCategory = (
-              targetCategoryRaw === "Taste" ||
-              targetCategoryRaw === "Explore" ||
-              targetCategoryRaw === "Stay" ||
-              targetCategoryRaw === "Activity"
-            ) ? targetCategoryRaw : null;
-            const placesByIds = matchingPlaceIds.length
-              ? visibleSavedPlaces.filter((place) => matchingPlaceIds.includes(String(place.placeId || place.id || "").trim()))
-              : [];
-            const placesByCity = targetCity
-              ? visibleSavedPlaces.filter((place) => String(place.city || "").trim().toLowerCase() === targetCity.toLowerCase())
-              : [];
-
             const openCategoryFromHero = (category: CategoryLabel, sourcePlaces: SavedPlaceRecord[]) => {
               const categoryPlaces = sourcePlaces.filter((place) => place.category === category);
               if (!categoryPlaces.length) {
@@ -854,7 +892,7 @@ export function HomeScreen() {
               }
               setHeroNavigationContext({
                 filteredPlaceIds: categoryPlaces.map((place) => String(place.placeId || place.id || "").trim()),
-                filteredCity: targetCity || null,
+                filteredCity: plannerSelection.targetCity,
                 mapPlaces: null,
                 mapCategories: null,
               });
@@ -871,7 +909,7 @@ export function HomeScreen() {
               const presentCategories = Array.from(new Set(sourcePlaces.map((place) => place.category))) as CategoryLabel[];
               setHeroNavigationContext({
                 filteredPlaceIds: null,
-                filteredCity: targetCity || null,
+                filteredCity: plannerSelection.targetCity,
                 mapPlaces: sourcePlaces,
                 mapCategories: presentCategories.length ? presentCategories : ["Taste", "Activity", "Stay", "Explore"],
               });
@@ -887,27 +925,40 @@ export function HomeScreen() {
 
             if (
               card.ctaAction === "build_food_trail" ||
-              card.ctaAction === "view_dominant_category" && normalizedTargetCategory === "Taste"
+              card.ctaAction === "view_dominant_category" && plannerSelection.targetCategory === "Taste"
             ) {
-              openCategoryFromHero("Taste", placesByIds.length ? placesByIds : visibleSavedPlaces);
+              if (card.ctaAction === "build_food_trail") {
+                const tastePlaces = plannerSelection.getCategoryPlaces("Taste");
+                const tastePlaceIds = tastePlaces.map((place) => String(place.placeId || place.id || "").trim()).filter(Boolean);
+                setFoodTrailPlannerContext({
+                  matchingPlaceIds: tastePlaceIds.length ? tastePlaceIds : null,
+                });
+                clearHeroNavigationContext();
+                setTransitionDirection(1);
+                setActiveTab("Discover");
+                setActiveCategory(null);
+                setPlannerPath("food-trail");
+                return;
+              }
+              openCategoryFromHero("Taste", plannerSelection.getCategoryPlaces("Taste"));
               return;
             }
 
             if (
               card.ctaAction === "plan_weekend_explore" ||
-              card.ctaAction === "view_dominant_category" && normalizedTargetCategory === "Explore"
+              card.ctaAction === "view_dominant_category" && plannerSelection.targetCategory === "Explore"
             ) {
-              openCategoryFromHero("Explore", placesByIds.length ? placesByIds : visibleSavedPlaces);
+              openCategoryFromHero("Explore", plannerSelection.getCategoryPlaces("Explore"));
               return;
             }
 
-            if (card.ctaAction === "view_dominant_category" && normalizedTargetCategory) {
-              openCategoryFromHero(normalizedTargetCategory, placesByIds.length ? placesByIds : visibleSavedPlaces);
+            if (card.ctaAction === "view_dominant_category" && plannerSelection.targetCategory) {
+              openCategoryFromHero(plannerSelection.targetCategory, plannerSelection.getCategoryPlaces(plannerSelection.targetCategory));
               return;
             }
 
             if (card.ctaAction === "view_city_plan") {
-              openCityPlanFromHero(placesByIds.length ? placesByIds : placesByCity);
+              openCityPlanFromHero(plannerSelection.getCityPlaces());
               return;
             }
 
@@ -992,10 +1043,12 @@ export function HomeScreen() {
 
     return <LoginProfileScreen />;
   }, [
+    foodTrailPlannerPlaces,
     activeCategory,
     activeTab,
     allSavedPlaces,
     clearHeroNavigationContext,
+    foodTrailPlannerContext.matchingPlaceIds,
     globalMapActiveCategories,
     heroFilteredPlacesByCategory,
     heroCard,
@@ -1008,6 +1061,8 @@ export function HomeScreen() {
     showToast,
     visibleSavedPlaces,
     visibleSavedPlacesByCategory,
+    plannerRoute,
+    setPlannerPath,
   ]);
 
   return (
@@ -1110,6 +1165,9 @@ export function HomeScreen() {
         <BottomNav
           activeTab={activeTab}
           onTabChange={(nextTab) => {
+            if (plannerRoute !== "home") {
+              setPlannerPath("home", true);
+            }
             setTransitionDirection(getTabOrderIndex(nextTab) >= getTabOrderIndex(activeTab) ? 1 : -1);
             if (activeTab === "Map" && mapEntryMode === "category" && mapSourceCategory && nextTab === "Discover") {
               clearHeroNavigationContext();
