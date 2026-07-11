@@ -36,19 +36,19 @@ export type JourneyMotionSnapshot = {
 };
 
 export const journeyMotionTokens: JourneyMotionTokens = {
-  openingDuration: 220,
-  currentLocationPulseDuration: 640,
-  footstepInterval: 320,
-  cadenceVariation: 86,
+  openingDuration: 140,
+  currentLocationPulseDuration: 220,
+  footstepInterval: 480,
+  cadenceVariation: 42,
   strideSpacing: 36,
-  footprintOpacity: 0.78,
-  footprintScale: 0.94,
-  routeRevealDuration: 1400,
-  markerWakeDuration: 220,
-  markerWakeScale: 1.12,
-  markerGlowIntensity: 0.24,
-  handoffFadeDuration: 360,
-  interruptionDuration: 220,
+  footprintOpacity: 0.42,
+  footprintScale: 0.78,
+  routeRevealDuration: 1000,
+  markerWakeDuration: 140,
+  markerWakeScale: 1.04,
+  markerGlowIntensity: 0.12,
+  handoffFadeDuration: 220,
+  interruptionDuration: 180,
   easing: [0.22, 1, 0.36, 1],
 };
 
@@ -110,7 +110,7 @@ export function buildJourneyFootprints(routePoints: JourneyPoint[], currentLocat
   const anchorPoints = currentLocation ? [currentLocation, ...routePoints] : routePoints;
   if (anchorPoints.length <= 1) return [] as JourneyFootprint[];
 
-  const maxFootprints = Math.min(8, Math.max(2, anchorPoints.length));
+  const maxFootprints = Math.min(3, Math.max(2, anchorPoints.length <= 2 ? 2 : 3));
   const footprints: JourneyFootprint[] = [];
 
   for (let index = 0; index < maxFootprints; index += 1) {
@@ -118,9 +118,9 @@ export function buildJourneyFootprints(routePoints: JourneyPoint[], currentLocat
     const stepIndex = Math.min(anchorPoints.length - 1, Math.round(normalized * (anchorPoints.length - 1)));
     const point = anchorPoints[stepIndex];
     const side = index % 2 === 0 ? "left" : "right";
-    const rotation = (index % 2 === 0 ? -8 : 7) + (index % 3) * 2;
-    const scale = journeyMotionTokens.footprintScale + (index % 3) * 0.01;
-    const opacity = journeyMotionTokens.footprintOpacity - (index % 2) * 0.05;
+    const rotation = index % 2 === 0 ? -2 : 2;
+    const scale = journeyMotionTokens.footprintScale + index * 0.01;
+    const opacity = Math.max(0.22, journeyMotionTokens.footprintOpacity - index * 0.06);
 
     footprints.push({
       id: `${side}-${index}`,
@@ -222,64 +222,51 @@ export function createJourneyMotionController({
 
     schedule(journeyMotionTokens.openingDuration, () => {
       if (!active || interrupted) return;
-      setPhase("opening", { routeRevealProgress: 0.12 });
+      setPhase("opening", { routeRevealProgress: 0.08 });
 
-      schedule(journeyMotionTokens.currentLocationPulseDuration, () => {
+      schedule(220, () => {
         if (!active || interrupted) return;
-        setPhase(currentLocationExists ? "current-location-pulse" : "walking", {
-          routeRevealProgress: currentLocationExists ? 0.22 : 0.28,
+        setPhase("walking", {
+          routeRevealProgress: currentLocationExists ? 0.16 : 0.24,
         });
 
-        const walkStart = currentLocationExists ? journeyMotionTokens.currentLocationPulseDuration + journeyMotionTokens.openingDuration : journeyMotionTokens.openingDuration;
-        schedule(180, () => {
+        const totalSteps = Math.max(routeStopIds.length, 1);
+        let stepIndex = 0;
+
+        const playStep = () => {
           if (!active || interrupted) return;
-          const totalSteps = Math.max(routeStopIds.length, 1);
-          let stepIndex = 0;
-
-          const playStep = () => {
-            if (!active || interrupted) return;
-            if (stepIndex >= totalSteps) {
-              setPhase("handoff", { routeRevealProgress: 1, activeFootprintIndex: 0, wakeStopId: null });
-              schedule(journeyMotionTokens.handoffFadeDuration, () => {
-                if (!active || interrupted) return;
-                publish({
-                  phase: "completed",
-                  routeRevealProgress: 1,
-                  activeFootprintIndex: 0,
-                  wakeStopId: null,
-                });
-              });
-              return;
-            }
-
-            const nextIndex = stepIndex + 1;
-            const nextStopId = routeStopIds[stepIndex] ?? null;
-            setPhase("marker-wake", {
-              routeRevealProgress: Math.min(1, nextIndex / Math.max(totalSteps, 1)),
-              activeFootprintIndex: nextIndex,
-              wakeStopId: nextStopId,
-            });
-
-            schedule(journeyMotionTokens.markerWakeDuration, () => {
+          if (stepIndex >= totalSteps) {
+            setPhase("handoff", { routeRevealProgress: 1, activeFootprintIndex: 0, wakeStopId: null });
+            schedule(journeyMotionTokens.handoffFadeDuration, () => {
               if (!active || interrupted) return;
-              setPhase("walking", {
-                routeRevealProgress: Math.min(1, nextIndex / Math.max(totalSteps, 1)),
-                activeFootprintIndex: nextIndex,
+              publish({
+                phase: "completed",
+                routeRevealProgress: 1,
+                activeFootprintIndex: 0,
                 wakeStopId: null,
               });
-              stepIndex = nextIndex;
-              const variance = stepIndex % 2 === 0 ? journeyMotionTokens.cadenceVariation : 0;
-              schedule(journeyMotionTokens.footstepInterval + variance, playStep);
             });
-          };
+            return;
+          }
 
+          const nextIndex = stepIndex + 1;
           setPhase("walking", {
-            routeRevealProgress: 0.3,
-            activeFootprintIndex: 0,
+            routeRevealProgress: Math.min(1, nextIndex / Math.max(totalSteps, 1)),
+            activeFootprintIndex: nextIndex,
             wakeStopId: null,
           });
-          schedule(walkStart + 120, playStep);
+
+          stepIndex = nextIndex;
+          const variance = stepIndex % 2 === 0 ? journeyMotionTokens.cadenceVariation : 0;
+          schedule(journeyMotionTokens.footstepInterval + variance, playStep);
+        };
+
+        setPhase("walking", {
+          routeRevealProgress: 0.24,
+          activeFootprintIndex: 0,
+          wakeStopId: null,
         });
+        schedule(220, playStep);
       });
     });
   };

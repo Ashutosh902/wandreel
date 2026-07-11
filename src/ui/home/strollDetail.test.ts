@@ -16,7 +16,7 @@ import {
   selectStopById,
   type StrollJourneyPhase,
 } from "./strollDetail";
-import { shouldStartJourneyMotion } from "./journeyMotion";
+import { buildJourneyFootprints, shouldStartJourneyMotion } from "./journeyMotion";
 import type { PersistentStrollStop } from "./strollLibrary";
 
 function stop(overrides: Partial<PersistentStrollStop>): PersistentStrollStop {
@@ -130,6 +130,17 @@ test("journey phase progression reaches handoff and respects interruption", () =
 
   assert.equal(getNextStrollJourneyPhase("walking", { prefersReducedMotion: true }), "controlled");
   assert.equal(getNextStrollJourneyPhase("opening", { isInterrupted: true }), "controlled");
+});
+
+test("journey footprints stay minimal and calm", () => {
+  const footprints = buildJourneyFootprints(
+    [{ lat: 25.6, lng: 85.1 }, { lat: 25.61, lng: 85.11 }, { lat: 25.62, lng: 85.12 }, { lat: 25.63, lng: 85.13 }],
+    { lat: 25.59, lng: 85.09 },
+  );
+
+  assert.equal(footprints.length, 3);
+  assert.ok(footprints.every((footprint) => footprint.opacity <= 0.5));
+  assert.ok(footprints.every((footprint) => footprint.scale <= 0.82));
 });
 
 test("journey motion starts once per session and stays suppressed after interruption", () => {

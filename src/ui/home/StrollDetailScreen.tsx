@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowLeft, MapPin, Navigation, Play, X } from "lucide-react";
-import { motion } from "framer-motion";
 import { GoogleMap, MarkerF, OverlayViewF, PolylineF, useJsApiLoader, OVERLAY_MOUSE_TARGET } from "@react-google-maps/api";
 import { useReducedMotion } from "framer-motion";
 import { useUx } from "../layout/UxProvider";
@@ -489,17 +488,6 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
           </div>
         )}
       </div>
-
-      {!prefersReducedMotion && motionEnabled && !motionFallbackReason ? (
-        <motion.div
-          className="wr-stroll-journey-hint"
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: journeyPhase === "completed" || journeyPhase === "interrupted" ? 0.96 : 0.76, y: 0 }}
-          transition={{ duration: 0.28, ease: "easeOut" }}
-        >
-          <span>{journeyPhase === "completed" || journeyPhase === "interrupted" ? "You’re in control" : "The route reveals itself"}</span>
-        </motion.div>
-      ) : null}
 
       <StrollLiveConditionsPanel
         loadState={liveLoadState}
