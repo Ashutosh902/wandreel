@@ -32,7 +32,7 @@ export function StrollLiveConditionsPanel({
   }).join(" - ");
 
   return (
-    <section className={`wr-stroll-live-card is-${viewState}`} aria-label="Live Stroll conditions">
+    <section className={`wr-stroll-live-card is-${viewState}`} aria-label="Live Stroll conditions" aria-live="polite">
       <div className="wr-stroll-live-head">
         <span>
           <CloudSun size={15} />
@@ -57,9 +57,9 @@ export function StrollLiveConditionsPanel({
       ) : null}
 
       {viewState === "alerts" ? (
-        <div className="wr-stroll-live-alerts">
+        <div className="wr-stroll-live-alerts" role="list">
           {currentConditions.map((condition) => (
-            <article key={condition.id} className={`wr-stroll-live-alert is-${condition.severity}`}>
+            <article key={condition.id} className={`wr-stroll-live-alert is-${condition.severity}`} role="listitem">
               <div>
                 <AlertTriangle size={15} />
                 <strong>{condition.message}</strong>

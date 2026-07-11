@@ -85,7 +85,9 @@ test("StrollAdaptationPanel renders proposed order and explicit actions", () => 
   assert.match(html, /Cafe/);
   assert.match(html, /Was stop 2/);
   assert.match(html, /Accept new order/);
+  assert.match(html, /aria-label="Accept the proposed Stroll stop order"/);
   assert.match(html, /Keep current order/);
+  assert.match(html, /aria-label="Keep the current Stroll order"/);
 });
 
 test("StrollAdaptationPanel renders no-recommendation fallback", () => {

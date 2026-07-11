@@ -71,6 +71,7 @@ import {
 import type { PersistentStrollSummary, StrollLibraryLoadState } from "./strollLibrary";
 import { deriveHeroCardKey, useHeroCard, type HeroCardData } from "./useHeroCard";
 import { useHeroBookmarks } from "./useHeroBookmarks";
+import { useDialogFocus } from "./useDialogFocus";
 import { useHomeGestures } from "./useHomeGestures";
 import { useHomeNavigation } from "./useHomeNavigation";
 import { useReadyNotifications } from "./useReadyNotifications";
@@ -236,12 +237,22 @@ function StrollOnboardingPrompt({
   onAccept: () => void;
   onDecline: () => void;
 }) {
+  const dialogRef = useDialogFocus<HTMLElement>(true, onDecline);
+
   return (
     <div className="wr-stroll-prompt-layer" role="presentation">
-      <section className="wr-stroll-prompt" role="dialog" aria-modal="false" aria-label="Try Wandreel Strolls">
+      <section
+        ref={dialogRef}
+        className="wr-stroll-prompt"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="wr-stroll-prompt-title"
+        aria-describedby="wr-stroll-prompt-description"
+        tabIndex={-1}
+      >
         <p>NEW PLANNER</p>
-        <h3>Want Wandreel to shape your saved places into Strolls?</h3>
-        <span>We will start with a draft you control. No auto-curation or map route yet.</span>
+        <h3 id="wr-stroll-prompt-title">Want Wandreel to shape your saved places into Strolls?</h3>
+        <span id="wr-stroll-prompt-description">We will start with a draft you control. No auto-curation or map route yet.</span>
         <div className="wr-stroll-prompt-actions">
           <button type="button" className="wr-stroll-prompt-secondary" disabled={isBusy} onClick={onDecline}>
             Not now
@@ -266,14 +277,23 @@ function ReadyNotificationsSheet({
   onReview: (runId: number) => void;
   onDismissNotification: (id: string) => void;
 }) {
+  const dialogRef = useDialogFocus<HTMLElement>(true, onClose);
+
   return (
     <div className="wr-ready-sheet-layer" role="presentation">
       <button type="button" className="wr-ready-sheet-backdrop" aria-label="Close notifications" onClick={onClose} />
-      <section className="wr-ready-sheet" role="dialog" aria-modal="false" aria-label="Ready to save notifications">
+      <section
+        ref={dialogRef}
+        className="wr-ready-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="wr-ready-sheet-title"
+        tabIndex={-1}
+      >
         <div className="wr-ready-sheet-head">
           <div>
             <p>READY TO SAVE</p>
-            <h3>Your Wandreels</h3>
+            <h3 id="wr-ready-sheet-title">Your Wandreels</h3>
           </div>
           <button type="button" className="wr-ready-sheet-close" aria-label="Close notifications" onClick={onClose}>
             x

@@ -90,6 +90,8 @@ test("StrollLiveConditionsPanel renders verified alerts with source freshness", 
   );
 
   assert.match(html, /Live conditions/);
+  assert.match(html, /aria-live="polite"/);
+  assert.match(html, /role="list"/);
   assert.match(html, /Rain is reported near this Stroll/);
   assert.match(html, /Open-Meteo/);
   assert.match(html, /updated 10 min ago/);

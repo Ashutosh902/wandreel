@@ -31,7 +31,7 @@ export function StrollLibrarySection({
   const viewState = getStrollLibraryViewState({ loadState, strolls, error });
 
   return (
-    <section className="wr-stroll-library" aria-label="Your Strolls">
+    <section className="wr-stroll-library" aria-label="Your Strolls" aria-live="polite">
       <div className="wr-stroll-library-head">
         <div>
           <p>STROLLS</p>
@@ -41,7 +41,12 @@ export function StrollLibrarySection({
       </div>
 
       <div className="wr-stroll-card-row">
-        <button type="button" className="wr-stroll-plus-card" onClick={onCreateStroll}>
+        <button
+          type="button"
+          className="wr-stroll-plus-card"
+          aria-label="Create a new Stroll draft"
+          onClick={onCreateStroll}
+        >
           <span aria-hidden="true">+</span>
           <strong>Create a New Stroll</strong>
           <small>Start another manual draft.</small>
@@ -84,7 +89,12 @@ export function StrollLibrarySection({
               <small>{formatStrollMeta(stroll) || presentation.title}</small>
               <p>{stroll.failureMessage || presentation.description}</p>
               {stroll.status === "ready" ? (
-                <button type="button" className="wr-stroll-card-primary" onClick={() => onStartStroll(stroll)}>
+                <button
+                  type="button"
+                  className="wr-stroll-card-primary"
+                  aria-label={`Start or view ${stroll.name}`}
+                  onClick={() => onStartStroll(stroll)}
+                >
                   Start/View
                 </button>
               ) : null}
@@ -93,6 +103,7 @@ export function StrollLibrarySection({
                   type="button"
                   className="wr-stroll-card-primary"
                   disabled={isRetrying}
+                  aria-label={`Retry curation for ${stroll.name}`}
                   onClick={() => onRetryStroll(stroll.id)}
                 >
                   {isRetrying ? "Retrying..." : "Retry"}

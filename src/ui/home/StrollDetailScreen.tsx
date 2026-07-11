@@ -31,6 +31,7 @@ import {
   type PersistentStrollLiveConditions,
 } from "./strollLiveConditions";
 import { StrollLiveConditionsPanel } from "./StrollLiveConditionsPanel";
+import { useDialogFocus } from "./useDialogFocus";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const GOOGLE_MAP_LIBRARIES: ("places")[] = ["places"];
@@ -61,6 +62,7 @@ function StrollStopSheet({
   stopNumber: number;
   onClose: () => void;
 }) {
+  const dialogRef = useDialogFocus<HTMLElement>(true, onClose);
   const directionsUrl = buildStrollStopDirectionsUrl(stop);
   const duration = formatStopDuration(stop.estimatedVisitDurationMinutes);
   const distance = formatRouteDistance(stop.routeDistanceMeters);
@@ -68,17 +70,29 @@ function StrollStopSheet({
 
   return (
     <div className="wr-stroll-detail-sheet-layer" role="presentation">
-      <article className="wr-stroll-detail-sheet" role="dialog" aria-modal="false" aria-label={`${getStopTitle(stop)} details`}>
+      <article
+        ref={dialogRef}
+        className="wr-stroll-detail-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="wr-stroll-stop-sheet-title"
+        aria-describedby="wr-stroll-stop-sheet-description"
+        tabIndex={-1}
+      >
         <button type="button" className="wr-stroll-detail-sheet-close" aria-label="Close stop details" onClick={onClose}>
           <X size={16} />
         </button>
         {stop.placeImageUrl ? <img src={stop.placeImageUrl} alt="" className="wr-stroll-detail-sheet-image" /> : null}
         <span className="wr-stroll-detail-stop-kicker">Stop {stopNumber}</span>
-        <h3>{getStopTitle(stop)}</h3>
+        <h3 id="wr-stroll-stop-sheet-title">{getStopTitle(stop)}</h3>
         {stop.placeAddress || stop.placeLocality ? (
           <p className="wr-stroll-detail-address">{stop.placeAddress || stop.placeLocality}</p>
         ) : null}
-        {stop.generatedDescription || stop.placeDescription ? <p>{stop.generatedDescription || stop.placeDescription}</p> : null}
+        {stop.generatedDescription || stop.placeDescription ? (
+          <p id="wr-stroll-stop-sheet-description">{stop.generatedDescription || stop.placeDescription}</p>
+        ) : (
+          <p id="wr-stroll-stop-sheet-description">Review stored details and actions for this Stroll stop.</p>
+        )}
         {stop.reason ? <p>{stop.reason}</p> : null}
         <div className="wr-stroll-detail-sheet-meta">
           {duration ? <span>{duration}</span> : null}
@@ -255,7 +269,7 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
         <button type="button" className="wr-header-back" aria-label="Back" onClick={onBack}>
           <ArrowLeft size={18} />
         </button>
-        <div className="wr-stroll-detail-state-card">Loading Stroll...</div>
+        <div className="wr-stroll-detail-state-card" role="status" aria-live="polite">Loading Stroll...</div>
       </section>
     );
   }
@@ -350,15 +364,15 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
             ))}
           </GoogleMap>
         ) : (
-          <div className="wr-stroll-detail-map-fallback" role="status">
+          <div className="wr-stroll-detail-map-fallback" role="status" aria-live="polite">
             <MapPin size={20} />
             <strong>Map preview unavailable</strong>
             <span>
               {fallbackReason === "loading"
                 ? "Loading the map..."
                 : fallbackReason === "missing_coordinates"
-                  ? "Stops without stored coordinates still appear below."
-                  : "Use the ordered stop list and Directions links below."}
+                  ? "Stops without stored coordinates still appear in the keyboard-accessible ordered list below."
+                  : "Use the keyboard-accessible ordered stop list and Directions links below."}
             </span>
           </div>
         )}
@@ -380,7 +394,7 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
         onDismiss={() => setIsAdaptationDismissed(true)}
       />
 
-      <div className="wr-stroll-detail-list" aria-label="Ordered Stroll stops">
+      <div className="wr-stroll-detail-list" aria-label="Ordered Stroll stops. Select a stop to open details.">
         {orderedStops.map((stop, index) => {
           const isSelected = selectedStopId === stop.id;
           return (
@@ -388,6 +402,8 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
               type="button"
               key={stop.id}
               className={`wr-stroll-detail-stop-row ${isSelected ? "is-selected" : ""}`}
+              aria-pressed={isSelected}
+              aria-label={`Open details for stop ${index + 1}: ${getStopTitle(stop)}`}
               onClick={() => setSelectedStopId(stop.id)}
             >
               <span>{index + 1}</span>

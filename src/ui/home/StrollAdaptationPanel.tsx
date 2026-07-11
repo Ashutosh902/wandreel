@@ -27,7 +27,7 @@ export function StrollAdaptationPanel({
   if (viewState === "dismissed" || viewState === "idle") return null;
 
   return (
-    <section className={`wr-stroll-adapt-card is-${viewState}`} aria-label="Dynamic Stroll adaptation">
+    <section className={`wr-stroll-adapt-card is-${viewState}`} aria-label="Dynamic Stroll adaptation" aria-live="polite">
       <div className="wr-stroll-adapt-head">
         <span>
           <Shuffle size={15} />
@@ -71,7 +71,12 @@ export function StrollAdaptationPanel({
           ) : null}
 
           <div className="wr-stroll-adapt-actions">
-            <button type="button" className="wr-stroll-adapt-secondary" onClick={onDismiss}>
+            <button
+              type="button"
+              className="wr-stroll-adapt-secondary"
+              aria-label="Keep the current Stroll order"
+              onClick={onDismiss}
+            >
               Keep current order
             </button>
             {recommendation.status === "recommended" ? (
@@ -79,6 +84,7 @@ export function StrollAdaptationPanel({
                 type="button"
                 className="wr-stroll-adapt-primary"
                 disabled={accepting}
+                aria-label="Accept the proposed Stroll stop order"
                 onClick={() => onAccept(recommendation.proposedStopIds)}
               >
                 <GitPullRequestArrow size={14} />

@@ -55,6 +55,8 @@ test("StrollLibrarySection renders create-new plus card and empty state", () => 
   const html = renderSection();
 
   assert.match(html, /Create a New Stroll/);
+  assert.match(html, /aria-label="Create a new Stroll draft"/);
+  assert.match(html, /aria-live="polite"/);
   assert.match(html, /No Strolls yet/);
 });
 
@@ -82,7 +84,9 @@ test("StrollLibrarySection renders every active Stroll status", () => {
   assert.match(html, />Failed</);
   assert.match(html, /Manual/);
   assert.match(html, /Start\/View/);
+  assert.match(html, /aria-label="Start or view ready Stroll"/);
   assert.match(html, />Retry</);
+  assert.match(html, /aria-label="Retry curation for failed Stroll"/);
   assert.match(html, /Stop ownership failed/);
 });
 
