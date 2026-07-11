@@ -53,6 +53,7 @@ export type OcrResult = {
   used: boolean;
   text: string;
   reason: string | null;
+  provider?: string | null;
 };
 
 export type ExtractionStageStatus = "success" | "partial" | "failed";

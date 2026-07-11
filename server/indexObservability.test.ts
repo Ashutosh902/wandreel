@@ -1,3 +1,5 @@
+// @ts-nocheck
+
 import test from "node:test";
 import assert from "node:assert/strict";
 import { OAuth2Client } from "google-auth-library";

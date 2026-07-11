@@ -583,7 +583,9 @@ function finalizeOutputForUi(
   return sanitized.output;
 }
 
-function applyOcrHeuristicPriority(output: IntelligenceOutput, source: ExtractionResult): IntelligenceOutput {
+export function applyOcrHeuristicPriority(_output: IntelligenceOutput, _source: ExtractionResult): IntelligenceOutput {
+  const output = _output;
+  const source = _source;
   const candidate = inferOcrHeuristicCandidate(source);
   if (!candidate) return output;
   if (Array.isArray(output.structuredEntities) && output.structuredEntities.length > 0) {

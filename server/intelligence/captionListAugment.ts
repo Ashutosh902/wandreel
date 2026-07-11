@@ -116,7 +116,7 @@ function inferL2(category: SupportedCategory, headerText: string, lineText: stri
     if (/\b(street food|stall)\b/.test(text)) return "Street Food";
     return "Restaurant";
   }
-  if (category === "activity") {
+  if (category === "do") {
     if (/\b(workshop|class)\b/.test(text)) return "Workshop";
     if (/\b(comedy|standup)\b/.test(text)) return "Comedy";
     if (/\b(night out|nightlife|club|party)\b/.test(text)) return "Night Out";
@@ -184,7 +184,7 @@ function buildLevel2(category: SupportedCategory, headerText: string, lineText: 
       priceTier: null,
     };
   }
-  if (category === "activity") {
+  if (category === "do") {
     return {
       category,
       activityType: null,
@@ -205,7 +205,7 @@ function buildLevel2(category: SupportedCategory, headerText: string, lineText: 
     };
   }
   return {
-    category,
+    category: "see",
     placeType: null,
     experienceTag: null,
     vibeTags: [],

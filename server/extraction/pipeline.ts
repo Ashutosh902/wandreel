@@ -563,6 +563,9 @@ async function safeProbeLlmConfidence(
     mode: ExtractionMode;
     attemptNumber: number;
     triggerType: ExtractionTriggerType;
+    clientRunId?: string | null;
+    requestId?: string | null;
+    probeStage?: "description" | "transcript" | null;
     transcript?: TranscriptResult | null;
     ocr?: OcrResult | null;
   },
@@ -570,7 +573,10 @@ async function safeProbeLlmConfidence(
 ): Promise<{ probe: LlmConfidenceProbe | null; failureReason: string | null; probeMs: number }> {
   const startedAt = nowMs();
   try {
-    const probe = await runStructuredFastPathDecision(input);
+    const probe = await runStructuredFastPathDecision({
+      ...input,
+      probeStage: input.probeStage ?? undefined,
+    });
     return { probe, failureReason: null, probeMs: nowMs() - startedAt };
   } catch (error) {
     const failureReason = buildProbeFailureReason(context, error);
@@ -594,6 +600,8 @@ async function safeRunTinyFastExtractor(
     mode: ExtractionMode;
     attemptNumber: number;
     triggerType: ExtractionTriggerType;
+    clientRunId?: string | null;
+    requestId?: string | null;
   },
   context: ProbeFailureContext,
 ): Promise<{ probe: StructuredFastPathDecision | null; failureReason: string | null; probeMs: number }> {
@@ -1099,6 +1107,7 @@ async function processRetryFramesSequentially(input: {
       const ocrResult = input.includeVisual
         ? await extractVisionOcrFromScreenshots(screenshot ? [screenshot] : [])
         : await extractImagePathOcr(frame.sourcePath || "");
+      const ocrProvider = input.includeVisual ? "openai_vision" : ("provider" in ocrResult ? ocrResult.provider : null);
       const ocrDurationMs = nowMs() - ocrStartedAt;
       logFrameExtractionEvent("after_ocr_call", {
         frameLabel: frame.label,
@@ -1107,7 +1116,7 @@ async function processRetryFramesSequentially(input: {
         ocrTextChars: ocrResult.text.trim().length,
         ocrSnippet: ocrResult.text.trim().slice(0, 160) || null,
         ocrReason: ocrResult.reason ?? null,
-        ocrProvider: input.includeVisual ? "openai_vision" : ocrResult.provider,
+        ocrProvider,
         includeVisual: input.includeVisual,
       });
       ocrOnlyMs += ocrDurationMs;
@@ -1123,13 +1132,13 @@ async function processRetryFramesSequentially(input: {
         originalHeight: frame.originalHeight ?? null,
         resizedWidth: frame.resizedWidth ?? null,
         resizedHeight: frame.resizedHeight ?? null,
-        compressedSizeBytes: frame.sizeBytes ?? screenshot.sizeBytes ?? null,
+        compressedSizeBytes: frame.sizeBytes ?? screenshot?.sizeBytes ?? null,
         ocrDurationMs,
         ocrTextChars: ocrResult.text.trim().length,
         ocrSnippet: ocrResult.text.trim().slice(0, 160) || null,
         ocrUsed: Boolean(ocrResult.text.trim()),
         ocrReason: ocrResult.reason ?? null,
-        ocrProvider: input.includeVisual ? "openai_vision" : ocrResult.provider,
+        ocrProvider,
       });
       input.memoryTracker?.checkpoint("after_ocr_per_frame", {
         frames: [frame],
@@ -1139,7 +1148,7 @@ async function processRetryFramesSequentially(input: {
           ocrDurationMs,
           ocrTextChars: ocrResult.text.trim().length,
           ocrReason: ocrResult.reason ?? null,
-          ocrProvider: input.includeVisual ? "openai_vision" : ocrResult.provider,
+          ocrProvider,
         },
       });
 
@@ -1487,6 +1496,7 @@ function buildResult(input: {
     tinyFastExtractorRejectedReason?: string | null;
     modelUsedForTinyExtractor?: string | null;
     fullPromptSkipped?: boolean;
+    tinyCaptionPromptInput?: Record<string, unknown> | null;
   };
 }): ExtractionResult {
   const captionText = String(input.metadata.description || "").trim();
@@ -1871,8 +1881,6 @@ export async function runExtractionPipeline(input: {
         mode: input.mode,
         attemptNumber,
         triggerType,
-        clientRunId: input.clientRunId ?? null,
-        requestId: input.clientRunId || null,
       },
       {
         stage: "description",
@@ -2226,8 +2234,6 @@ export async function runExtractionPipeline(input: {
         attemptNumber,
         triggerType,
         transcript,
-        clientRunId: input.clientRunId ?? null,
-        requestId: input.clientRunId || null,
         probeStage: "transcript",
       },
       {

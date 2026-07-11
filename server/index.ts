@@ -1924,7 +1924,7 @@ export function buildAttemptStageRowsFromExtraction(result: ExtractionResult): A
   chars?: number | null;
   metadataJson?: Record<string, unknown> | null;
 }> {
-  const stages = result.stages || {};
+  const stages: Partial<Record<string, { status?: string | null; provider?: string | null; reason?: string | null; chars?: number | null }>> = result.stages || {};
   const stageTimings = result.stageTimingsMs || {};
   return Object.entries(stages).map(([stageKey, stage]) => ({
     stageKey,
@@ -2138,8 +2138,8 @@ function normalizeEntityEditScalarValue(field: TrustedEntityEditField, value: un
 
 function parseTrustedEntityEditDiffs(payload: unknown): Array<{ fieldName: TrustedEntityEditField; beforeValue: string | number | null; afterValue: string | number | null }> {
   if (!payload || typeof payload !== "object") return [];
-  const rawDiffs = Array.isArray((payload as Record<string, unknown>).editDiffs)
-    ? (payload as Record<string, unknown>).editDiffs
+  const rawDiffs: unknown[] = Array.isArray((payload as Record<string, unknown>).editDiffs)
+    ? (payload as Record<string, unknown>).editDiffs as unknown[]
     : [];
   const allowedFields = new Set<TrustedEntityEditField>(["title", "category", "subtitle", "placeId", "finalPlaceId", "lat", "lng"]);
   const diffs: Array<{ fieldName: TrustedEntityEditField; beforeValue: string | number | null; afterValue: string | number | null }> = [];

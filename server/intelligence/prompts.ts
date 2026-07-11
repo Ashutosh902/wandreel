@@ -217,7 +217,7 @@ export function summarizeAttempt3ContextUsage(output: { structuredEntities?: Arr
     .join(" ");
   const geoContextUsed = uniqueStrings([
     ...priorContext.priorLocalityCityStateGuesses.filter((value) => entityText.includes(value.toLowerCase()) || value.toLowerCase().split(",").some((part) => entityText.includes(part.trim()))),
-    ...priorContext.priorCommentReplyEvidence.filter((value) => entityText.includes(String(entity.locality || "").toLowerCase()) || entityText.includes(String(entity.city || "").toLowerCase()) || entityText.includes(String(entity.state || "").toLowerCase())),
+    ...priorContext.priorCommentReplyEvidence.filter(() => entityText.includes(String(entity.locality || "").toLowerCase()) || entityText.includes(String(entity.city || "").toLowerCase()) || entityText.includes(String(entity.state || "").toLowerCase())),
   ], 8);
   const categoryContextUsed = uniqueStrings(
     priorContext.priorCategoryGuesses.filter((value) => entityText.includes(value.toLowerCase())),
