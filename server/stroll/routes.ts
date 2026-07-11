@@ -28,6 +28,7 @@ import {
   listStrolls,
   recordHeroInteraction,
   removeHeroBookmark,
+  StrollDraftValidationError,
   StrollReorderValidationError,
   updateStrollOnboarding,
   upsertHeroBookmark,
@@ -154,6 +155,9 @@ export function registerStrollRoutes(app: express.Express, options: RegisterStro
         stroll: result.stroll,
       });
     } catch (error) {
+      if (error instanceof StrollDraftValidationError) {
+        return res.status(error.statusCode).json({ ok: false, error: error.message, code: error.code });
+      }
       console.error("draft stroll create failed", error);
       return res.status(500).json({ ok: false, error: "Failed to create draft Stroll" });
     }

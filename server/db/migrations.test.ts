@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseMigrationFilename, runDatabaseMigrations, type DatabaseMigration } from "./migrations";
+import { calculateMigrationChecksum, parseMigrationFilename, runDatabaseMigrations, type DatabaseMigration } from "./migrations";
 import type { PostgresDatabase } from "../auth/postgresAuth";
 
 type QueryCall = {
@@ -8,7 +8,7 @@ type QueryCall = {
   params: unknown[] | undefined;
 };
 
-function createMigrationMock(appliedVersions: string[] = []) {
+function createMigrationMock(appliedVersions: string[] = [], appliedChecksums: Record<string, string | null> = {}) {
   const calls: QueryCall[] = [];
   const clientCalls: QueryCall[] = [];
   let released = false;
@@ -16,10 +16,10 @@ function createMigrationMock(appliedVersions: string[] = []) {
   const database = {
     query: async (sql: string, params?: unknown[]) => {
       calls.push({ sql, params });
-      if (/select version from schema_migrations/i.test(sql)) {
+      if (/select version.*from schema_migrations/i.test(sql)) {
         const version = String(params?.[0] || "");
         return {
-          rows: appliedVersions.includes(version) ? [{ version }] : [],
+          rows: appliedVersions.includes(version) ? [{ version, checksum: appliedChecksums[version] ?? null }] : [],
           rowCount: appliedVersions.includes(version) ? 1 : 0,
         };
       }
@@ -67,11 +67,14 @@ test("runDatabaseMigrations applies unapplied migrations and records version", a
   });
 
   assert.match(mock.calls[0]?.sql || "", /create table if not exists schema_migrations/i);
-  assert.match(mock.calls[1]?.sql || "", /select version from schema_migrations/i);
+  assert.match(mock.calls[1]?.sql || "", /alter table schema_migrations add column if not exists checksum/i);
+  assert.match(mock.calls[2]?.sql || "", /pg_advisory_lock/i);
+  assert.match(mock.calls[3]?.sql || "", /select version, checksum from schema_migrations/i);
+  assert.match(mock.calls[4]?.sql || "", /pg_advisory_unlock/i);
   assert.equal(mock.clientCalls[0]?.sql, "begin");
   assert.match(mock.clientCalls[1]?.sql || "", /create table if not exists strolls/i);
   assert.match(mock.clientCalls[2]?.sql || "", /insert into schema_migrations/i);
-  assert.deepEqual(mock.clientCalls[2]?.params, ["0001", "stroll_foundation"]);
+  assert.deepEqual(mock.clientCalls[2]?.params, ["0001", "stroll_foundation", calculateMigrationChecksum(strollMigration.sql)]);
   assert.equal(mock.clientCalls[3]?.sql, "commit");
   assert.equal(mock.wasReleased(), true);
 });
@@ -84,5 +87,33 @@ test("runDatabaseMigrations skips already recorded migrations", async () => {
     migrations: [strollMigration],
   });
 
+  assert.match(mock.calls[2]?.sql || "", /pg_advisory_lock/i);
+  assert.match(mock.calls.at(-1)?.sql || "", /pg_advisory_unlock/i);
   assert.equal(mock.clientCalls.length, 0);
+});
+
+test("runDatabaseMigrations rejects changed applied migration checksums", async () => {
+  const mock = createMigrationMock(["0001"], { "0001": "old-checksum" });
+
+  await assert.rejects(
+    () => runDatabaseMigrations({
+      database: mock.database,
+      migrations: [strollMigration],
+    }),
+    /Migration checksum mismatch/,
+  );
+
+  assert.match(mock.calls.at(-1)?.sql || "", /pg_advisory_unlock/i);
+});
+
+test("runDatabaseMigrations backfills missing checksums for already applied migrations", async () => {
+  const mock = createMigrationMock(["0001"], { "0001": null });
+
+  await runDatabaseMigrations({
+    database: mock.database,
+    migrations: [strollMigration],
+  });
+
+  const updateCall = mock.calls.find((call) => /update schema_migrations set checksum/i.test(call.sql));
+  assert.deepEqual(updateCall?.params, ["0001", calculateMigrationChecksum(strollMigration.sql)]);
 });

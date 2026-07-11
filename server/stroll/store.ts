@@ -466,6 +466,18 @@ export async function updateStrollOnboarding(userId: string, input: UpdateOnboar
   return mapOnboardingRow(result.rows[0]);
 }
 
+export class StrollDraftValidationError extends Error {
+  statusCode: number;
+  code: string;
+
+  constructor(statusCode: number, code: string, message: string) {
+    super(message);
+    this.name = "StrollDraftValidationError";
+    this.statusCode = statusCode;
+    this.code = code;
+  }
+}
+
 export async function createDraftStroll(userId: string, input: CreateDraftStrollInput) {
   const existing = await database().query<StrollRow>(
     `select ${strollSelectColumns}
@@ -479,6 +491,24 @@ export async function createDraftStroll(userId: string, input: CreateDraftStroll
       created: false,
       stroll: mapStrollRow(existing.rows[0]),
     };
+  }
+
+  if (input.placeIds.length > 0) {
+    const owned = await database().query<SavedPlaceIdRow>(
+      `select place_id
+       from user_saved_places
+       where user_id = $1 and place_id = any($2::text[])`,
+      [userId, input.placeIds],
+    );
+    const ownedIds = new Set(owned.rows.map((row) => row.place_id));
+    const unowned = input.placeIds.filter((placeId) => !ownedIds.has(placeId));
+    if (unowned.length > 0) {
+      throw new StrollDraftValidationError(
+        400,
+        "invalid_place_ids",
+        "Every draft Stroll placeId must belong to your saved places.",
+      );
+    }
   }
 
   const client = await connectTransaction();

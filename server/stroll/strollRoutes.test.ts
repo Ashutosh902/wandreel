@@ -118,6 +118,13 @@ function createRouteDatabaseMock() {
       if (/from user_stroll_preferences/i.test(sql)) return { rows: [], rowCount: 0 };
       if (/insert into user_stroll_preferences/i.test(sql)) return { rows: [onboardingRow()], rowCount: 1 };
       if (/user_id = \$1 and s\.client_request_id = \$2/i.test(sql)) return { rows: [], rowCount: 0 };
+      if (/from user_saved_places/i.test(sql) && /place_id = any/i.test(sql)) {
+        const requested = Array.isArray(params?.[1]) ? params?.[1] as string[] : [];
+        return {
+          rows: requested.filter((placeId) => placeId !== "foreign-place").map((place_id) => ({ place_id })),
+          rowCount: requested.filter((placeId) => placeId !== "foreign-place").length,
+        };
+      }
       if (/from strolls s/i.test(sql) && /order by s\.updated_at desc/i.test(sql)) {
         return { rows: [strollRow(), strollRow({ id: "stroll-archived", status: "archived" })], rowCount: 2 };
       }
@@ -279,6 +286,25 @@ test("POST /api/strolls creates an idempotent draft with ordered stops", async (
   assert.equal((response.body.stroll as Record<string, unknown>).status, "draft");
   assert.equal((response.body.stroll as Record<string, unknown>).stopCount, 2);
   assert.equal(mock.clientCalls.filter((call) => /insert into stroll_stops/i.test(call.sql)).length, 2);
+});
+
+test("POST /api/strolls rejects draft placeIds not owned by the user", async () => {
+  const mock = createRouteDatabaseMock();
+  __setPostgresTestConfig({ databaseOverride: mock.database, databaseUrlOverride: "postgres://unit-test" });
+
+  const response = await request(createApp(), "/api/strolls", {
+    method: "POST",
+    body: JSON.stringify({
+      clientRequestId: "request-foreign",
+      source: "manual",
+      city: "Patna",
+      placeIds: ["place-1", "foreign-place"],
+    }),
+  });
+
+  assert.equal(response.status, 400);
+  assert.equal(response.body.code, "invalid_place_ids");
+  assert.equal(mock.clientCalls.some((call) => /insert into strolls/i.test(call.sql)), false);
 });
 
 test("GET /api/strolls/:strollId returns 404 when the scoped user lookup finds no row", async () => {

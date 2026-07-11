@@ -14,7 +14,6 @@ import {
   createOrReuseEmailVerifiedUser,
   createSession,
   deleteSavedPlace,
-  ensureAuthSchema,
   findSavedPlaceByUserAndPlaceId,
   finalizeReelAnalyticsAttempt,
   findSessionUser,
@@ -1166,13 +1165,10 @@ async function requireAdmin(req: express.Request, res: express.Response, next: e
 }
 
 if (isPostgresConfigured() && process.env.NODE_ENV !== "test") {
-  ensureAuthSchema()
-    .then(async () => {
-      await runDatabaseMigrations();
-      await strollCurationJobStore.recoverStaleJobs();
-    })
+  runDatabaseMigrations()
+    .then(() => strollCurationJobStore.recoverStaleJobs())
     .catch((error) => {
-      console.error("postgres schema bootstrap failed", error);
+      console.error("postgres migration bootstrap failed", error);
     });
 }
 

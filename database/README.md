@@ -4,14 +4,18 @@ This folder holds interim table-like storage using Excel sheets until a full DB 
 
 ## Postgres migrations
 
-Postgres schema changes now use ordered SQL files in `database/migrations`.
+Postgres schema changes use ordered SQL files in `database/migrations`.
 
-- Runtime startup runs `server/auth/postgresAuth.ts` legacy auth bootstrap first, then applies unapplied migrations through `server/db/migrations.ts`.
-- Applied migrations are recorded in `schema_migrations`.
-- New Stroll persistence tables must be added through migrations, not by expanding `ensureAuthSchema()`.
-- Current known drift remains intentionally contained for this phase: `ensureAuthSchema()` creates the operational auth/saved-place tables, while `database/schema_v1.sql` still reflects an older planning contract. Do not use `schema_v1.sql` as the live production source of truth until that drift is reconciled in a dedicated migration/refactor PR.
+- Production startup applies migrations through `server/db/migrations.ts`; migrations are the live schema source of truth.
+- `server/auth/postgresAuth.ts#ensureAuthSchema()` remains as a legacy compatibility/test helper, but normal startup no longer uses it to create operational tables.
+- `0000_operational_baseline.sql` captures the previously runtime-owned operational auth, saved-place, observability, and reel job tables.
+- Applied migrations are recorded in `schema_migrations` with SHA-256 checksums.
+- The migration runner uses a Postgres advisory lock so only one process applies migrations at a time.
+- Existing rows without checksums are backfilled on first run; changed SQL for an already-checksummed migration fails fast and should be handled by a new forward-fix migration.
+- New tables, indexes, constraints, and columns must be added through migrations, not by expanding runtime bootstrap code.
+- `database/schema_v1.sql` is retained as an older planning/reference contract, not the live production source of truth.
 
-Milestone 1 rollback default is code-only: leave new Stroll tables dormant if already applied. Destructive rollback must be explicitly approved and should drop new Stroll/hero tables in reverse dependency order before deleting the matching `schema_migrations` row.
+Rollback default is code-only: leave already-applied additive tables/columns dormant and ship a forward-fix migration if needed. Destructive rollback, such as dropping tables or deleting `schema_migrations` rows, requires explicit approval.
 
 ## File
 
