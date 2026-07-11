@@ -56,6 +56,7 @@ import type { ExtractionResult } from "./extraction/types";
 import { canonicalizeUrl } from "./extraction/url";
 import { runDatabaseMigrations } from "./db/migrations";
 import { registerStrollRoutes } from "./stroll/routes";
+import { strollCurationJobStore } from "./stroll/jobStore";
 
 const app = express();
 const googleIdTokenClient = new OAuth2Client();
@@ -1166,7 +1167,10 @@ async function requireAdmin(req: express.Request, res: express.Response, next: e
 
 if (isPostgresConfigured() && process.env.NODE_ENV !== "test") {
   ensureAuthSchema()
-    .then(() => runDatabaseMigrations())
+    .then(async () => {
+      await runDatabaseMigrations();
+      await strollCurationJobStore.recoverStaleJobs();
+    })
     .catch((error) => {
       console.error("postgres schema bootstrap failed", error);
     });
