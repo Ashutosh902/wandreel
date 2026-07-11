@@ -6,6 +6,11 @@ import type {
   UpdateOnboardingInput,
 } from "./contracts";
 import {
+  generateDeterministicStrollPlan,
+  StrollCurationPipelineError,
+  type SavedPlaceForStrollCuration,
+} from "./curation";
+import {
   enrichStopDescriptionIfNeeded,
   type PersistedStrollStopEnrichment,
   type StrollStopEnrichmentGenerator,
@@ -71,6 +76,16 @@ type StrollRow = {
 
 type SavedPlaceIdRow = {
   place_id: string;
+};
+
+type SavedPlaceForCurationRow = {
+  id: string;
+  place_id: string;
+  title: string;
+  category: string | null;
+  metadata_json: unknown;
+  created_at: string | Date | null;
+  updated_at: string | Date | null;
 };
 
 type ReorderStopRow = {
@@ -351,6 +366,18 @@ function mapStopRowToTrustedInput(row: StrollStopRow): TrustedStrollStopInput {
       metadataString(metadata, "sourceDescription") ||
       metadataString(metadata, "latestDescription"),
     sourceUrl: metadataString(metadata, "sourceUrl") || metadataString(metadata, "videoUrl"),
+  };
+}
+
+function mapSavedPlaceForCurationRow(row: SavedPlaceForCurationRow): SavedPlaceForStrollCuration {
+  return {
+    id: row.id,
+    placeId: row.place_id,
+    title: row.title,
+    category: row.category,
+    metadata: row.metadata_json ?? {},
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at),
   };
 }
 
@@ -640,6 +667,96 @@ export async function enrichPersistedStrollStopDescriptions(
     const enrichment = await enrichStopDescriptionIfNeeded(stop, generator);
     if (!enrichment) continue;
     await persistStopEnrichment(strollId, enrichment);
+  }
+}
+
+async function listSavedPlacesForStrollCuration(userId: string): Promise<SavedPlaceForStrollCuration[]> {
+  const result = await database().query<SavedPlaceForCurationRow>(
+    `select id,
+            place_id,
+            title,
+            category,
+            metadata_json,
+            created_at,
+            updated_at
+     from user_saved_places
+     where user_id = $1
+     order by created_at desc`,
+    [userId],
+  );
+  return result.rows.map(mapSavedPlaceForCurationRow);
+}
+
+export async function generatePersistedStrollStopsFromSavedPlaces(userId: string, strollId: string): Promise<void> {
+  if (process.env.STROLL_REAL_CURATION_ENABLED === "false") {
+    throw new StrollCurationPipelineError("curation_disabled", "Real Stroll curation is disabled.");
+  }
+
+  const stroll = await getStrollSummary(userId, strollId);
+  if (!stroll) {
+    throw new StrollCurationPipelineError("stroll_not_found", "Stroll not found.");
+  }
+  if (stroll.stopCount > 0) return;
+
+  const savedPlaces = await listSavedPlacesForStrollCuration(userId);
+  const plan = generateDeterministicStrollPlan(stroll, savedPlaces);
+
+  const client = await connectTransaction();
+  try {
+    await client.query("begin");
+    const locked = await client.query(
+      `select id
+       from strolls
+       where user_id = $1 and id = $2
+       limit 1
+       for update`,
+      [userId, strollId],
+    );
+    if (!locked.rows[0]) {
+      await client.query("rollback");
+      throw new StrollCurationPipelineError("stroll_not_found", "Stroll not found.");
+    }
+
+    await client.query("delete from stroll_stops where stroll_id = $1", [strollId]);
+    for (const stop of plan.stops) {
+      await client.query(
+        `insert into stroll_stops (
+           stroll_id,
+           place_id,
+           sequence,
+           reason,
+           estimated_visit_duration_minutes,
+           route_distance_meters,
+           route_duration_minutes
+         )
+         values ($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          strollId,
+          stop.placeId,
+          stop.sequence,
+          stop.reason,
+          stop.estimatedVisitDurationMinutes,
+          stop.routeDistanceMeters,
+          stop.routeDurationMinutes,
+        ],
+      );
+    }
+
+    await client.query(
+      `update strolls
+       set total_distance_meters = $3,
+           estimated_duration_minutes = $4,
+           generation_version = $5,
+           updated_at = now()
+       where user_id = $1 and id = $2`,
+      [userId, strollId, plan.totalDistanceMeters, plan.estimatedDurationMinutes, plan.version],
+    );
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
   }
 }
 

@@ -210,3 +210,26 @@ test("Stroll curation marks ready before enrichment completes", async () => {
 
   resolveEnrichment();
 });
+
+test("Stroll curation generates stops before deterministic ready validation", async () => {
+  const fake = createPersistence("draft");
+  const calls: string[] = [];
+  const store = new InMemoryStrollCurationJobStore({
+    persistence: {
+      ...fake.persistence,
+      generateStops: async () => {
+        calls.push("generate");
+      },
+      validateReady: async () => {
+        calls.push("validate");
+      },
+    },
+  });
+
+  const result = await store.trigger({ userId: "user-1", strollId: "stroll-1" });
+  const completed = await result.completion;
+
+  assert.equal(completed?.status, "ready");
+  assert.deepEqual(calls, ["generate", "validate"]);
+  assert.deepEqual(fake.transitions, ["queued", "curating", "ready"]);
+});

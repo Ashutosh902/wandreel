@@ -1,5 +1,6 @@
 import {
   getStrollSummary,
+  generatePersistedStrollStopsFromSavedPlaces,
   markStrollCurating,
   markStrollFailed,
   markStrollQueued,
@@ -42,6 +43,7 @@ export type StrollCurationPersistence = {
     failureCode: string,
     failureMessage: string,
   ) => Promise<StrollSummary | null>;
+  generateStops?: (userId: string, strollId: string) => Promise<void>;
   validateReady: (userId: string, strollId: string) => Promise<void>;
   enrichStops?: (userId: string, strollId: string) => Promise<void>;
 };
@@ -90,6 +92,7 @@ function defaultPersistence(): StrollCurationPersistence {
     markCurating: markStrollCurating,
     markReady: markStrollReady,
     markFailed: markStrollFailed,
+    generateStops: generatePersistedStrollStopsFromSavedPlaces,
     validateReady: validatePersistedStrollForReady,
     enrichStops: enrichPersistedStrollStopDescriptions,
   };
@@ -202,6 +205,7 @@ export class InMemoryStrollCurationJobStore {
       this.updateJob(job.userId, job.strollId, { status: "curating", failureCode: null, failureMessage: null });
       await this.persistence.markCurating(job.userId, job.strollId);
       await withTimeout(this.runner(job), this.timeoutMs);
+      await this.persistence.generateStops?.(job.userId, job.strollId);
       await this.persistence.validateReady(job.userId, job.strollId);
       const ready = await this.persistence.markReady(job.userId, job.strollId);
       this.updateJob(job.userId, job.strollId, { status: "ready", failureCode: null, failureMessage: null });
