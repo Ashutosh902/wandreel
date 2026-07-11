@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calculateMigrationChecksum, parseMigrationFilename, runDatabaseMigrations, type DatabaseMigration } from "./migrations";
+import { calculateMigrationChecksum, loadDatabaseMigrations, parseMigrationFilename, runDatabaseMigrations, type DatabaseMigration } from "./migrations";
 import type { PostgresDatabase } from "../auth/postgresAuth";
 
 type QueryCall = {
@@ -116,4 +116,13 @@ test("runDatabaseMigrations backfills missing checksums for already applied migr
 
   const updateCall = mock.calls.find((call) => /update schema_migrations set checksum/i.test(call.sql));
   assert.deepEqual(updateCall?.params, ["0001", calculateMigrationChecksum(strollMigration.sql)]);
+});
+
+test("loadDatabaseMigrations verifies the production migration manifest order", async () => {
+  const migrations = await loadDatabaseMigrations();
+  const versions = migrations.map((migration) => migration.version);
+
+  assert.deepEqual(versions, ["0000", "0001", "0002"]);
+  assert.deepEqual(new Set(versions).size, versions.length);
+  assert.ok(migrations.every((migration) => migration.sql.trim().length > 0));
 });
