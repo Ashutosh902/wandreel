@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Bell } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import { BottomNav } from "./BottomNav";
@@ -9,22 +9,17 @@ import { FoodTrailScreen } from "./FoodTrailScreen";
 import {
   createFoodTrailDemoPlaces,
   FOOD_TRAIL_DEMO_QUERY_PARAM,
-  isFoodTrailDemoEnabled,
 } from "./foodTrailPlannerDemo";
-import { applyFoodTrailHeroEligibility, applyWeekendPlanHeroEligibility } from "./heroCardEligibility";
 import { normalizeHeroCardContent } from "./heroCardContent";
 import { HeroCard } from "./HeroCard";
 import { LocationSelector } from "./LocationSelector";
 import { RecentlyAddedCarousel } from "./RecentlyAddedCarousel";
 import { WeekendPlannerScreen } from "./WeekendPlannerScreen";
 import { ConnectScreen } from "./ConnectScreen";
-import { StrollCreateScreen } from "./StrollCreateScreen";
-import { StrollDetailScreen } from "./StrollDetailScreen";
 import { StrollLibrarySection } from "./StrollLibrarySection";
 import type { CategoryLabel, NavLabel } from "./home.data";
 import { runHomeDataChecks } from "./home.data";
 import { LoginProfileScreen } from "../profile/LoginProfileScreen";
-import { MapScreen } from "../map/MapScreen";
 import { useUx } from "../layout/UxProvider";
 import { useAuth } from "../auth/AuthProvider";
 import {
@@ -36,11 +31,9 @@ import {
 import {
   ADD_DRAFT_UPDATED_EVENT,
   ADD_PROCESSING_STARTED_EVENT,
-  ADD_READY_UPDATED_EVENT,
   addReadyNotification,
   mapEntitiesToPlaces,
   readPersistedAddDraft,
-  readReadyNotifications,
   setReviewRunId,
   writePersistedAddDraft,
   type AddReadyNotification,
@@ -63,21 +56,11 @@ import {
 } from "./heroCardPlannerData";
 import { filterPlacesByResolvedCity, resolveLocationContext } from "./locationContext";
 import { isWeekendPlannerAction } from "./weekendPlanner";
-import { createWeekendPlannerDemoPlaces, isWeekendPlannerDemoEnabled } from "./weekendPlannerDemo";
+import { createWeekendPlannerDemoPlaces } from "./weekendPlannerDemo";
 import {
-  buildPlannerUrlUpdate,
-  getPlannerRouteFromPathname,
   getStrollDetailRoute,
   getStrollIdFromPlannerRoute,
-  type PlannerRoute,
 } from "./homeNavigation";
-import {
-  fetchHeroBookmarkKeys,
-  getHeroBookmarkTogglePlan,
-  removeHeroBookmark,
-  saveHeroBookmark,
-  shouldIgnoreHeroBookmarkClick,
-} from "./heroBookmarks";
 import {
   canShowManualStrollEntry,
   fetchStrollOnboarding,
@@ -85,15 +68,13 @@ import {
   updateStrollOnboardingDecision,
   type StrollOnboardingDecision,
 } from "./strollOnboarding";
-import {
-  fetchStrollLibrary,
-  fetchStrollStatus,
-  getStrollIdsToPoll,
-  mergePolledStroll,
-  retryStrollCuration,
-  type PersistentStrollSummary,
-  type StrollLibraryLoadState,
-} from "./strollLibrary";
+import type { PersistentStrollSummary, StrollLibraryLoadState } from "./strollLibrary";
+import { deriveHeroCardKey, useHeroCard, type HeroCardData } from "./useHeroCard";
+import { useHeroBookmarks } from "./useHeroBookmarks";
+import { useHomeGestures } from "./useHomeGestures";
+import { useHomeNavigation } from "./useHomeNavigation";
+import { useReadyNotifications } from "./useReadyNotifications";
+import { useStrollLibrary } from "./useStrollLibrary";
 import "./home.css";
 
 runHomeDataChecks();
@@ -101,24 +82,12 @@ const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Login"];
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const ADD_INTELLIGENCE_TIMEOUT_MS = 120000;
 const IS_DEV = import.meta.env.DEV;
-const DISMISSED_READY_NOTIFICATION_IDS_KEY = "wr_dismissed_ready_notification_ids_v1";
-const HERO_CARD_FRESHNESS_STATE_KEY = "wr_hero_card_freshness_v1";
-const HERO_CARD_COOLDOWN_MS = 24 * 60 * 60 * 1000;
+
+const LazyMapScreen = lazy(() => import("../map/MapScreen").then((module) => ({ default: module.MapScreen })));
+const LazyStrollCreateScreen = lazy(() => import("./StrollCreateScreen").then((module) => ({ default: module.StrollCreateScreen })));
+const LazyStrollDetailScreen = lazy(() => import("./StrollDetailScreen").then((module) => ({ default: module.StrollDetailScreen })));
 
 type HeroMode = "empty-memory" | "city-memory";
-type HeroCardData = {
-  type: "city_category_insight";
-  cardKey?: string;
-  title: string;
-  subtitle: string;
-  ctaLabel: string;
-  ctaAction: string;
-  priorityScore?: number;
-  reasonCodes?: string[];
-  metadata: Record<string, unknown>;
-  alternatives?: HeroCardData[];
-};
-
 type HeroNavigationContext = {
   filteredPlaceIds: string[] | null;
   filteredCity: string | null;
@@ -135,93 +104,6 @@ type WeekendPlannerContext = {
   cityName: string | null;
 };
 
-type HeroCardFreshnessState = {
-  lastShownCardKey: string | null;
-  lastShownAtMs: number;
-  dismissedCardKeys: string[];
-};
-
-const DEFAULT_DISCOVER_HERO_CARD: HeroCardData = {
-  type: "city_category_insight",
-  title: "Start your list",
-  subtitle: "Save places from reels and plan them later.",
-  ctaLabel: "Add a place",
-  ctaAction: "add_first_place",
-  metadata: { rule: "default" },
-};
-
-function buildHeroCardFreshnessStorageKey(userId: string | null) {
-  const normalizedUserId = String(userId || "").trim();
-  return normalizedUserId ? `${HERO_CARD_FRESHNESS_STATE_KEY}:${normalizedUserId}` : HERO_CARD_FRESHNESS_STATE_KEY;
-}
-
-function readHeroCardFreshnessState(userId: string | null): HeroCardFreshnessState {
-  try {
-    const raw = window.localStorage.getItem(buildHeroCardFreshnessStorageKey(userId));
-    const parsed = raw ? JSON.parse(raw) : null;
-    return {
-      lastShownCardKey: typeof parsed?.lastShownCardKey === "string" ? parsed.lastShownCardKey : null,
-      lastShownAtMs: typeof parsed?.lastShownAtMs === "number" && Number.isFinite(parsed.lastShownAtMs) ? parsed.lastShownAtMs : 0,
-      dismissedCardKeys: Array.isArray(parsed?.dismissedCardKeys)
-        ? parsed.dismissedCardKeys.filter((item: unknown): item is string => typeof item === "string")
-        : [],
-    };
-  } catch {
-    return {
-      lastShownCardKey: null,
-      lastShownAtMs: 0,
-      dismissedCardKeys: [],
-    };
-  }
-}
-
-function writeHeroCardFreshnessState(userId: string | null, state: HeroCardFreshnessState) {
-  try {
-    window.localStorage.setItem(buildHeroCardFreshnessStorageKey(userId), JSON.stringify(state));
-  } catch {
-    // Ignore persistence failures to keep hero rendering resilient.
-  }
-}
-
-function deriveHeroCardKey(card: HeroCardData): string {
-  if (typeof card.cardKey === "string" && card.cardKey.trim()) {
-    return card.cardKey.trim();
-  }
-  const targetCategory = typeof card.metadata?.targetCategory === "string" ? card.metadata.targetCategory.trim() : "";
-  const targetCity = typeof card.metadata?.targetCity === "string" ? card.metadata.targetCity.trim() : "";
-  const matchingPlaceIds = Array.isArray(card.metadata?.matchingPlaceIds)
-    ? card.metadata.matchingPlaceIds
-      .map((item) => String(item || "").trim())
-      .filter(Boolean)
-      .sort()
-    : [];
-  return JSON.stringify({
-    type: card.type,
-    targetCategory,
-    targetCity,
-    matchingPlaceIds,
-  });
-}
-
-function getFoodTrailDemoPreviewState(url: URL, isDev: boolean): boolean {
-  return getPlannerRouteFromPathname(url.pathname) === "food-trail" && isFoodTrailDemoEnabled(url.search, isDev);
-}
-
-function getWeekendPlannerDemoPreviewState(url: URL, isDev: boolean): boolean {
-  return getPlannerRouteFromPathname(url.pathname) === "weekend-plan" && isWeekendPlannerDemoEnabled(url.search, isDev);
-}
-
-function normalizeHeroCandidatesForHome(
-  candidates: HeroCardData[],
-  visibleSavedPlaces: SavedPlaceRecord[],
-  currentLocationLabel: string,
-): HeroCardData[] {
-  return candidates
-    .map((candidate) => applyFoodTrailHeroEligibility(candidate, visibleSavedPlaces, currentLocationLabel))
-    .map((candidate) => candidate ? applyWeekendPlanHeroEligibility(candidate, visibleSavedPlaces, currentLocationLabel) : null)
-    .map((candidate) => candidate ? normalizeHeroCardContent(candidate, currentLocationLabel, visibleSavedPlaces) : null)
-    .filter((candidate): candidate is HeroCardData => candidate !== null);
-}
 
 function DiscoverPage({
   activeCategory,
@@ -447,19 +329,15 @@ export function HomeScreen() {
     "Explore",
   ]);
   const [savedPlacesByCategory, setSavedPlacesByCategory] = useState(createEmptySavedPlacesByCategory);
-  const [readyNotifications, setReadyNotifications] = useState<AddReadyNotification[]>(() => readReadyNotifications());
-  const [heroCard, setHeroCard] = useState<HeroCardData | null>(DEFAULT_DISCOVER_HERO_CARD);
-  const [heroBookmarkKeys, setHeroBookmarkKeys] = useState<string[]>([]);
-  const [pendingHeroBookmarkCardKey, setPendingHeroBookmarkCardKey] = useState<string | null>(null);
-  const [plannerRoute, setPlannerRoute] = useState<PlannerRoute>(() => (
-    typeof window !== "undefined" ? getPlannerRouteFromPathname(window.location.pathname) : "home"
-  ));
-  const [isFoodTrailDemoPreview, setIsFoodTrailDemoPreview] = useState<boolean>(() => (
-    typeof window !== "undefined" ? getFoodTrailDemoPreviewState(new URL(window.location.href), IS_DEV) : false
-  ));
-  const [isWeekendPlannerDemoPreview, setIsWeekendPlannerDemoPreview] = useState<boolean>(() => (
-    typeof window !== "undefined" ? getWeekendPlannerDemoPreviewState(new URL(window.location.href), IS_DEV) : false
-  ));
+  const {
+    plannerRoute,
+    setPlannerPath,
+    isFoodTrailDemoPreview,
+    isWeekendPlannerDemoPreview,
+  } = useHomeNavigation({
+    isDev: IS_DEV,
+    foodTrailDemoQueryParam: FOOD_TRAIL_DEMO_QUERY_PARAM,
+  });
   const [foodTrailPlannerContext, setFoodTrailPlannerContext] = useState<FoodTrailPlannerContext>({
     matchingPlaceIds: null,
   });
@@ -473,34 +351,13 @@ export function HomeScreen() {
     mapPlaces: null,
     mapCategories: null,
   });
-  const [dismissedNotificationIds, setDismissedNotificationIds] = useState<string[]>(() => {
-    try {
-      const raw = window.localStorage.getItem(DISMISSED_READY_NOTIFICATION_IDS_KEY);
-      const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-    } catch {
-      return [];
-    }
-  });
   const [isReadySheetOpen, setIsReadySheetOpen] = useState(false);
   const [strollOnboardingDecision, setStrollOnboardingDecision] = useState<StrollOnboardingDecision | null>(null);
   const [isStrollPromptDismissed, setIsStrollPromptDismissed] = useState(false);
   const [strollOnboardingAction, setStrollOnboardingAction] = useState<"accept" | "decline" | null>(null);
-  const [strolls, setStrolls] = useState<PersistentStrollSummary[]>([]);
-  const [strollLibraryState, setStrollLibraryState] = useState<StrollLibraryLoadState>("idle");
-  const [strollLibraryError, setStrollLibraryError] = useState<string | null>(null);
-  const [retryingStrollId, setRetryingStrollId] = useState<string | null>(null);
   const [transitionDirection, setTransitionDirection] = useState(1);
-  const [isRefreshing, setIsRefreshing] = useState(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const isPollingAddJobsRef = useRef(false);
-  const isRefreshingStrollLibraryRef = useRef(false);
-  const visibleHeroCardKeyRef = useRef<string | null>(deriveHeroCardKey(DEFAULT_DISCOVER_HERO_CARD));
-  const pendingHeroBookmarkCardKeyRef = useRef<string | null>(null);
-  const touchStartRef = useRef<{ x: number; y: number; edge: "left" | "right" } | null>(null);
-  const pullStartYRef = useRef<number | null>(null);
-  const pullDistanceRef = useRef(0);
-  const surfaceRef = useRef<HTMLDivElement | null>(null);
   const isMapTab = activeTab === "Map";
   const isAddTab = activeTab === "Add";
   const isCategoryView = activeTab === "Discover" && activeCategory !== null;
@@ -531,18 +388,54 @@ export function HomeScreen() {
     () => getRecentlyAddedSavedPlaces(visibleSavedPlaces, 7),
     [visibleSavedPlaces],
   );
-  const pendingStrollPollKey = useMemo(
-    () => getStrollIdsToPoll(strolls).join("|"),
-    [strolls],
-  );
   const visibleSavedPlacesByCategory = useMemo(() => {
     if (!isAuthenticated) return createEmptySavedPlacesByCategory();
     return effectiveSavedPlacesByCategory;
   }, [effectiveSavedPlacesByCategory, isAuthenticated]);
-  const visibleReadyNotifications = useMemo(
-    () => readyNotifications.filter((item) => !dismissedNotificationIds.includes(item.id)),
-    [dismissedNotificationIds, readyNotifications],
-  );
+  const {
+    visibleReadyNotifications,
+    refreshReadyNotifications,
+    dismissNotification,
+  } = useReadyNotifications();
+  const { heroCard } = useHeroCard({
+    apiBaseUrl: API_BASE_URL,
+    currentLocationLabel,
+    isAuthenticated,
+    userId: sessionUser?.userId ?? null,
+    visibleSavedPlaces,
+  });
+  const {
+    heroBookmarkKeys,
+    pendingHeroBookmarkCardKey,
+    handleHeroBookmarkToggle,
+  } = useHeroBookmarks<HeroCardData>({
+    apiBaseUrl: API_BASE_URL,
+    isAuthenticated,
+    userId: sessionUser?.userId ?? null,
+    showToast,
+    deriveCardKey: deriveHeroCardKey,
+    buildBookmarkPayload: (card, cardKey) => ({
+      cardKey,
+      heroType: card.type,
+      ctaAction: card.ctaAction,
+      title: card.title,
+      subtitle: card.subtitle,
+      metadata: card.metadata || {},
+    }),
+  });
+  const {
+    strolls,
+    strollLibraryState,
+    strollLibraryError,
+    retryingStrollId,
+    refreshStrollLibrary,
+    handleRetryStroll,
+  } = useStrollLibrary({
+    apiBaseUrl: API_BASE_URL,
+    isAuthenticated,
+    userId: sessionUser?.userId ?? null,
+    showToast,
+  });
   const clearHeroNavigationContext = useCallback(() => {
     setHeroNavigationContext({
       filteredPlaceIds: null,
@@ -550,22 +443,6 @@ export function HomeScreen() {
       mapPlaces: null,
       mapCategories: null,
     });
-  }, []);
-  const setPlannerPath = useCallback((nextRoute: PlannerRoute, replace = false) => {
-    if (typeof window === "undefined") return;
-    const { url: nextUrl, historyPath } = buildPlannerUrlUpdate(
-      window.location.href,
-      nextRoute,
-      FOOD_TRAIL_DEMO_QUERY_PARAM,
-    );
-    if (replace) {
-      window.history.replaceState({}, "", historyPath);
-    } else {
-      window.history.pushState({}, "", historyPath);
-    }
-    setPlannerRoute(nextRoute);
-    setIsFoodTrailDemoPreview(getFoodTrailDemoPreviewState(nextUrl, IS_DEV));
-    setIsWeekendPlannerDemoPreview(getWeekendPlannerDemoPreviewState(nextUrl, IS_DEV));
   }, []);
   const openStrollCreate = useCallback(() => {
     clearHeroNavigationContext();
@@ -577,57 +454,9 @@ export function HomeScreen() {
     setPlannerPath("stroll-create");
   }, [clearHeroNavigationContext, setPlannerPath]);
 
-  const refreshStrollLibrary = useCallback(async (options: { silent?: boolean } = {}) => {
-    if (!isAuthenticated) {
-      setStrolls([]);
-      setStrollLibraryState("idle");
-      setStrollLibraryError(null);
-      return;
-    }
-    if (isRefreshingStrollLibraryRef.current) return;
-
-    isRefreshingStrollLibraryRef.current = true;
-    if (!options.silent) {
-      setStrollLibraryState("loading");
-      setStrollLibraryError(null);
-    }
-
-    try {
-      const nextStrolls = await fetchStrollLibrary(API_BASE_URL);
-      setStrolls(nextStrolls);
-      setStrollLibraryState("ready");
-      setStrollLibraryError(null);
-    } catch (error) {
-      setStrollLibraryState("error");
-      setStrollLibraryError(error instanceof Error ? error.message : "Could not load Strolls.");
-    } finally {
-      isRefreshingStrollLibraryRef.current = false;
-    }
-  }, [isAuthenticated]);
-
   const refreshSavedPlaces = useCallback(() => {
     setSavedPlacesByCategory(isAuthenticated ? readSavedPlacesByCategory() : createEmptySavedPlacesByCategory());
   }, [isAuthenticated]);
-
-  const refreshReadyNotifications = useCallback(() => {
-    setReadyNotifications(readReadyNotifications());
-  }, []);
-  const persistDismissedNotificationIds = useCallback((nextIds: string[]) => {
-    setDismissedNotificationIds(nextIds);
-    window.localStorage.setItem(DISMISSED_READY_NOTIFICATION_IDS_KEY, JSON.stringify(nextIds));
-  }, []);
-
-  useEffect(() => {
-    const handlePopState = () => {
-      const url = new URL(window.location.href);
-      setPlannerRoute(getPlannerRouteFromPathname(url.pathname));
-      setIsFoodTrailDemoPreview(getFoodTrailDemoPreviewState(url, IS_DEV));
-      setIsWeekendPlannerDemoPreview(getWeekendPlannerDemoPreviewState(url, IS_DEV));
-    };
-
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -652,42 +481,6 @@ export function HomeScreen() {
       cancelled = true;
     };
   }, [isAuthenticated, sessionUser?.userId]);
-
-  useEffect(() => {
-    const timeoutId = window.setTimeout(() => void refreshStrollLibrary(), 0);
-    return () => window.clearTimeout(timeoutId);
-  }, [refreshStrollLibrary, sessionUser?.userId]);
-
-  useEffect(() => {
-    if (!isAuthenticated || !pendingStrollPollKey) return;
-
-    let cancelled = false;
-    const pollStrollStatuses = async () => {
-      const pendingIds = pendingStrollPollKey.split("|").filter(Boolean);
-      const updates = await Promise.all(
-        pendingIds.map(async (strollId) => {
-          try {
-            return await fetchStrollStatus(API_BASE_URL, strollId);
-          } catch {
-            return null;
-          }
-        }),
-      );
-
-      if (cancelled) return;
-      setStrolls((current) => updates.reduce(
-        (nextStrolls, updated) => (updated ? mergePolledStroll(nextStrolls, updated) : nextStrolls),
-        current,
-      ));
-    };
-
-    void pollStrollStatuses();
-    const intervalId = window.setInterval(() => void pollStrollStatuses(), 2500);
-    return () => {
-      cancelled = true;
-      window.clearInterval(intervalId);
-    };
-  }, [isAuthenticated, pendingStrollPollKey]);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -727,12 +520,6 @@ export function HomeScreen() {
     setActiveTab("Add");
     setIsReadySheetOpen(false);
   }, [activeTab]);
-  const dismissNotification = useCallback((id: string) => {
-    persistDismissedNotificationIds(
-      dismissedNotificationIds.includes(id) ? dismissedNotificationIds : [...dismissedNotificationIds, id],
-    );
-  }, [dismissedNotificationIds, persistDismissedNotificationIds]);
-
   const requestNotificationPermission = useCallback(() => {
     if (!("Notification" in window)) return;
     if (Notification.permission !== "default") return;
@@ -863,34 +650,8 @@ export function HomeScreen() {
   }, [refreshSavedPlaces]);
 
   useEffect(() => {
-    visibleHeroCardKeyRef.current = heroCard ? deriveHeroCardKey(heroCard) : null;
-  }, [heroCard]);
-
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    let cancelled = false;
-    fetchHeroBookmarkKeys(API_BASE_URL)
-      .then((keys) => {
-        if (!cancelled) {
-          setHeroBookmarkKeys(keys);
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          showToast({ message: "Could not load hero bookmarks.", variant: "info", durationMs: 2200 });
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [isAuthenticated, sessionUser?.userId, showToast]);
-
-  useEffect(() => {
     if (!isAuthenticated) {
       setSavedPlacesByCategory(createEmptySavedPlacesByCategory());
-      setHeroCard(DEFAULT_DISCOVER_HERO_CARD);
       return;
     }
 
@@ -916,77 +677,6 @@ export function HomeScreen() {
   }, [isAuthenticated]);
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      setHeroCard(DEFAULT_DISCOVER_HERO_CARD);
-      return;
-    }
-
-    let cancelled = false;
-
-    const syncHeroCard = async () => {
-      try {
-        const response = await fetch(`${API_BASE_URL}/api/hero-card`, { credentials: "include" });
-        if (!response.ok || cancelled) return;
-        const payload = (await response.json()) as HeroCardData | null;
-        if (!payload || !payload.title || cancelled) return;
-        const userId = sessionUser?.userId ?? null;
-        const freshnessState = readHeroCardFreshnessState(userId);
-        const orderedCandidates = normalizeHeroCandidatesForHome(
-          [payload, ...(Array.isArray(payload.alternatives) ? payload.alternatives : [])],
-          visibleSavedPlaces,
-          currentLocationLabel,
-        );
-        const selectedCandidate = orderedCandidates.find((candidate) => {
-          const nextCardKey = deriveHeroCardKey(candidate);
-          const isInCooldown =
-            freshnessState.lastShownCardKey === nextCardKey &&
-            Date.now() - freshnessState.lastShownAtMs < HERO_CARD_COOLDOWN_MS;
-          return !isInCooldown || visibleHeroCardKeyRef.current === nextCardKey;
-        }) || null;
-
-        if (!selectedCandidate) {
-          setHeroCard(null);
-          return;
-        }
-
-        const nextCardKey = deriveHeroCardKey(selectedCandidate);
-        setHeroCard(selectedCandidate);
-        writeHeroCardFreshnessState(userId, {
-          ...freshnessState,
-          lastShownCardKey: nextCardKey,
-          lastShownAtMs: Date.now(),
-        });
-      } catch {
-        if (cancelled) return;
-      }
-    };
-
-    void syncHeroCard();
-    return () => {
-      cancelled = true;
-    };
-  }, [currentLocationLabel, effectiveSavedPlacesByCategory, isAuthenticated, sessionUser?.userId, visibleSavedPlaces]);
-
-  useEffect(() => {
-    refreshReadyNotifications();
-    const onReadyUpdate = () => refreshReadyNotifications();
-    window.addEventListener(ADD_READY_UPDATED_EVENT, onReadyUpdate);
-    window.addEventListener("storage", onReadyUpdate);
-    return () => {
-      window.removeEventListener(ADD_READY_UPDATED_EVENT, onReadyUpdate);
-      window.removeEventListener("storage", onReadyUpdate);
-    };
-  }, [refreshReadyNotifications]);
-
-  useEffect(() => {
-    const validIds = new Set(readyNotifications.map((item) => item.id));
-    const nextDismissedIds = dismissedNotificationIds.filter((id) => validIds.has(id));
-    if (nextDismissedIds.length !== dismissedNotificationIds.length) {
-      persistDismissedNotificationIds(nextDismissedIds);
-    }
-  }, [dismissedNotificationIds, persistDismissedNotificationIds, readyNotifications]);
-
-  useEffect(() => {
     window.addEventListener(ADD_PROCESSING_STARTED_EVENT, requestNotificationPermission);
     return () => window.removeEventListener(ADD_PROCESSING_STARTED_EVENT, requestNotificationPermission);
   }, [requestNotificationPermission]);
@@ -1006,7 +696,7 @@ export function HomeScreen() {
     };
   }, [pollPendingAddJobs]);
 
-  const handleBackGesture = () => {
+  const handleBackGesture = useCallback(() => {
     if (activeTab === "Discover" && activeCategory) {
       clearHeroNavigationContext();
       setTransitionDirection(-1);
@@ -1052,7 +742,17 @@ export function HomeScreen() {
       setMapEntryMode("global");
       setMapSourceCategory(null);
     }
-  };
+  }, [activeCategory, activeTab, clearHeroNavigationContext, mapEntryMode, mapSourceCategory, plannerRoute, setPlannerPath]);
+
+  const {
+    isRefreshing,
+    surfaceRef,
+    touchHandlers,
+  } = useHomeGestures({
+    isMapTab,
+    onBackGesture: handleBackGesture,
+    showToast,
+  });
 
   const isStrollPromptEligible = shouldShowStrollOnboardingPrompt({
     isAuthenticated,
@@ -1099,20 +799,6 @@ export function HomeScreen() {
     }
   };
 
-  const handleRetryStroll = useCallback(async (strollId: string) => {
-    if (retryingStrollId) return;
-    setRetryingStrollId(strollId);
-    try {
-      const queuedStroll = await retryStrollCuration(API_BASE_URL, strollId);
-      setStrolls((current) => mergePolledStroll(current, queuedStroll));
-      showToast({ message: "Stroll retry queued.", variant: "success", durationMs: 2200 });
-    } catch {
-      showToast({ message: "Could not retry this Stroll. Try again.", variant: "error", durationMs: 2600 });
-    } finally {
-      setRetryingStrollId(null);
-    }
-  }, [retryingStrollId, showToast]);
-
   const handleStartStroll = useCallback((stroll: PersistentStrollSummary) => {
     clearHeroNavigationContext();
     setTransitionDirection(1);
@@ -1122,45 +808,6 @@ export function HomeScreen() {
     setMapSourceCategory(null);
     setPlannerPath(getStrollDetailRoute(stroll.id));
   }, [clearHeroNavigationContext, setPlannerPath]);
-
-  const handleHeroBookmarkToggle = useCallback(async (card: HeroCardData) => {
-    if (!isAuthenticated) {
-      showToast({ message: "Sign in to save hero ideas.", variant: "info", durationMs: 2200 });
-      return;
-    }
-
-    const cardKey = deriveHeroCardKey(card);
-    if (shouldIgnoreHeroBookmarkClick(pendingHeroBookmarkCardKeyRef.current, cardKey)) return;
-
-    const previousKeys = heroBookmarkKeys;
-    const plan = getHeroBookmarkTogglePlan(previousKeys, cardKey);
-    pendingHeroBookmarkCardKeyRef.current = cardKey;
-    setPendingHeroBookmarkCardKey(cardKey);
-    setHeroBookmarkKeys(plan.nextKeys);
-
-    try {
-      if (plan.endpoint === "add") {
-        await saveHeroBookmark(API_BASE_URL, {
-          cardKey,
-          heroType: card.type,
-          ctaAction: card.ctaAction,
-          title: card.title,
-          subtitle: card.subtitle,
-          metadata: card.metadata || {},
-        });
-        showToast({ message: "Hero idea bookmarked.", variant: "success", durationMs: 1800 });
-      } else {
-        await removeHeroBookmark(API_BASE_URL, cardKey);
-        showToast({ message: "Hero bookmark removed.", variant: "info", durationMs: 1800 });
-      }
-    } catch {
-      setHeroBookmarkKeys(previousKeys);
-      showToast({ message: "Could not update bookmark. Try again.", variant: "error", durationMs: 2400 });
-    } finally {
-      pendingHeroBookmarkCardKeyRef.current = null;
-      setPendingHeroBookmarkCardKey(null);
-    }
-  }, [heroBookmarkKeys, isAuthenticated, showToast]);
 
   const heroFilteredPlacesByCategory = useMemo(() => {
     if (!heroNavigationContext.filteredPlaceIds?.length) return visibleSavedPlacesByCategory;
@@ -1242,7 +889,7 @@ export function HomeScreen() {
 
     if (plannerRoute === "stroll-create") {
       return (
-        <StrollCreateScreen
+        <LazyStrollCreateScreen
           currentLocationLabel={currentLocationLabel}
           isLocating={isLocating}
           requestCurrentLocation={requestCurrentLocation}
@@ -1263,7 +910,7 @@ export function HomeScreen() {
     if (plannerRoute.startsWith("stroll-detail:")) {
       const strollId = getStrollIdFromPlannerRoute(plannerRoute);
       return strollId ? (
-        <StrollDetailScreen
+        <LazyStrollDetailScreen
           strollId={strollId}
           onBack={() => {
             setTransitionDirection(-1);
@@ -1409,7 +1056,7 @@ export function HomeScreen() {
 
     if (activeTab === "Map") {
       return (
-        <MapScreen
+        <LazyMapScreen
           entryMode={mapEntryMode}
           sourceCategory={mapSourceCategory}
           globalActiveCategories={heroNavigationContext.mapCategories || globalMapActiveCategories}
@@ -1469,7 +1116,6 @@ export function HomeScreen() {
     activeTab,
     allSavedPlaces,
     clearHeroNavigationContext,
-    foodTrailPlannerContext.matchingPlaceIds,
     globalMapActiveCategories,
     heroFilteredPlacesByCategory,
     heroCard,
@@ -1483,7 +1129,7 @@ export function HomeScreen() {
     mapSourceCategory,
     openStrollCreate,
     pendingHeroBookmarkCardKey,
-    readyNotifications.length,
+    visibleReadyNotifications.length,
     recentSavedPlaces,
     requestCurrentLocation,
     refreshStrollLibrary,
@@ -1515,56 +1161,7 @@ export function HomeScreen() {
             const target = event.currentTarget;
             setIsScrolled(target.scrollTop > 10);
           }}
-          onTouchStart={(event) => {
-            const touch = event.touches[0];
-            const viewportWidth = window.innerWidth || 390;
-            const isLeftEdge = touch.clientX <= 28;
-            const isRightEdge = touch.clientX >= viewportWidth - 28;
-            if (isLeftEdge) {
-              touchStartRef.current = { x: touch.clientX, y: touch.clientY, edge: "left" };
-              return;
-            }
-            if (isRightEdge) {
-              touchStartRef.current = { x: touch.clientX, y: touch.clientY, edge: "right" };
-            } else {
-              touchStartRef.current = null;
-            }
-            const canPullRefresh =
-              !isMapTab &&
-              surfaceRef.current &&
-              surfaceRef.current.scrollTop <= 0 &&
-              touch.clientY <= 112;
-            pullStartYRef.current = canPullRefresh ? touch.clientY : null;
-            pullDistanceRef.current = 0;
-          }}
-          onTouchMove={(event) => {
-            if (pullStartYRef.current === null) return;
-            const deltaY = event.touches[0].clientY - pullStartYRef.current;
-            pullDistanceRef.current = Math.max(0, deltaY);
-          }}
-          onTouchEnd={(event) => {
-            if (touchStartRef.current) {
-              const touch = event.changedTouches[0];
-              const deltaX = touch.clientX - touchStartRef.current.x;
-              const deltaY = Math.abs(touch.clientY - touchStartRef.current.y);
-              const edge = touchStartRef.current.edge;
-              touchStartRef.current = null;
-              const isLeftEdgeBack = edge === "left" && deltaX > 56;
-              const isRightEdgeBack = edge === "right" && deltaX < -56;
-              if ((isLeftEdgeBack || isRightEdgeBack) && deltaY < 48) {
-                handleBackGesture();
-              }
-            }
-            if (pullStartYRef.current !== null && pullDistanceRef.current > 72 && !isRefreshing) {
-              setIsRefreshing(true);
-              window.setTimeout(() => {
-                setIsRefreshing(false);
-                showToast({ message: "Refreshed", variant: "success", durationMs: 1800 });
-              }, 650);
-            }
-            pullStartYRef.current = null;
-            pullDistanceRef.current = 0;
-          }}
+          {...touchHandlers}
         >
           {!isMapTab && isRefreshing ? (
             <div className={`wr-pull-refresh-indicator ${isRefreshing ? "is-active" : ""}`} aria-live="polite">
@@ -1586,7 +1183,9 @@ export function HomeScreen() {
             animate={{ x: 0, opacity: 1 }}
             transition={{ duration: prefersReducedMotion || activeTab === "Login" ? 0.01 : 0.2, ease: [0.22, 0.61, 0.36, 1] }}
           >
-            {page}
+            <Suspense fallback={<div className="wr-page-loading" aria-live="polite">Loading...</div>}>
+              {page}
+            </Suspense>
           </motion.section>
           {isReadySheetOpen ? (
             <ReadyNotificationsSheet
