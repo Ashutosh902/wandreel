@@ -4,6 +4,7 @@ import type { AddressInfo } from "node:net";
 import express from "express";
 import { __resetPostgresTestConfig, __setPostgresTestConfig, type PostgresDatabase } from "../auth/postgresAuth";
 import { registerStrollRoutes } from "./routes";
+import { clearRateLimitBuckets } from "./rateLimits";
 
 type QueryCall = {
   sql: string;
@@ -184,7 +185,11 @@ function createRouteDatabaseMock() {
   };
 }
 
-function createApp(userId = "user-1", liveConditionsService?: Parameters<typeof registerStrollRoutes>[1]["liveConditionsService"]) {
+function createApp(
+  userId = "user-1",
+  liveConditionsService?: Parameters<typeof registerStrollRoutes>[1]["liveConditionsService"],
+  routeOptions: Partial<Parameters<typeof registerStrollRoutes>[1]> = {},
+) {
   const app = express();
   app.use(express.json());
   registerStrollRoutes(app, {
@@ -193,6 +198,7 @@ function createApp(userId = "user-1", liveConditionsService?: Parameters<typeof 
       next();
     },
     liveConditionsService,
+    ...routeOptions,
   });
   return app;
 }
@@ -222,6 +228,7 @@ async function request(app: express.Express, path: string, init: RequestInit = {
 
 test.afterEach(() => {
   __resetPostgresTestConfig();
+  clearRateLimitBuckets();
 });
 
 test("GET /api/stroll/onboarding returns unseen default without a row", async () => {
@@ -305,6 +312,36 @@ test("POST /api/strolls rejects draft placeIds not owned by the user", async () 
   assert.equal(response.status, 400);
   assert.equal(response.body.code, "invalid_place_ids");
   assert.equal(mock.clientCalls.some((call) => /insert into strolls/i.test(call.sql)), false);
+});
+
+test("POST /api/strolls rate limits excessive draft creation attempts", async () => {
+  const mock = createRouteDatabaseMock();
+  __setPostgresTestConfig({ databaseOverride: mock.database, databaseUrlOverride: "postgres://unit-test" });
+  const app = createApp("user-1", undefined, {
+    rateLimits: {
+      create: { keyPrefix: "unit-create", windowMs: 60_000, max: 1 },
+    },
+  });
+
+  const payload = {
+    clientRequestId: "client-rate-limit",
+    source: "manual",
+    city: "Patna",
+    placeIds: ["place-1"],
+  };
+
+  const first = await request(app, "/api/strolls", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+  const second = await request(app, "/api/strolls", {
+    method: "POST",
+    body: JSON.stringify({ ...payload, clientRequestId: "client-rate-limit-2" }),
+  });
+
+  assert.equal(first.status, 201);
+  assert.equal(second.status, 429);
+  assert.equal(second.body.code, "rate_limited");
 });
 
 test("GET /api/strolls/:strollId returns 404 when the scoped user lookup finds no row", async () => {

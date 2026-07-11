@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import OpenAI from "openai";
+import { sharedProviderRuntime } from "../providers/runtime";
 
 export const STROLL_STOP_ENRICHMENT_PROMPT_VERSION = "stroll_stop_enrichment_v1";
 export const STROLL_STOP_ENRICHMENT_VALIDATION_VERSION = "stroll_stop_validation_v1";
@@ -82,6 +83,10 @@ function getModel() {
     process.env.INTELLIGENCE_MODEL ||
     "gpt-5-nano"
   );
+}
+
+function getEnrichmentTimeoutMs() {
+  return Number(process.env.STROLL_ENRICHMENT_TIMEOUT_MS || process.env.OPENAI_PROVIDER_TIMEOUT_MS || 30_000);
 }
 
 function getOpenAiClient(): OpenAI {
@@ -272,14 +277,24 @@ export async function callOpenAiStrollStopEnrichment(
 ): Promise<StrollStopEnrichmentProviderResult> {
   const client = getOpenAiClient();
   const model = getModel();
-  const response = await client.responses.create({
-    model,
-    input: [
-      { role: "system", content: [{ type: "input_text", text: buildSystemPrompt() }] },
-      { role: "user", content: [{ type: "input_text", text: buildUserPrompt(input) }] },
-    ],
-    text: { format: { type: "json_object" } },
-    max_output_tokens: 220,
+  const fingerprint = buildTrustedInputFingerprint(input);
+  const response = await sharedProviderRuntime.execute({
+    provider: "openai",
+    operation: "stroll_stop_enrichment",
+    timeoutMs: getEnrichmentTimeoutMs(),
+    retries: 0,
+    dedupeKey: `openai:stroll_stop_enrichment:${fingerprint}`,
+    maxConcurrency: 2,
+    circuitBreaker: { failureThreshold: 5, cooldownMs: 30_000 },
+    task: ({ signal }) => client.responses.create({
+      model,
+      input: [
+        { role: "system", content: [{ type: "input_text", text: buildSystemPrompt() }] },
+        { role: "user", content: [{ type: "input_text", text: buildUserPrompt(input) }] },
+      ],
+      text: { format: { type: "json_object" } },
+      max_output_tokens: 220,
+    }, { signal }),
   });
   const parsed = parseJsonObject(extractResponseText(response));
   return {

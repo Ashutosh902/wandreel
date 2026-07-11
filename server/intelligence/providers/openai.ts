@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type { ExtractionResult } from "../../extraction/types";
 import type { IntelligenceRequest } from "../types";
 import { buildSystemPrompt, buildTinyCaptionSystemPrompt, buildTinyCaptionUserPrompt, buildUserPrompt } from "../prompts";
+import { sharedProviderRuntime } from "../../providers/runtime";
 
 export type OpenAiExtractionResult = {
   raw: unknown;
@@ -29,6 +30,10 @@ function getClient(): OpenAI {
 
   const baseURL = String(process.env.OPENAI_BASE_URL || process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || "").trim() || undefined;
   return new OpenAI({ apiKey, baseURL });
+}
+
+function getOpenAiProviderTimeoutMs() {
+  return Number(process.env.OPENAI_PROVIDER_TIMEOUT_MS || 45_000);
 }
 
 function extractResponseText(payload: any): string {
@@ -119,18 +124,26 @@ async function runStructuredRequest(input: {
   console.info("[openai-model-routing]", buildRoutingLogContext(input));
 
   const startedAt = Date.now();
-  const response = await input.client.responses.create({
-    model: input.model,
-    input: [
-      { role: "system", content: [{ type: "input_text", text: input.systemPrompt }] },
-      { role: "user", content: [{ type: "input_text", text: input.userPrompt }] },
-    ],
-    text: {
-      format: {
-        type: "json_object",
+  const response = await sharedProviderRuntime.execute({
+    provider: "openai",
+    operation: `intelligence_${input.taskType}`,
+    timeoutMs: getOpenAiProviderTimeoutMs(),
+    retries: 0,
+    maxConcurrency: 4,
+    circuitBreaker: { failureThreshold: 5, cooldownMs: 30_000 },
+    task: ({ signal }) => input.client.responses.create({
+      model: input.model,
+      input: [
+        { role: "system", content: [{ type: "input_text", text: input.systemPrompt }] },
+        { role: "user", content: [{ type: "input_text", text: input.userPrompt }] },
+      ],
+      text: {
+        format: {
+          type: "json_object",
+        },
       },
-    },
-    ...(input.maxOutputTokens ? { max_output_tokens: input.maxOutputTokens } : {}),
+      ...(input.maxOutputTokens ? { max_output_tokens: input.maxOutputTokens } : {}),
+    }, { signal }),
   });
   const providerMs = Date.now() - startedAt;
   const usage = {

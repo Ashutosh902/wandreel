@@ -18,6 +18,7 @@ import {
   strollLiveIntelligenceService,
   type StrollLiveConditionsResponse,
 } from "./liveIntelligence";
+import { createInMemoryRateLimit, type RateLimitOptions } from "./rateLimits";
 import {
   acceptStrollStopOrder,
   archiveStroll,
@@ -53,6 +54,7 @@ type RegisterStrollRoutesOptions = {
   liveConditionsService?: {
     getLiveConditions: (stroll: NonNullable<Awaited<ReturnType<typeof getStrollDetail>>>) => Promise<StrollLiveConditionsResponse>;
   };
+  rateLimits?: Partial<Record<"create" | "retry" | "live" | "adaptation" | "reorder", RateLimitOptions | false>>;
 };
 
 function getUserId(req: express.Request) {
@@ -109,10 +111,32 @@ function parseCurrentLocation(req: express.Request) {
   return null;
 }
 
+const defaultRateLimits: Record<"create" | "retry" | "live" | "adaptation" | "reorder", RateLimitOptions> = {
+  create: { keyPrefix: "stroll-create", windowMs: 60_000, max: 20 },
+  retry: { keyPrefix: "stroll-retry", windowMs: 60_000, max: 20 },
+  live: { keyPrefix: "stroll-live", windowMs: 60_000, max: 120 },
+  adaptation: { keyPrefix: "stroll-adaptation", windowMs: 60_000, max: 120 },
+  reorder: { keyPrefix: "stroll-reorder", windowMs: 60_000, max: 30 },
+};
+
+function resolveRateLimit(
+  options: RegisterStrollRoutesOptions,
+  name: keyof typeof defaultRateLimits,
+): express.RequestHandler {
+  const configured = options.rateLimits?.[name];
+  if (configured === false) return (_req, _res, next) => next();
+  return createInMemoryRateLimit(configured ?? defaultRateLimits[name]);
+}
+
 export function registerStrollRoutes(app: express.Express, options: RegisterStrollRoutesOptions) {
   const { requireAuth } = options;
   const curationJobs = options.curationJobStore ?? strollCurationJobStore;
   const liveConditions = options.liveConditionsService ?? strollLiveIntelligenceService;
+  const createLimit = resolveRateLimit(options, "create");
+  const retryLimit = resolveRateLimit(options, "retry");
+  const liveLimit = resolveRateLimit(options, "live");
+  const adaptationLimit = resolveRateLimit(options, "adaptation");
+  const reorderLimit = resolveRateLimit(options, "reorder");
 
   app.get("/api/stroll/onboarding", requireAuth, async (req, res) => {
     try {
@@ -141,7 +165,7 @@ export function registerStrollRoutes(app: express.Express, options: RegisterStro
     }
   });
 
-  app.post("/api/strolls", requireAuth, async (req, res) => {
+  app.post("/api/strolls", requireAuth, createLimit, async (req, res) => {
     const parsed = createDraftStrollSchema.safeParse(req.body ?? {});
     if (!parsed.success) return sendValidationError(res, parsed.error.flatten());
 
@@ -210,7 +234,7 @@ export function registerStrollRoutes(app: express.Express, options: RegisterStro
     }
   });
 
-  app.post("/api/strolls/:strollId/retry", requireAuth, async (req, res) => {
+  app.post("/api/strolls/:strollId/retry", requireAuth, retryLimit, async (req, res) => {
     try {
       const userId = getUserId(req);
       if (!userId) return res.status(401).json({ ok: false, error: "Unauthorized" });
@@ -244,7 +268,7 @@ export function registerStrollRoutes(app: express.Express, options: RegisterStro
     }
   });
 
-  app.get("/api/strolls/:strollId/live-conditions", requireAuth, async (req, res) => {
+  app.get("/api/strolls/:strollId/live-conditions", requireAuth, liveLimit, async (req, res) => {
     try {
       const userId = getUserId(req);
       if (!userId) return res.status(401).json({ ok: false, error: "Unauthorized" });
@@ -258,7 +282,7 @@ export function registerStrollRoutes(app: express.Express, options: RegisterStro
     }
   });
 
-  app.get("/api/strolls/:strollId/adaptation-recommendation", requireAuth, async (req, res) => {
+  app.get("/api/strolls/:strollId/adaptation-recommendation", requireAuth, adaptationLimit, async (req, res) => {
     try {
       const userId = getUserId(req);
       if (!userId) return res.status(401).json({ ok: false, error: "Unauthorized" });
@@ -279,7 +303,7 @@ export function registerStrollRoutes(app: express.Express, options: RegisterStro
     }
   });
 
-  app.post("/api/strolls/:strollId/reorder", requireAuth, async (req, res) => {
+  app.post("/api/strolls/:strollId/reorder", requireAuth, reorderLimit, async (req, res) => {
     const parsed = acceptStrollOrderSchema.safeParse(req.body ?? {});
     if (!parsed.success) return sendValidationError(res, parsed.error.flatten());
 

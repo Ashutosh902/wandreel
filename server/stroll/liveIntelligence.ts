@@ -1,4 +1,5 @@
 import type { StrollDetail } from "./types";
+import { ProviderError, classifyProviderFailure, sharedProviderRuntime } from "../providers/runtime";
 
 export type LiveConditionType =
   | "weather"
@@ -74,6 +75,8 @@ type OpenMeteoPayload = {
 
 const LIVE_CACHE_TTL_MS = 10 * 60 * 1000;
 const WEATHER_EXPIRY_MS = 30 * 60 * 1000;
+const OPEN_METEO_TIMEOUT_MS = Number(process.env.OPEN_METEO_TIMEOUT_MS || 5_000);
+const OPEN_METEO_CACHE_TTL_MS = Number(process.env.OPEN_METEO_CACHE_TTL_MS || 60_000);
 
 function iso(date: Date) {
   return date.toISOString();
@@ -220,20 +223,31 @@ export function createOpenMeteoWeatherProvider(fetcher: typeof fetch = fetch): L
         timezone: "auto",
       });
       try {
-        const response = await fetcher(`https://api.open-meteo.com/v1/forecast?${params.toString()}`);
-        if (!response.ok) {
-          return {
-            provider: "open_meteo",
-            conditionType: "weather",
-            status: "failed",
-            fetchedTimestamp: iso(fetchedAt),
-            expiryTimestamp: null,
-            conditions: [],
-            errorCode: "provider_http_error",
-            errorMessage: `Open-Meteo request failed (${response.status}).`,
-          };
-        }
-        const payload = await response.json() as OpenMeteoPayload;
+        const url = `https://api.open-meteo.com/v1/forecast?${params.toString()}`;
+        const payload = await sharedProviderRuntime.execute<OpenMeteoPayload>({
+          provider: "open_meteo",
+          operation: "current_weather",
+          timeoutMs: OPEN_METEO_TIMEOUT_MS,
+          retries: 1,
+          retryDelayMs: 100,
+          cacheKey: `open_meteo:${params.toString()}`,
+          cacheTtlMs: OPEN_METEO_CACHE_TTL_MS,
+          dedupeKey: `open_meteo:${params.toString()}`,
+          maxConcurrency: 4,
+          circuitBreaker: { failureThreshold: 5, cooldownMs: 30_000 },
+          task: async ({ signal }) => {
+            const response = await fetcher(url, { signal });
+            if (!response.ok) {
+              throw new ProviderError(`Open-Meteo request failed (${response.status}).`, {
+                kind: response.status === 429 ? "rate_limited" : "http",
+                code: response.status === 429 ? "provider_rate_limited" : "provider_http_error",
+                status: response.status,
+                retryable: response.status >= 500 || response.status === 429,
+              });
+            }
+            return response.json() as Promise<OpenMeteoPayload>;
+          },
+        });
         const current = payload.current;
         if (!current) {
           return {
@@ -264,6 +278,7 @@ export function createOpenMeteoWeatherProvider(fetcher: typeof fetch = fetch): L
           }),
         };
       } catch (error) {
+        const failure = classifyProviderFailure(error);
         return {
           provider: "open_meteo",
           conditionType: "weather",
@@ -271,8 +286,8 @@ export function createOpenMeteoWeatherProvider(fetcher: typeof fetch = fetch): L
           fetchedTimestamp: iso(fetchedAt),
           expiryTimestamp: null,
           conditions: [],
-          errorCode: "provider_fetch_failed",
-          errorMessage: error instanceof Error ? error.message : "Weather provider unavailable.",
+          errorCode: failure.code,
+          errorMessage: failure.message,
         };
       }
     },

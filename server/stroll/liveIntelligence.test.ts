@@ -7,6 +7,7 @@ import {
   type LiveCondition,
   type LiveConditionProvider,
 } from "./liveIntelligence";
+import { sharedProviderRuntime } from "../providers/runtime";
 import type { StrollDetail } from "./types";
 
 function stroll(overrides: Partial<StrollDetail> = {}): StrollDetail {
@@ -94,6 +95,10 @@ function provider(status: "success" | "failed" | "unavailable", conditions: Live
     }),
   };
 }
+
+test.afterEach(() => {
+  sharedProviderRuntime.clear();
+});
 
 test("Open-Meteo provider returns structured weather conditions on verified alert data", async () => {
   const calls: string[] = [];
