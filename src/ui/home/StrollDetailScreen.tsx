@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { ArrowLeft, MapPin, Navigation, Play, X } from "lucide-react";
-import { GoogleMap, MarkerF, PolylineF, useJsApiLoader } from "@react-google-maps/api";
+import { motion } from "framer-motion";
+import { GoogleMap, MarkerF, OverlayViewF, PolylineF, useJsApiLoader, OVERLAY_MOUSE_TARGET } from "@react-google-maps/api";
 import { useReducedMotion } from "framer-motion";
 import { useUx } from "../layout/UxProvider";
 import {
@@ -32,6 +33,15 @@ import {
 } from "./strollLiveConditions";
 import { StrollLiveConditionsPanel } from "./StrollLiveConditionsPanel";
 import { useDialogFocus } from "./useDialogFocus";
+import {
+  buildJourneyFootprints,
+  createJourneyMotionController,
+  getJourneyMotionFallbackReason,
+  isJourneyMotionEnabled,
+  shouldStartJourneyMotion,
+  type JourneyPhase,
+  type JourneyPoint,
+} from "./journeyMotion";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const GOOGLE_MAP_LIBRARIES: ("places")[] = ["places"];
@@ -132,6 +142,13 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
   const [isAdaptationDismissed, setIsAdaptationDismissed] = useState(false);
   const [isAcceptingAdaptation, setIsAcceptingAdaptation] = useState(false);
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
+  const [journeyPhase, setJourneyPhase] = useState<JourneyPhase>("idle");
+  const [journeyRevealProgress, setJourneyRevealProgress] = useState(0);
+  const [journeyFootprints, setJourneyFootprints] = useState<Array<{ id: string; point: JourneyPoint; side: "left" | "right"; rotation: number; scale: number; opacity: number }>>([]);
+  const [wakeupStopId, setWakeupStopId] = useState<string | null>(null);
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
+  const motionControllerRef = useRef<ReturnType<typeof createJourneyMotionController> | null>(null);
+  const hasStartedJourneyRef = useRef(false);
   const googleMapRef = useRef<google.maps.Map | null>(null);
   const googleMapsApiKey = String(
     import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.VITE_GOOGLE_PLACES_API_KEY || "",
@@ -250,8 +267,72 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
   });
   const hasRouteData = hasStoredRouteData(orderedStops);
   const mapCenter = mapStops[0] ? { lat: mapStops[0].lat, lng: mapStops[0].lng } : { lat: 25.5941, lng: 85.1376 };
+  const motionEnabled = isJourneyMotionEnabled();
+  const motionFallbackReason = getJourneyMotionFallbackReason({
+    isEnabled: motionEnabled,
+    prefersReducedMotion: Boolean(prefersReducedMotion),
+    hasMapsKey: Boolean(googleMapsApiKey),
+    isMapLoaded,
+    hasMapLoadError: Boolean(mapLoadError),
+    routePointCount: mapStops.length,
+  });
 
   useEffect(() => {
+    const shouldStart = shouldStartJourneyMotion({
+      loadState,
+      hasUserInteracted,
+      hasStartedJourney: hasStartedJourneyRef.current,
+      prefersReducedMotion: Boolean(prefersReducedMotion),
+      isEnabled: motionEnabled,
+      fallbackReason,
+      routePointCount: mapStops.length,
+    });
+
+    if (!shouldStart) {
+      if (loadState === "ready") {
+        setJourneyPhase("completed");
+        setJourneyRevealProgress(1);
+        setJourneyFootprints([]);
+        setWakeupStopId(null);
+      }
+      return;
+    }
+
+    hasStartedJourneyRef.current = true;
+    const controller = createJourneyMotionController({
+      routeStopIds: mapStops.map((stop) => stop.id),
+      currentLocationExists: Boolean(currentCoords),
+      prefersReducedMotion: Boolean(prefersReducedMotion),
+      isEnabled: motionEnabled,
+      onSnapshot: ({ phase, routeRevealProgress, activeFootprintIndex, wakeStopId }) => {
+        setJourneyPhase(phase);
+        setJourneyRevealProgress(routeRevealProgress);
+        setWakeupStopId(wakeStopId);
+        if (phase === "interrupted" || phase === "completed") {
+          setJourneyFootprints([]);
+          return;
+        }
+        const routePoints = mapStops.map((stop) => ({ lat: stop.lat, lng: stop.lng }));
+        const footprintCandidates = buildJourneyFootprints(routePoints, currentCoords);
+        const capped = footprintCandidates.slice(0, Math.min(activeFootprintIndex + 1, footprintCandidates.length));
+        setJourneyFootprints(capped);
+      },
+    });
+
+    motionControllerRef.current?.destroy();
+    motionControllerRef.current = controller;
+    controller.begin();
+
+    return () => {
+      controller.destroy();
+      motionControllerRef.current = null;
+      setJourneyFootprints([]);
+      setWakeupStopId(null);
+    };
+  }, [currentCoords, fallbackReason, hasUserInteracted, loadState, mapStops, motionEnabled, prefersReducedMotion, stroll?.id]);
+
+  useEffect(() => {
+    if (prefersReducedMotion) return;
     if (!googleMapRef.current || !window.google?.maps || !mapStops.length) return;
     const bounds = new window.google.maps.LatLngBounds();
     for (const stop of mapStops) {
@@ -288,6 +369,15 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
     );
   }
 
+  const handleJourneyInteraction = () => {
+    setHasUserInteracted(true);
+    setJourneyPhase("interrupted");
+    setJourneyRevealProgress(1);
+    setJourneyFootprints([]);
+    setWakeupStopId(null);
+    motionControllerRef.current?.interrupt();
+  };
+
   return (
     <section className={`wr-stroll-detail-screen ${prefersReducedMotion ? "is-reduced-motion" : ""}`} aria-label={`${stroll.name} Stroll`}>
       <div className="wr-stroll-detail-topbar">
@@ -301,7 +391,7 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
         </div>
       </div>
 
-      <div className="wr-stroll-detail-map-wrap">
+      <div className="wr-stroll-detail-map-wrap" onClick={handleJourneyInteraction} onTouchStart={handleJourneyInteraction}>
         {!fallbackReason ? (
           <GoogleMap
             mapContainerClassName="wr-stroll-detail-google-map"
@@ -320,13 +410,35 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
               gestureHandling: getStrollMapGestureHandling(Boolean(prefersReducedMotion)),
               styles: STROLL_MAP_STYLES,
             }}
+            onDragStart={handleJourneyInteraction}
+            onZoomChanged={handleJourneyInteraction}
           >
+            {!prefersReducedMotion && motionEnabled && !motionFallbackReason && journeyPhase !== "completed" && journeyPhase !== "interrupted" && journeyPhase !== "handoff" ? (
+              <>
+                {journeyFootprints.map((footprint) => (
+                  <OverlayViewF
+                    key={footprint.id}
+                    position={footprint.point}
+                    mapPaneName={OVERLAY_MOUSE_TARGET}
+                    getPixelPositionOffset={(width, height) => ({ x: Math.round(-width / 2), y: Math.round(-(height + 10)) })}
+                  >
+                    <div
+                      className={`wr-stroll-footprint ${footprint.side}`}
+                      style={{
+                        opacity: footprint.opacity,
+                        transform: `translate(-50%, -50%) rotate(${footprint.rotation}deg) scale(${footprint.scale})`,
+                      } as CSSProperties}
+                    />
+                  </OverlayViewF>
+                ))}
+              </>
+            ) : null}
             {routePath.length > 1 ? (
               <PolylineF
                 path={routePath}
                 options={{
                   strokeColor: hasRouteData ? "#0f766e" : "#102a57",
-                  strokeOpacity: hasRouteData ? 0.88 : 0.62,
+                  strokeOpacity: Math.max(0.24, Math.min(0.92, 0.18 + journeyRevealProgress * 0.74)),
                   strokeWeight: hasRouteData ? 5 : 4,
                 }}
               />
@@ -337,7 +449,7 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
                 label={{ text: "You", color: "#ffffff", fontWeight: "900" }}
                 icon={{
                   path: window.google.maps.SymbolPath.CIRCLE,
-                  scale: 8,
+                  scale: journeyPhase === "current-location-pulse" ? 10 : 8,
                   fillColor: "#2b77f5",
                   fillOpacity: 1,
                   strokeColor: "#ffffff",
@@ -354,8 +466,8 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
                 onClick={() => setSelectedStopId(stop.id)}
                 icon={{
                   path: window.google.maps.SymbolPath.CIRCLE,
-                  scale: selectedStopId === stop.id ? 13 : 11,
-                  fillColor: selectedStopId === stop.id ? "#c2410c" : "#102a57",
+                  scale: selectedStopId === stop.id ? 13 : wakeupStopId === stop.id ? 13.5 : 11,
+                  fillColor: wakeupStopId === stop.id ? "#f59e0b" : selectedStopId === stop.id ? "#c2410c" : "#102a57",
                   fillOpacity: 1,
                   strokeColor: "#ffffff",
                   strokeWeight: 3,
@@ -377,6 +489,17 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
           </div>
         )}
       </div>
+
+      {!prefersReducedMotion && motionEnabled && !motionFallbackReason ? (
+        <motion.div
+          className="wr-stroll-journey-hint"
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: journeyPhase === "completed" || journeyPhase === "interrupted" ? 0.96 : 0.76, y: 0 }}
+          transition={{ duration: 0.28, ease: "easeOut" }}
+        >
+          <span>{journeyPhase === "completed" || journeyPhase === "interrupted" ? "You’re in control" : "The route reveals itself"}</span>
+        </motion.div>
+      ) : null}
 
       <StrollLiveConditionsPanel
         loadState={liveLoadState}

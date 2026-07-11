@@ -7,6 +7,7 @@ export type StrollMapStop = PersistentStrollStop & {
 };
 
 export type StrollDetailLoadState = "loading" | "ready" | "error";
+export type StrollJourneyPhase = "idle" | "opening" | "walking" | "wakingMarkers" | "completing" | "handoff" | "controlled";
 
 export function getOrderedStrollStops(stroll: Pick<PersistentStrollDetail, "stops"> | null) {
   return [...(stroll?.stops ?? [])].sort((left, right) => left.sequence - right.sequence);
@@ -69,6 +70,30 @@ export function getStrollMapFallbackReason(input: {
 
 export function getStrollMapGestureHandling(prefersReducedMotion: boolean) {
   return prefersReducedMotion ? "cooperative" : "greedy";
+}
+
+export function getNextStrollJourneyPhase(
+  currentPhase: StrollJourneyPhase,
+  options: { prefersReducedMotion?: boolean; isInterrupted?: boolean } = {},
+) {
+  if (options.prefersReducedMotion || options.isInterrupted) return "controlled";
+
+  switch (currentPhase) {
+    case "idle":
+      return "opening";
+    case "opening":
+      return "walking";
+    case "walking":
+      return "wakingMarkers";
+    case "wakingMarkers":
+      return "completing";
+    case "completing":
+      return "handoff";
+    case "handoff":
+      return "controlled";
+    default:
+      return "controlled";
+  }
 }
 
 export function formatStopDuration(minutes: number | null) {

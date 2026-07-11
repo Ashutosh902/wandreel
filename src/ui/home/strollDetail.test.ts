@@ -6,6 +6,7 @@ import {
   formatRouteDistance,
   formatStopDuration,
   getNumberedMapStops,
+  getNextStrollJourneyPhase,
   getOrderedStrollStops,
   getStrollMapFallbackReason,
   getStrollMapGestureHandling,
@@ -13,7 +14,9 @@ import {
   hasStoredRouteData,
   hasValidReelUrl,
   selectStopById,
+  type StrollJourneyPhase,
 } from "./strollDetail";
+import { shouldStartJourneyMotion } from "./journeyMotion";
 import type { PersistentStrollStop } from "./strollLibrary";
 
 function stop(overrides: Partial<PersistentStrollStop>): PersistentStrollStop {
@@ -107,6 +110,80 @@ test("map-loading failure fallback reasons are explicit", () => {
 test("reduced-motion map behavior uses less aggressive gesture handling", () => {
   assert.equal(getStrollMapGestureHandling(true), "cooperative");
   assert.equal(getStrollMapGestureHandling(false), "greedy");
+});
+
+test("journey phase progression reaches handoff and respects interruption", () => {
+  let phase: StrollJourneyPhase = "idle";
+
+  phase = getNextStrollJourneyPhase(phase);
+  assert.equal(phase, "opening");
+  phase = getNextStrollJourneyPhase(phase);
+  assert.equal(phase, "walking");
+  phase = getNextStrollJourneyPhase(phase);
+  assert.equal(phase, "wakingMarkers");
+  phase = getNextStrollJourneyPhase(phase);
+  assert.equal(phase, "completing");
+  phase = getNextStrollJourneyPhase(phase);
+  assert.equal(phase, "handoff");
+  phase = getNextStrollJourneyPhase(phase);
+  assert.equal(phase, "controlled");
+
+  assert.equal(getNextStrollJourneyPhase("walking", { prefersReducedMotion: true }), "controlled");
+  assert.equal(getNextStrollJourneyPhase("opening", { isInterrupted: true }), "controlled");
+});
+
+test("journey motion starts once per session and stays suppressed after interruption", () => {
+  assert.equal(
+    shouldStartJourneyMotion({
+      loadState: "ready",
+      hasUserInteracted: false,
+      hasStartedJourney: false,
+      prefersReducedMotion: false,
+      isEnabled: true,
+      fallbackReason: null,
+      routePointCount: 3,
+    }),
+    true,
+  );
+
+  assert.equal(
+    shouldStartJourneyMotion({
+      loadState: "ready",
+      hasUserInteracted: true,
+      hasStartedJourney: false,
+      prefersReducedMotion: false,
+      isEnabled: true,
+      fallbackReason: null,
+      routePointCount: 3,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldStartJourneyMotion({
+      loadState: "ready",
+      hasUserInteracted: false,
+      hasStartedJourney: true,
+      prefersReducedMotion: false,
+      isEnabled: true,
+      fallbackReason: null,
+      routePointCount: 3,
+    }),
+    false,
+  );
+
+  assert.equal(
+    shouldStartJourneyMotion({
+      loadState: "loading",
+      hasUserInteracted: false,
+      hasStartedJourney: false,
+      prefersReducedMotion: false,
+      isEnabled: true,
+      fallbackReason: null,
+      routePointCount: 3,
+    }),
+    false,
+  );
 });
 
 test("stop meta formatters hide missing data", () => {
