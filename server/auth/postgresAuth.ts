@@ -92,7 +92,19 @@ const SESSION_COOKIE_NAME = "wr_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30;
 const EMAIL_OTP_TTL_MS = 1000 * 60 * 10;
 
-type DatabaseLike = Pick<Pool, "query" | "connect">;
+type DatabaseLike = {
+  query: <T = any>(
+    sql: string,
+    params?: unknown[],
+  ) => Promise<{ rows: T[]; rowCount: number | null }>;
+  connect: Pool["connect"];
+};
+export type PostgresDatabase = DatabaseLike;
+
+type DatabaseOverrideLike = {
+  query: (sql: string, params?: unknown[]) => Promise<{ rows: any[]; rowCount?: number | null }>;
+  connect: () => Promise<unknown>;
+};
 
 const pool = new Pool({
   connectionString: DATABASE_URL,
@@ -105,6 +117,10 @@ let schemaReady = false;
 
 export function isPostgresConfigured() {
   return Boolean(databaseUrl.trim());
+}
+
+export function getPostgresDatabase() {
+  return database;
 }
 
 export type ReelAnalyticsAttemptInput = {
@@ -737,12 +753,12 @@ export type EntityFieldEditInsertInput = {
 };
 
 export function __setPostgresTestConfig(input: {
-  databaseOverride?: DatabaseLike;
+  databaseOverride?: DatabaseLike | DatabaseOverrideLike;
   databaseUrlOverride?: string;
   schemaReadyOverride?: boolean;
 }) {
   if (Object.prototype.hasOwnProperty.call(input, "databaseOverride")) {
-    database = input.databaseOverride ?? pool;
+    database = (input.databaseOverride as DatabaseLike | undefined) ?? pool;
   }
   if (Object.prototype.hasOwnProperty.call(input, "databaseUrlOverride")) {
     databaseUrl = input.databaseUrlOverride ?? DATABASE_URL;

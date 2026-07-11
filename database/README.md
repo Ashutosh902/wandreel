@@ -2,6 +2,17 @@
 
 This folder holds interim table-like storage using Excel sheets until a full DB is introduced.
 
+## Postgres migrations
+
+Postgres schema changes now use ordered SQL files in `database/migrations`.
+
+- Runtime startup runs `server/auth/postgresAuth.ts` legacy auth bootstrap first, then applies unapplied migrations through `server/db/migrations.ts`.
+- Applied migrations are recorded in `schema_migrations`.
+- New Stroll persistence tables must be added through migrations, not by expanding `ensureAuthSchema()`.
+- Current known drift remains intentionally contained for this phase: `ensureAuthSchema()` creates the operational auth/saved-place tables, while `database/schema_v1.sql` still reflects an older planning contract. Do not use `schema_v1.sql` as the live production source of truth until that drift is reconciled in a dedicated migration/refactor PR.
+
+Milestone 1 rollback default is code-only: leave new Stroll tables dormant if already applied. Destructive rollback must be explicitly approved and should drop new Stroll/hero tables in reverse dependency order before deleting the matching `schema_migrations` row.
+
 ## File
 
 - `wandreel_data_model.xlsx`

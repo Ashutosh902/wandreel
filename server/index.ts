@@ -54,6 +54,8 @@ import { buildAttemptHypothesisSummary } from "./intelligence/hypothesisSummary"
 import type { IntelligencePipelineResult, StructuredEntity } from "./intelligence/types";
 import type { ExtractionResult } from "./extraction/types";
 import { canonicalizeUrl } from "./extraction/url";
+import { runDatabaseMigrations } from "./db/migrations";
+import { registerStrollRoutes } from "./stroll/routes";
 
 const app = express();
 const googleIdTokenClient = new OAuth2Client();
@@ -1163,10 +1165,14 @@ async function requireAdmin(req: express.Request, res: express.Response, next: e
 }
 
 if (isPostgresConfigured() && process.env.NODE_ENV !== "test") {
-  ensureAuthSchema().catch((error) => {
-    console.error("auth schema bootstrap failed", error);
-  });
+  ensureAuthSchema()
+    .then(() => runDatabaseMigrations())
+    .catch((error) => {
+      console.error("postgres schema bootstrap failed", error);
+    });
 }
+
+registerStrollRoutes(app, { requireAuth });
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "wandreel-api" });
