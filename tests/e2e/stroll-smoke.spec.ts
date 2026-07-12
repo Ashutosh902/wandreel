@@ -65,6 +65,7 @@ type ApiState = {
   liveMode: "alerts" | "unavailable" | "none";
   adaptationMode: "recommended" | "none";
   listShouldFail: boolean;
+  draftCreateCount: number;
 };
 
 const user = {
@@ -211,6 +212,7 @@ function createApiState(overrides: Partial<ApiState> = {}): ApiState {
     liveMode: "none",
     adaptationMode: "recommended",
     listShouldFail: false,
+    draftCreateCount: 0,
     ...overrides,
   };
 }
@@ -308,6 +310,7 @@ async function handleApiRoute(route: Route, state: ApiState) {
     return ok({ ok: true, strolls: state.strolls.filter((stroll) => stroll.status !== "archived") });
   }
   if (pathname === "/api/strolls" && method === "POST") {
+    state.draftCreateCount += 1;
     const body = request.postDataJSON() as { city?: string };
     const city = String(body.city || "Patna").trim() || "Patna";
     const created = strollSummary(`draft-${state.strolls.length + 1}`, "draft", {
@@ -556,6 +559,41 @@ test("authenticated Discover loads and hero primary CTA still opens food trail",
 
   await expect(page).toHaveURL(/\/trail\/food$/);
   await expect(page.getByRole("heading", { name: "Build from your saved places" })).toBeVisible();
+});
+
+test("draft stroll cards open the existing draft editor from the body or editing action", async ({ page }) => {
+  const draft = strollSummary("draft-stroll", "draft", {
+    name: "Patna Stroll",
+    city: "Patna",
+    source: "manual",
+    stopCount: 0,
+  });
+  const state = createApiState({
+    onboardingDecision: "declined",
+    strolls: [draft],
+    stopsByStrollId: new Map([[draft.id, []]]),
+  });
+  await installAppHarness(page, state);
+
+  await page.goto("/");
+
+  const draftCard = page.getByRole("button", { name: "Open draft Patna Stroll for editing" });
+  await expect(draftCard).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue editing Patna Stroll" })).toBeVisible();
+
+  await draftCard.click();
+  await expect(page).toHaveURL(/\/stroll\/draft-stroll\/edit$/);
+  await expect(page.getByRole("button", { name: "Generate My Stroll" })).toBeVisible();
+  await expect(state.draftCreateCount).toBe(0);
+
+  await page.getByRole("button", { name: "Back" }).click();
+  await expect(page).toHaveURL(/\/$/);
+
+  await draftCard.focus();
+  await page.keyboard.press("Space");
+  await expect(page).toHaveURL(/\/stroll\/draft-stroll\/edit$/);
+  await expect(page.getByRole("button", { name: "Generate My Stroll" })).toBeVisible();
+  await expect(state.draftCreateCount).toBe(0);
 });
 
 test("onboarding accept persists and opens Stroll creation", async ({ page }) => {

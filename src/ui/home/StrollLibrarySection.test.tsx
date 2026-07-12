@@ -43,8 +43,11 @@ function renderSection(overrides: Partial<React.ComponentProps<typeof StrollLibr
       loadState="ready"
       error={null}
       retryingStrollId={null}
+      archivingStrollId={null}
       onCreateStroll={() => undefined}
       onRetryStroll={() => undefined}
+      onArchiveStroll={() => undefined}
+      onOpenStroll={() => undefined}
       onStartStroll={() => undefined}
       {...overrides}
     />,
@@ -83,10 +86,15 @@ test("StrollLibrarySection renders every active Stroll status", () => {
   assert.match(html, />Ready</);
   assert.match(html, />Failed</);
   assert.match(html, /Manual/);
-  assert.match(html, /Start\/View/);
-  assert.match(html, /aria-label="Start or view ready Stroll"/);
+  assert.match(html, /role="button"/);
+  assert.match(html, /aria-label="Open draft draft Stroll for editing"/);
+  assert.match(html, /Continue Editing/);
+  assert.match(html, /Delete Draft/);
+  assert.match(html, /View Progress/);
+  assert.match(html, /Start Stroll/);
   assert.match(html, />Retry</);
   assert.match(html, /aria-label="Retry curation for failed Stroll"/);
+  assert.match(html, /Edit Inputs/);
   assert.match(html, /Stop ownership failed/);
 });
 
