@@ -43,6 +43,8 @@ import { StrollLiveConditionsPanel } from "./StrollLiveConditionsPanel";
 import { useDialogFocus } from "./useDialogFocus";
 import {
   buildJourneyFootprints,
+  buildJourneyRevealedPath,
+  buildJourneyRoutePoints,
   createJourneyMotionController,
   getJourneyMotionFallbackReason,
   isJourneyMotionEnabled,
@@ -161,9 +163,16 @@ export function StrollDetailScreen({
   const [journeyFootprints, setJourneyFootprints] = useState<Array<{ id: string; point: JourneyPoint; side: "left" | "right"; rotation: number; scale: number; opacity: number }>>([]);
   const [wakeupStopId, setWakeupStopId] = useState<string | null>(null);
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
+  const [isJourneyMapVisible, setIsJourneyMapVisible] = useState(false);
+  const [isMapInstanceReady, setIsMapInstanceReady] = useState(false);
+  const [areMapOverlaysReady, setAreMapOverlaysReady] = useState(false);
+  const [isCameraFitComplete, setIsCameraFitComplete] = useState(false);
+  const journeyMapRef = useRef<HTMLDivElement | null>(null);
   const motionControllerRef = useRef<ReturnType<typeof createJourneyMotionController> | null>(null);
   const hasStartedJourneyRef = useRef(false);
   const googleMapRef = useRef<google.maps.Map | null>(null);
+  const isProgrammaticCameraMoveRef = useRef(false);
+  const overlayReadinessFrameRef = useRef<number | null>(null);
   const googleMapsApiKey = String(
     import.meta.env.VITE_GOOGLE_MAPS_API_KEY || import.meta.env.VITE_GOOGLE_PLACES_API_KEY || "",
   ).trim();
@@ -271,6 +280,8 @@ export function StrollDetailScreen({
   const orderedStops = useMemo(() => getOrderedStrollStops(stroll), [stroll]);
   const mapStops = useMemo(() => getNumberedMapStops(orderedStops), [orderedStops]);
   const routePath = useMemo(() => getStrollRoutePath(mapStops), [mapStops]);
+  const journeyRoutePath = useMemo(() => buildJourneyRoutePoints(routePath, currentCoords), [currentCoords, routePath]);
+  const revealedRoutePath = useMemo(() => buildJourneyRevealedPath(journeyRoutePath, journeyRevealProgress), [journeyRevealProgress, journeyRoutePath]);
   const openStop = useMemo(() => selectStopById(orderedStops, openStopId), [orderedStops, openStopId]);
   const selectedStopNumber = openStop
     ? orderedStops.findIndex((stop) => stop.id === openStop.id) + 1
@@ -305,13 +316,65 @@ export function StrollDetailScreen({
     hasMapLoadError: Boolean(mapLoadError),
     routePointCount: mapStops.length,
   });
+  const hasRouteGeometry = journeyRoutePath.length >= 2;
+  const isJourneyRenderReady =
+    isJourneyMapVisible &&
+    isMapInstanceReady &&
+    areMapOverlaysReady &&
+    isCameraFitComplete &&
+    hasRouteGeometry;
+
+  useEffect(() => {
+    setIsJourneyMapVisible(false);
+    if (prefersReducedMotion || !allowInitialJourneyMotionStart || fallbackReason) {
+      return;
+    }
+
+    const mapElement = journeyMapRef.current;
+    if (!mapElement) return;
+    if (!("IntersectionObserver" in window)) {
+      setIsJourneyMapVisible(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting && entry.intersectionRatio >= 0.28)) {
+          setIsJourneyMapVisible(true);
+          observer.disconnect();
+        }
+      },
+      { threshold: [0.28] },
+    );
+    observer.observe(mapElement);
+    return () => observer.disconnect();
+  }, [allowInitialJourneyMotionStart, fallbackReason, loadState, prefersReducedMotion, stroll?.id]);
+
+  useEffect(() => {
+    setAreMapOverlaysReady(false);
+    if (overlayReadinessFrameRef.current !== null) {
+      window.cancelAnimationFrame(overlayReadinessFrameRef.current);
+      overlayReadinessFrameRef.current = null;
+    }
+    if (fallbackReason || !isMapInstanceReady || !hasRouteGeometry || !mapStops.length) return;
+    overlayReadinessFrameRef.current = window.requestAnimationFrame(() => {
+      overlayReadinessFrameRef.current = null;
+      setAreMapOverlaysReady(true);
+    });
+    return () => {
+      if (overlayReadinessFrameRef.current !== null) {
+        window.cancelAnimationFrame(overlayReadinessFrameRef.current);
+        overlayReadinessFrameRef.current = null;
+      }
+    };
+  }, [fallbackReason, hasRouteGeometry, isMapInstanceReady, mapStops.length, stroll?.id]);
 
   useEffect(() => {
     const shouldStart = shouldStartJourneyMotion({
       loadState,
       hasUserInteracted,
       hasStartedJourney: hasStartedJourneyRef.current,
-      allowInitialMotionStart: allowInitialJourneyMotionStart,
+      allowInitialMotionStart: allowInitialJourneyMotionStart && isJourneyRenderReady,
       prefersReducedMotion: Boolean(prefersReducedMotion),
       isEnabled: motionEnabled,
       fallbackReason,
@@ -319,6 +382,18 @@ export function StrollDetailScreen({
     });
 
     if (!shouldStart) {
+      const isWaitingForJourneyReadiness =
+        loadState === "ready" &&
+        allowInitialJourneyMotionStart &&
+        !isJourneyRenderReady &&
+        !hasUserInteracted &&
+        !hasStartedJourneyRef.current &&
+        !prefersReducedMotion &&
+        motionEnabled &&
+        (!fallbackReason || fallbackReason === "loading") &&
+        mapStops.length >= 2;
+      if (isWaitingForJourneyReadiness) return;
+
       if (
         loadState === "ready" &&
         allowInitialJourneyMotionStart &&
@@ -327,7 +402,7 @@ export function StrollDetailScreen({
           hasStartedJourneyRef.current ||
           Boolean(prefersReducedMotion) ||
           !motionEnabled ||
-          Boolean(fallbackReason) ||
+          Boolean(fallbackReason && fallbackReason !== "loading") ||
           mapStops.length < 2
         )
       ) {
@@ -354,9 +429,7 @@ export function StrollDetailScreen({
           return;
         }
         const routePoints = mapStops.map((stop) => ({ lat: stop.lat, lng: stop.lng }));
-        const footprintCandidates = buildJourneyFootprints(routePoints, currentCoords);
-        const capped = footprintCandidates.slice(0, Math.min(activeFootprintIndex + 1, footprintCandidates.length));
-        setJourneyFootprints(capped);
+        setJourneyFootprints(buildJourneyFootprints(routePoints, currentCoords, routeRevealProgress, Math.max(3, activeFootprintIndex + 2)));
       },
     });
 
@@ -370,11 +443,13 @@ export function StrollDetailScreen({
       setJourneyFootprints([]);
       setWakeupStopId(null);
     };
-  }, [allowInitialJourneyMotionStart, currentCoords, fallbackReason, hasUserInteracted, loadState, mapStops, motionEnabled, prefersReducedMotion, stroll?.id]);
+  }, [allowInitialJourneyMotionStart, currentCoords, fallbackReason, hasUserInteracted, isJourneyRenderReady, loadState, mapStops, motionEnabled, prefersReducedMotion, stroll?.id]);
 
   useEffect(() => {
     if (prefersReducedMotion) return;
     if (!googleMapRef.current || !window.google?.maps || !mapStops.length) return;
+    setIsCameraFitComplete(false);
+    isProgrammaticCameraMoveRef.current = true;
     const bounds = new window.google.maps.LatLngBounds();
     for (const stop of mapStops) {
       bounds.extend({ lat: stop.lat, lng: stop.lng });
@@ -418,6 +493,18 @@ export function StrollDetailScreen({
     setWakeupStopId(null);
     motionControllerRef.current?.interrupt();
   };
+  const handleMapCameraIdle = () => {
+    isProgrammaticCameraMoveRef.current = false;
+    setIsCameraFitComplete(true);
+  };
+  const handleMapZoomChanged = () => {
+    // Google fires zoom_changed during fitBounds and map initialization; user zoom is handled by wheel/touch input.
+    isProgrammaticCameraMoveRef.current = false;
+  };
+  const handleOpenStopDetails = (stopId: string) => {
+    handleJourneyInteraction();
+    openStopDetails(stopId);
+  };
 
   return (
     <section className={`wr-stroll-detail-screen ${prefersReducedMotion ? "is-reduced-motion" : ""}`} aria-label={`${stroll.name} Stroll`}>
@@ -438,7 +525,7 @@ export function StrollDetailScreen({
           <p>{firstStopDescription}</p>
           <strong>{firstStopReason}</strong>
           {firstStop ? (
-            <button type="button" className="wr-stroll-detail-begin-btn" onClick={() => openStopDetails(firstStop.id)}>
+            <button type="button" className="wr-stroll-detail-begin-btn" onClick={() => handleOpenStopDetails(firstStop.id)}>
               Begin Here
             </button>
           ) : null}
@@ -462,7 +549,15 @@ export function StrollDetailScreen({
         <div className="wr-stroll-detail-section-heading">
           <span>Map</span>
         </div>
-        <div className="wr-stroll-detail-map-wrap" onClick={handleJourneyInteraction} onTouchStart={handleJourneyInteraction}>
+        <div
+          ref={journeyMapRef}
+          className="wr-stroll-detail-map-wrap"
+          data-journey-phase={journeyPhase}
+          data-testid="stroll-journey-map"
+          onClick={handleJourneyInteraction}
+          onTouchStart={handleJourneyInteraction}
+          onWheel={handleJourneyInteraction}
+        >
         {!fallbackReason ? (
           <GoogleMap
             mapContainerClassName="wr-stroll-detail-google-map"
@@ -470,10 +565,18 @@ export function StrollDetailScreen({
             zoom={14}
             onLoad={(map) => {
               googleMapRef.current = map;
+              setIsMapInstanceReady(true);
+              setIsCameraFitComplete(false);
+              setAreMapOverlaysReady(false);
             }}
             onUnmount={() => {
               googleMapRef.current = null;
+              isProgrammaticCameraMoveRef.current = false;
+              setIsMapInstanceReady(false);
+              setIsCameraFitComplete(false);
+              setAreMapOverlaysReady(false);
             }}
+            onIdle={handleMapCameraIdle}
             options={{
               streetViewControl: false,
               mapTypeControl: false,
@@ -482,7 +585,7 @@ export function StrollDetailScreen({
               styles: STROLL_MAP_STYLES,
             }}
             onDragStart={handleJourneyInteraction}
-            onZoomChanged={handleJourneyInteraction}
+            onZoomChanged={handleMapZoomChanged}
           >
             {!prefersReducedMotion && motionEnabled && !motionFallbackReason && journeyPhase !== "completed" && journeyPhase !== "interrupted" && journeyPhase !== "handoff" ? (
               <>
@@ -495,6 +598,7 @@ export function StrollDetailScreen({
                   >
                     <div
                       className={`wr-stroll-footprint ${footprint.side}`}
+                      data-testid="stroll-journey-footprint"
                       style={{
                         opacity: footprint.opacity,
                         transform: `translate(-50%, -50%) rotate(${footprint.rotation}deg) scale(${footprint.scale})`,
@@ -504,9 +608,9 @@ export function StrollDetailScreen({
                 ))}
               </>
             ) : null}
-            {routePath.length > 1 ? (
+            {revealedRoutePath.length > 1 ? (
               <PolylineF
-                path={routePath}
+                path={revealedRoutePath}
                 options={{
                   strokeColor: hasRouteData ? "#0f766e" : "#102a57",
                   strokeOpacity: Math.max(0.24, Math.min(0.92, 0.18 + journeyRevealProgress * 0.74)),
@@ -534,7 +638,7 @@ export function StrollDetailScreen({
                 key={stop.id}
                 position={{ lat: stop.lat, lng: stop.lng }}
                 label={{ text: String(stop.markerNumber), color: "#ffffff", fontWeight: "900" }}
-                onClick={() => openStopDetails(stop.id)}
+                onClick={() => handleOpenStopDetails(stop.id)}
                 icon={{
                   path: window.google.maps.SymbolPath.CIRCLE,
                   scale: selectedStopId === stop.id ? 13 : wakeupStopId === stop.id ? 13.5 : 11,
@@ -598,7 +702,7 @@ export function StrollDetailScreen({
                 className={`wr-stroll-detail-stop-row ${isSelected ? "is-selected" : ""}`}
                 aria-pressed={isSelected}
                 aria-label={`Open details for stop ${stopNumber}: ${getStopTitle(stop)}`}
-                onClick={() => openStopDetails(stop.id)}
+                onClick={() => handleOpenStopDetails(stop.id)}
               >
                 <span>{stopNumber}</span>
                 <div>
