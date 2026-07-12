@@ -7,10 +7,12 @@ export const WEEKEND_PLAN_READY_THRESHOLD = 3;
 export type HeroCardEligibilityCard = {
   type: "city_category_insight";
   cardKey?: string;
+  readyStrollId?: string;
   title: string;
   subtitle: string;
   ctaLabel: string;
   ctaAction: string;
+  heroState?: "suggestion" | "ready_stroll";
   priorityScore?: number;
   reasonCodes?: string[];
   metadata: Record<string, unknown>;
@@ -54,6 +56,9 @@ export function applyFoodTrailHeroEligibility(
   places: SavedPlaceRecord[],
   currentLocationLabel: string,
 ): HeroCardEligibilityCard | null {
+  if (card.heroState === "ready_stroll" || (typeof card.readyStrollId === "string" && card.readyStrollId.trim())) {
+    return card;
+  }
   if (card.ctaAction !== "build_food_trail") return card;
 
   const cityTastePlaces = getMatchingCityTastePlaces(places, card, currentLocationLabel);
@@ -76,10 +81,11 @@ export function applyFoodTrailHeroEligibility(
     const remaining = FOOD_TRAIL_READY_THRESHOLD - cityTastePlaces.length;
     return {
       ...card,
-      title: "Food trail almost ready",
+      title: "Food trail taking shape",
       subtitle: `Save ${remaining} more food places in ${cityLabel}.`,
       ctaLabel: "Add places",
       ctaAction: "grow_saved_places",
+      heroState: "suggestion",
       metadata: {
         ...card.metadata,
         targetCategory: "Taste",
@@ -109,6 +115,9 @@ export function applyWeekendPlanHeroEligibility(
   places: SavedPlaceRecord[],
   currentLocationLabel: string,
 ): HeroCardEligibilityCard | null {
+  if (card.heroState === "ready_stroll" || (typeof card.readyStrollId === "string" && card.readyStrollId.trim())) {
+    return card;
+  }
   if (!isWeekendPlanCard(card)) return card;
 
   const { cityName, places: cityPlaces } = filterPlacesByResolvedCity(
@@ -136,10 +145,11 @@ export function applyWeekendPlanHeroEligibility(
   if (relevantCityPlaces.length >= 1 && cityName) {
     return {
       ...card,
-      title: `${cityName} plan almost ready`,
+      title: `${cityName} plan taking shape`,
       subtitle: "Save a few more food, explore, or activity spots.",
       ctaLabel: "Add places",
       ctaAction: "grow_saved_places",
+      heroState: "suggestion",
       metadata: {
         ...card.metadata,
         targetCity: cityName,

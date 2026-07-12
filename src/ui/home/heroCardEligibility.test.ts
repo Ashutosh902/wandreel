@@ -34,10 +34,11 @@ function createPlace(overrides: Partial<SavedPlaceRecord>): SavedPlaceRecord {
 function createFoodTrailCard(overrides?: Partial<HeroCardEligibilityCard>): HeroCardEligibilityCard {
   return {
     type: "city_category_insight",
-    title: "Your food trail is ready",
-    subtitle: "Build a food trail from your saved places.",
-    ctaLabel: "Build food trail",
+    title: "Build a food Stroll",
+    subtitle: "Build a food Stroll from your saved places.",
+    ctaLabel: "Build Stroll",
     ctaAction: "build_food_trail",
+    heroState: "suggestion",
     metadata: {},
     ...overrides,
   };
@@ -68,7 +69,7 @@ test("1-2 city Taste saves become an almost-ready card", () => {
   );
 
   assert.ok(card);
-  assert.equal(card?.title, "Food trail almost ready");
+  assert.equal(card?.title, "Food trail taking shape");
   assert.equal(card?.ctaLabel, "Add places");
   assert.equal(card?.ctaAction, "grow_saved_places");
   assert.equal(card?.subtitle, "Save 1 more food places in Bengaluru.");
@@ -87,7 +88,7 @@ test("3+ city Taste saves keep the ready food trail card", () => {
 
   assert.ok(card);
   assert.equal(card?.ctaAction, "build_food_trail");
-  assert.equal(card?.title, "Your food trail is ready");
+  assert.equal(card?.title, "Build a food Stroll");
   assert.deepEqual(card?.metadata.matchingPlaceIds, ["blr-1", "blr-2", "blr-3"]);
 });
 
@@ -104,7 +105,7 @@ test("Taste saves in another city do not make the current city ready", () => {
   );
 
   assert.ok(card);
-  assert.equal(card?.title, "Food trail almost ready");
+  assert.equal(card?.title, "Food trail taking shape");
   assert.equal(card?.subtitle, "Save 2 more food places in Bengaluru.");
 });
 
@@ -112,10 +113,11 @@ test("weekend plan cards prefer city over locality and become ready only with mi
   const card = applyWeekendPlanHeroEligibility(
     {
       type: "city_category_insight",
-      title: "Plan ready",
+      title: "Turn your saves into a weekend Stroll",
       subtitle: "Placeholder",
-      ctaLabel: "Plan weekend",
+      ctaLabel: "Create Stroll",
       ctaAction: "view_city_plan",
+      heroState: "suggestion",
       metadata: {},
     },
     [
@@ -137,10 +139,11 @@ test("other-city saves do not make the current city weekend plan ready", () => {
   const card = applyWeekendPlanHeroEligibility(
     {
       type: "city_category_insight",
-      title: "Plan ready",
+      title: "Turn your saves into a weekend Stroll",
       subtitle: "Placeholder",
-      ctaLabel: "Plan weekend",
+      ctaLabel: "Create Stroll",
       ctaAction: "view_city_plan",
+      heroState: "suggestion",
       metadata: {},
     },
     [
@@ -153,6 +156,6 @@ test("other-city saves do not make the current city weekend plan ready", () => {
   );
 
   assert.ok(card);
-  assert.equal(card?.title, "Patna plan almost ready");
+  assert.equal(card?.title, "Patna plan taking shape");
   assert.equal(card?.ctaAction, "grow_saved_places");
 });

@@ -82,9 +82,10 @@ const user = {
 const heroCard = {
   type: "city_category_insight",
   cardKey: "hero-patna-food",
-  title: "Patna food trail is ready",
-  subtitle: "3 Taste saves can become a route for today.",
-  ctaLabel: "Build trail",
+  heroState: "suggestion",
+  title: "Build a Patna food Stroll",
+  subtitle: "3 Taste saves can shape today's route.",
+  ctaLabel: "Build Stroll",
   ctaAction: "build_food_trail",
   metadata: {
     targetCategory: "Taste",
@@ -549,9 +550,9 @@ test("authenticated Discover loads and hero primary CTA still opens food trail",
   await page.goto("/");
 
   await expect(page.getByRole("heading", { name: "Your walking plans" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Build trail" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Build Stroll" })).toBeVisible();
 
-  await page.getByRole("button", { name: "Build trail" }).click();
+  await page.getByRole("button", { name: "Build Stroll" }).click();
 
   await expect(page).toHaveURL(/\/trail\/food$/);
   await expect(page.getByRole("heading", { name: "Build from your saved places" })).toBeVisible();

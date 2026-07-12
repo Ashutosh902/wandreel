@@ -11,9 +11,9 @@ test("HeroCard renders bookmark icon button with unbookmarked accessible label",
   const html = renderToStaticMarkup(
     <HeroCard
       mode="city-memory"
-      title="Patna plan is ready"
-      subtitle="Your saved places can shape a weekend route."
-      ctaLabel="Plan weekend"
+      title="Turn your Patna saves into a weekend Stroll"
+      subtitle="Your saved places can shape a calm route for today."
+      ctaLabel="Create Stroll"
       onCtaClick={() => undefined}
       onBookmarkToggle={() => undefined}
     />,
@@ -21,16 +21,16 @@ test("HeroCard renders bookmark icon button with unbookmarked accessible label",
 
   assert.match(html, /aria-label="Save hero idea"/);
   assert.match(html, /aria-pressed="false"/);
-  assert.match(html, />Plan weekend</);
+  assert.match(html, />Create Stroll</);
 });
 
 test("HeroCard renders bookmarked accessible label without changing primary CTA", () => {
   const html = renderToStaticMarkup(
     <HeroCard
       mode="city-memory"
-      title="Patna food trail is ready"
-      subtitle="3 Taste saves can become a route for today."
-      ctaLabel="Build trail"
+      title="Your Patna food Stroll is ready"
+      subtitle="3 Taste saves can shape today's route."
+      ctaLabel="Begin Here"
       onCtaClick={() => undefined}
       isBookmarked
       onBookmarkToggle={() => undefined}
@@ -39,5 +39,5 @@ test("HeroCard renders bookmarked accessible label without changing primary CTA"
 
   assert.match(html, /aria-label="Remove saved hero idea"/);
   assert.match(html, /aria-pressed="true"/);
-  assert.match(html, />Build trail</);
+  assert.match(html, />Begin Here</);
 });

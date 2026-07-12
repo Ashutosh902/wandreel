@@ -6,11 +6,23 @@ type HeroCardContent = {
   subtitle: string;
   ctaLabel: string;
   ctaAction: string;
+  heroState?: "suggestion" | "ready_stroll";
   metadata?: Record<string, unknown>;
 };
 
 function normalizeText(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeHeroDisplayCityLabel(value: string): string {
+  const normalized = value.trim().replace(/\s+/g, " ");
+  switch (normalized.toLowerCase()) {
+    case "patna division":
+    case "patna district":
+      return "Patna";
+    default:
+      return normalized;
+  }
 }
 
 function getHeroCity(card: HeroCardContent, currentLocationLabel: string, visibleSavedPlaces: SavedPlaceRecord[]): string {
@@ -19,7 +31,7 @@ function getHeroCity(card: HeroCardContent, currentLocationLabel: string, visibl
     visibleSavedPlaces,
     normalizeText(card.metadata?.targetCity) || null,
   );
-  return context.cityName || context.localityName || "";
+  return normalizeHeroDisplayCityLabel(context.cityName || context.localityName || "");
 }
 
 function getMatchingCount(card: HeroCardContent): number {
@@ -32,10 +44,6 @@ function getRemainingCount(card: HeroCardContent): number {
   return Number.isFinite(remaining) && remaining > 0 ? remaining : 0;
 }
 
-function formatCityPrefix(city: string, suffix: string): string {
-  return city ? `${city} ${suffix}` : suffix.charAt(0).toUpperCase() + suffix.slice(1);
-}
-
 function buildFoodTrailReadyCopy(
   card: HeroCardContent,
   currentLocationLabel: string,
@@ -45,15 +53,15 @@ function buildFoodTrailReadyCopy(
   const count = getMatchingCount(card);
   return {
     ...card,
-    title: formatCityPrefix(city, "food trail is ready"),
+    title: city ? `Your ${city} food Stroll is ready` : "Your food Stroll is ready",
     subtitle: count > 0
-      ? `${count} Taste saves can become a route for today.`
-      : "Taste saves can become a route for today.",
-    ctaLabel: "Build trail",
+      ? `${count} Taste saves can shape today's route.`
+      : "Your saved places can shape today's route.",
+    ctaLabel: "Begin Here",
   };
 }
 
-function buildCityPlanCopy(
+function buildCityPlanReadyCopy(
   card: HeroCardContent,
   currentLocationLabel: string,
   visibleSavedPlaces: SavedPlaceRecord[],
@@ -61,25 +69,72 @@ function buildCityPlanCopy(
   const city = getHeroCity(card, currentLocationLabel, visibleSavedPlaces);
   return {
     ...card,
-    title: formatCityPrefix(city, "plan is ready"),
-    subtitle: "Your saved places can shape a weekend route.",
-    ctaLabel: "Plan weekend",
+    title: city ? `Your ${city} Weekend Stroll is ready` : "Your Weekend Stroll is ready",
+    subtitle: "Your saved places can shape a calm route for today.",
+    ctaLabel: "Begin Here",
   };
 }
 
-function buildAlmostReadyFoodCopy(
+function buildCityPlanSuggestionCopy(
   card: HeroCardContent,
   currentLocationLabel: string,
   visibleSavedPlaces: SavedPlaceRecord[],
 ): HeroCardContent {
   const city = getHeroCity(card, currentLocationLabel, visibleSavedPlaces);
+  return {
+    ...card,
+    title: city ? `Turn your ${city} saves into a weekend Stroll` : "Turn your saved places into a weekend Stroll",
+    subtitle: "Your saved places can shape a calm route for today.",
+    ctaLabel: "Create Stroll",
+  };
+}
+
+function buildFoodTrailSuggestionCopy(
+  card: HeroCardContent,
+  currentLocationLabel: string,
+  visibleSavedPlaces: SavedPlaceRecord[],
+): HeroCardContent {
+  const city = getHeroCity(card, currentLocationLabel, visibleSavedPlaces);
+  const count = getMatchingCount(card);
+  return {
+    ...card,
+    title: city ? `Build a ${city} food Stroll` : "Build a food Stroll",
+    subtitle: count > 0
+      ? `${count} Taste saves can shape today's route.`
+      : "Your Taste saves can shape today's route.",
+    ctaLabel: "Build Stroll",
+  };
+}
+
+function buildTakingShapeCopy(
+  card: HeroCardContent,
+  currentLocationLabel: string,
+  visibleSavedPlaces: SavedPlaceRecord[],
+): HeroCardContent {
+  const city = getHeroCity(card, currentLocationLabel, visibleSavedPlaces);
+  const targetCategory = normalizeText(card.metadata?.targetCategory);
   const remaining = getRemainingCount(card);
+  const isFoodTrail = targetCategory === "Taste" || remaining > 0;
+  const isWeekendPlan = targetCategory === "Explore";
+
   return {
     ...card,
-    title: "Food trail almost ready",
-    subtitle: city && remaining > 0
-      ? `Save ${remaining} more food places in ${city}.`
-      : "Save a few more food places to build a trail.",
+    title: isFoodTrail
+      ? "Food trail taking shape"
+      : isWeekendPlan
+        ? `${city ? `${city} weekend plan` : "Weekend plan"} taking shape`
+        : city
+          ? `${city} Stroll taking shape`
+          : "Your Stroll is taking shape",
+    subtitle: isFoodTrail
+      ? city && remaining > 0
+        ? `Save ${remaining} more food places in ${city}.`
+        : "Save a few more food places to keep shaping the route."
+      : isWeekendPlan
+        ? city
+          ? `Save a few more places in ${city} to keep shaping the route.`
+          : "Save a few more places to keep shaping the route."
+        : "Save a few more places to keep shaping the route.",
     ctaLabel: "Add places",
   };
 }
@@ -106,16 +161,41 @@ function buildDominantCategoryCopy(
   const city = getHeroCity(card, currentLocationLabel, visibleSavedPlaces);
   const category = normalizeText(card.metadata?.targetCategory);
   if (category === "Explore") {
-    return buildCityPlanCopy(card, currentLocationLabel, visibleSavedPlaces);
+    return buildCityPlanSuggestionCopy(card, currentLocationLabel, visibleSavedPlaces);
+  }
+  if (category === "Taste") {
+    return buildFoodTrailSuggestionCopy(card, currentLocationLabel, visibleSavedPlaces);
+  }
+  return {
+    ...card,
+    title: city
+      ? `Create a ${city} ${category || "saved"} Stroll`
+      : `Create a ${category || "saved"} Stroll`,
+    subtitle: "Your saved places can shape a route for today.",
+    ctaLabel: "Create Stroll",
+  };
+}
+
+function buildReadyDominantCategoryCopy(
+  card: HeroCardContent,
+  currentLocationLabel: string,
+  visibleSavedPlaces: SavedPlaceRecord[],
+): HeroCardContent {
+  const city = getHeroCity(card, currentLocationLabel, visibleSavedPlaces);
+  const category = normalizeText(card.metadata?.targetCategory);
+  if (category === "Explore") {
+    return buildCityPlanReadyCopy(card, currentLocationLabel, visibleSavedPlaces);
   }
   if (category === "Taste") {
     return buildFoodTrailReadyCopy(card, currentLocationLabel, visibleSavedPlaces);
   }
   return {
     ...card,
-    title: city ? `${city} ${category || "saved"} list is ready` : "Your saved list is ready",
-    subtitle: "Your saved places are ready to explore.",
-    ctaLabel: "View saves",
+    title: city
+      ? `Your ${city} ${category || "saved"} Stroll is ready`
+      : `Your ${category || "saved"} Stroll is ready`,
+    subtitle: "Your saved places can shape a route for today.",
+    ctaLabel: "Begin Here",
   };
 }
 
@@ -125,28 +205,54 @@ export function normalizeHeroCardContent<T extends HeroCardContent>(
   visibleSavedPlaces: SavedPlaceRecord[] = [],
 ): T {
   let nextCard: HeroCardContent;
-  switch (card.ctaAction) {
-    case "build_food_trail":
-      nextCard = buildFoodTrailReadyCopy(card, currentLocationLabel, visibleSavedPlaces);
-      break;
-    case "grow_saved_places":
-      nextCard = buildAlmostReadyFoodCopy(card, currentLocationLabel, visibleSavedPlaces);
-      break;
-    case "view_city_plan":
-    case "plan_weekend_explore":
-    case "create_itinerary":
-      nextCard = buildCityPlanCopy(card, currentLocationLabel, visibleSavedPlaces);
-      break;
-    case "view_dominant_category":
-      nextCard = buildDominantCategoryCopy(card, currentLocationLabel, visibleSavedPlaces);
-      break;
-    case "add_first_place":
-    case "grow_saved_memory":
-      nextCard = buildDefaultListCopy(card, currentLocationLabel, visibleSavedPlaces);
-      break;
-    default:
-      nextCard = card;
-      break;
+  if (card.heroState === "ready_stroll") {
+    switch (card.ctaAction) {
+      case "build_food_trail":
+        nextCard = buildFoodTrailReadyCopy(card, currentLocationLabel, visibleSavedPlaces);
+        break;
+      case "grow_saved_places":
+        nextCard = buildTakingShapeCopy(card, currentLocationLabel, visibleSavedPlaces);
+        break;
+      case "view_city_plan":
+      case "plan_weekend_explore":
+      case "create_itinerary":
+        nextCard = buildCityPlanReadyCopy(card, currentLocationLabel, visibleSavedPlaces);
+        break;
+      case "view_dominant_category":
+        nextCard = buildReadyDominantCategoryCopy(card, currentLocationLabel, visibleSavedPlaces);
+        break;
+      case "add_first_place":
+      case "grow_saved_memory":
+        nextCard = buildDefaultListCopy(card, currentLocationLabel, visibleSavedPlaces);
+        break;
+      default:
+        nextCard = card;
+        break;
+    }
+  } else {
+    switch (card.ctaAction) {
+      case "build_food_trail":
+        nextCard = buildFoodTrailSuggestionCopy(card, currentLocationLabel, visibleSavedPlaces);
+        break;
+      case "grow_saved_places":
+        nextCard = buildTakingShapeCopy(card, currentLocationLabel, visibleSavedPlaces);
+        break;
+      case "view_city_plan":
+      case "plan_weekend_explore":
+      case "create_itinerary":
+        nextCard = buildCityPlanSuggestionCopy(card, currentLocationLabel, visibleSavedPlaces);
+        break;
+      case "view_dominant_category":
+        nextCard = buildDominantCategoryCopy(card, currentLocationLabel, visibleSavedPlaces);
+        break;
+      case "add_first_place":
+      case "grow_saved_memory":
+        nextCard = buildDefaultListCopy(card, currentLocationLabel, visibleSavedPlaces);
+        break;
+      default:
+        nextCard = card;
+        break;
+    }
   }
 
   return {

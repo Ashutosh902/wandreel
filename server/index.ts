@@ -466,6 +466,7 @@ function resolveSavedPlaceIdFromRequest(req: express.Request): string {
 type HeroCardBase = {
   type: "city_category_insight";
   cardKey: string;
+  heroState: "suggestion" | "ready_stroll";
   title: string;
   subtitle: string;
   ctaLabel: string;
@@ -593,6 +594,7 @@ function attachReadyStrollId(
   return {
     ...card,
     readyStrollId,
+    heroState: "ready_stroll",
   };
 }
 
@@ -727,6 +729,7 @@ function buildFallbackHeroCard(totalSaves: number): HeroCardCandidate {
   });
   return {
     type: "city_category_insight",
+    heroState: "suggestion",
     cardKey: buildHeroCardKey({
       type: "city_category_insight",
       rule: "fallback",
@@ -830,6 +833,7 @@ function buildHeroCardFromSavedPlaces(
     });
     return {
       type: "city_category_insight",
+      heroState: "suggestion",
       cardKey: buildHeroCardKey({
         type: "city_category_insight",
         rule: input.rule,
@@ -852,9 +856,9 @@ function buildHeroCardFromSavedPlaces(
     const priorityScore = 96 + Math.min(8, Math.floor(topCategoryShare * 10));
     const reasonCodes = ["taste_heavy", "category_specific", "high_confidence"];
     candidateCards.push(buildCandidate({
-      title: "Your food trail is ready",
-      subtitle: `You have ${topCategoryCount} Taste saves. Bundle them into a cafe and food crawl for your next outing.`,
-      ctaLabel: "Build food trail",
+      title: "Build a food Stroll",
+      subtitle: `You have ${topCategoryCount} Taste saves. Bundle them into a calm cafe and food route for your next outing.`,
+      ctaLabel: "Build Stroll",
       ctaAction: "build_food_trail",
       priorityScore,
       reasonCodes,
@@ -870,9 +874,9 @@ function buildHeroCardFromSavedPlaces(
     const priorityScore = 95 + Math.min(8, Math.floor(topCategoryShare * 10));
     const reasonCodes = ["explore_heavy", "category_specific", "high_confidence"];
     candidateCards.push(buildCandidate({
-      title: "A weekend explore run is waiting",
+      title: "Plan a weekend Stroll",
       subtitle: `You already saved ${topCategoryCount} Explore spots. That is enough for a packed weekend circuit.`,
-      ctaLabel: "Plan weekend route",
+      ctaLabel: "Create Stroll",
       ctaAction: "plan_weekend_explore",
       priorityScore,
       reasonCodes,
@@ -888,9 +892,9 @@ function buildHeroCardFromSavedPlaces(
     const priorityScore = 80 + Math.min(10, Math.round(topCategoryShare * 20));
     const reasonCodes = ["dominant_category", "category_pattern"];
     candidateCards.push(buildCandidate({
-      title: `${topCategory} is leading your bucketlist`,
+      title: `Create a ${topCategory} Stroll`,
       subtitle: `${topCategoryCount} of your ${totalSaves} saves are in ${topCategory}. You are building a clear travel pattern.`,
-      ctaLabel: `View ${topCategory}`,
+      ctaLabel: `Create Stroll`,
       ctaAction: "view_dominant_category",
       priorityScore,
       reasonCodes,
@@ -915,9 +919,9 @@ function buildHeroCardFromSavedPlaces(
       const priorityScore = 88 + Math.min(8, Math.round(secondaryCategoryShare * 20));
       const reasonCodes = ["secondary_category", "taste_secondary", "category_specific"];
       candidateCards.push(buildCandidate({
-        title: "Your Taste list deserves an outing",
-        subtitle: `You have ${secondaryCategoryCount} Taste saves ready for a focused cafe or food run.`,
-        ctaLabel: "Build food trail",
+        title: "Build another food Stroll",
+        subtitle: `You have ${secondaryCategoryCount} Taste saves lined up for a focused cafe or food run.`,
+        ctaLabel: "Build Stroll",
         ctaAction: "build_food_trail",
         priorityScore,
         reasonCodes,
@@ -931,9 +935,9 @@ function buildHeroCardFromSavedPlaces(
       const priorityScore = 87 + Math.min(8, Math.round(secondaryCategoryShare * 20));
       const reasonCodes = ["secondary_category", "explore_secondary", "category_specific"];
       candidateCards.push(buildCandidate({
-        title: "Your Explore list can power a weekend plan",
+        title: "Plan another weekend Stroll",
         subtitle: `You already have ${secondaryCategoryCount} Explore saves that could turn into a strong route of their own.`,
-        ctaLabel: "Plan weekend route",
+        ctaLabel: "Create Stroll",
         ctaAction: "plan_weekend_explore",
         priorityScore,
         reasonCodes,
@@ -947,9 +951,9 @@ function buildHeroCardFromSavedPlaces(
       const priorityScore = 84 + Math.min(8, Math.round(secondaryCategoryShare * 20));
       const reasonCodes = ["secondary_category", "category_pattern"];
       candidateCards.push(buildCandidate({
-        title: `${secondaryCategory} is also worth acting on`,
+        title: `Create a ${secondaryCategory} Stroll`,
         subtitle: `${secondaryCategoryCount} of your saves are in ${secondaryCategory}. That is enough to justify its own next step.`,
-        ctaLabel: `View ${secondaryCategory}`,
+        ctaLabel: "Create Stroll",
         ctaAction: "view_dominant_category",
         priorityScore,
         reasonCodes,
@@ -966,9 +970,9 @@ function buildHeroCardFromSavedPlaces(
     const priorityScore = 74 + Math.min(16, Math.floor(totalSaves / 4));
     const reasonCodes = ["itinerary_ready", "high_save_volume"];
     candidateCards.push(buildCandidate({
-      title: "You have enough saves for a real itinerary",
+      title: "Create a full itinerary from your saved places",
       subtitle: `With ${totalSaves} saved places across Wandreel, your next trip can move from scattered ideas to a proper plan.`,
-      ctaLabel: "Create itinerary",
+      ctaLabel: "Create Stroll",
       ctaAction: "create_itinerary",
       priorityScore,
       reasonCodes,

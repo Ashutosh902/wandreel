@@ -13,9 +13,10 @@ function createCard(overrides: Partial<HeroCardData> = {}): HeroCardData {
     type: "city_category_insight",
     cardKey: "hero-patna-food",
     readyStrollId: undefined,
-    title: "Patna food trail is ready",
-    subtitle: "3 Taste saves can become a route for today.",
-    ctaLabel: "Build trail",
+    heroState: "suggestion",
+    title: "Build a Patna food Stroll",
+    subtitle: "3 Taste saves can shape today's route.",
+    ctaLabel: "Build Stroll",
     ctaAction: "build_food_trail",
     metadata: {
       targetCategory: "Taste",
@@ -68,7 +69,7 @@ test("selectHomeHeroCandidate keeps the currently visible card eligible during c
     visibleHeroCardKey: deriveHeroCardKey(payload),
   });
 
-  assert.equal(selected?.ctaLabel, "Build trail");
+  assert.equal(selected?.ctaLabel, "Build Stroll");
 });
 
 test("selectHomeHeroCandidate falls back to the only eligible card instead of leaving Discover empty", () => {
@@ -85,7 +86,7 @@ test("selectHomeHeroCandidate falls back to the only eligible card instead of le
     visibleHeroCardKey: deriveHeroCardKey(DEFAULT_DISCOVER_HERO_CARD),
   });
 
-  assert.equal(selected?.ctaLabel, "Build trail");
+  assert.equal(selected?.ctaLabel, "Build Stroll");
 });
 
 test("selectHomeHeroCandidate still prefers an alternative when the previous card is cooling down", () => {
@@ -94,9 +95,10 @@ test("selectHomeHeroCandidate still prefers an alternative when the previous car
       {
         ...createCard({
           cardKey: "hero-patna-explore",
-          title: "Patna plan is ready",
-          subtitle: "Your saved places can shape a weekend route.",
-          ctaLabel: "Plan weekend",
+          heroState: "suggestion",
+          title: "Turn your Patna saves into a weekend Stroll",
+          subtitle: "Your saved places can shape a calm route for today.",
+          ctaLabel: "Create Stroll",
           ctaAction: "view_city_plan",
           metadata: {
             targetCategory: "Explore",
@@ -124,5 +126,5 @@ test("selectHomeHeroCandidate still prefers an alternative when the previous car
     visibleHeroCardKey: deriveHeroCardKey(DEFAULT_DISCOVER_HERO_CARD),
   });
 
-  assert.equal(selected?.ctaLabel, "Plan weekend");
+  assert.equal(selected?.ctaLabel, "Create Stroll");
 });

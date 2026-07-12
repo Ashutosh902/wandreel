@@ -1861,6 +1861,7 @@ test("matching ready Stroll adds canonical readyStrollId", async () => {
   assert.equal(response.status, 200);
   assert.equal(body.ctaAction, "build_food_trail");
   assert.equal(body.readyStrollId, "stroll-1");
+  assert.equal(body.heroState, "ready_stroll");
 });
 
 test("no reliable ready Stroll match leaves readyStrollId absent", async () => {
@@ -1927,6 +1928,7 @@ test("no reliable ready Stroll match leaves readyStrollId absent", async () => {
   assert.equal(response.status, 200);
   assert.equal(body.ctaAction, "build_food_trail");
   assert.equal("readyStrollId" in body, false);
+  assert.equal(body.heroState, "suggestion");
 });
 
 test("hero ready Stroll lookup is scoped to authenticated user and ready status only", async () => {
@@ -2042,6 +2044,7 @@ test("cross-user and category-mismatched ready Stroll rows are rejected", async 
   assert.equal(response.status, 200);
   assert.equal(body.ctaAction, "plan_weekend_explore");
   assert.equal("readyStrollId" in body, false);
+  assert.equal(body.heroState, "suggestion");
 });
 
 test("city mismatch is rejected for city-plan hero matching", async () => {
@@ -2091,6 +2094,7 @@ test("city mismatch is rejected for city-plan hero matching", async () => {
   assert.equal(body.ctaAction, "view_city_plan");
   assert.equal(body.metadata?.targetCity, "Jaipur");
   assert.equal("readyStrollId" in body, false);
+  assert.equal(body.heroState, "suggestion");
 });
 
 test("admin overview requires authentication", async () => {

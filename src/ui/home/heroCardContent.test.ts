@@ -31,6 +31,7 @@ function createCard(overrides: Partial<{
   subtitle: string;
   ctaLabel: string;
   ctaAction: string;
+  heroState: "suggestion" | "ready_stroll";
   metadata: Record<string, unknown>;
 }> = {}) {
   return {
@@ -38,12 +39,13 @@ function createCard(overrides: Partial<{
     subtitle: "Verbose subtitle",
     ctaLabel: "Very long CTA label",
     ctaAction: "add_first_place",
+    heroState: "suggestion" as const,
     metadata: {},
     ...overrides,
   };
 }
 
-test("build food trail cards become short and city-specific", () => {
+test("suggestion food trail cards become invitation copy", () => {
   const card = normalizeHeroCardContent(createCard({
     ctaAction: "build_food_trail",
     metadata: {
@@ -52,23 +54,23 @@ test("build food trail cards become short and city-specific", () => {
     },
   }), "Mumbai, Maharashtra");
 
-  assert.equal(card.title, "Bengaluru food trail is ready");
-  assert.equal(card.subtitle, "3 Taste saves can become a route for today.");
-  assert.equal(card.ctaLabel, "Build trail");
+  assert.equal(card.title, "Build a Bengaluru food Stroll");
+  assert.equal(card.subtitle, "3 Taste saves can shape today's route.");
+  assert.equal(card.ctaLabel, "Build Stroll");
 });
 
-test("city plan cards use the calm weekend pattern", () => {
+test("suggestion city plan cards use invitation language", () => {
   const card = normalizeHeroCardContent(createCard({
     ctaAction: "view_city_plan",
     metadata: { targetCity: "Bengaluru" },
   }), "Mumbai, Maharashtra");
 
-  assert.equal(card.title, "Bengaluru plan is ready");
-  assert.equal(card.subtitle, "Your saved places can shape a weekend route.");
-  assert.equal(card.ctaLabel, "Plan weekend");
+  assert.equal(card.title, "Turn your Bengaluru saves into a weekend Stroll");
+  assert.equal(card.subtitle, "Your saved places can shape a calm route for today.");
+  assert.equal(card.ctaLabel, "Create Stroll");
 });
 
-test("almost-ready food trail cards stay short and city-specific", () => {
+test("suggestion grow-saved cards stay calm and avoid ready language", () => {
   const card = normalizeHeroCardContent(createCard({
     ctaAction: "grow_saved_places",
     metadata: {
@@ -77,7 +79,7 @@ test("almost-ready food trail cards stay short and city-specific", () => {
     },
   }), "Mumbai, Maharashtra");
 
-  assert.equal(card.title, "Food trail almost ready");
+  assert.equal(card.title, "Food trail taking shape");
   assert.equal(card.subtitle, "Save 2 more food places in Bengaluru.");
   assert.equal(card.ctaLabel, "Add places");
 });
@@ -101,8 +103,8 @@ test("explore-dominant cards map to the weekend plan pattern", () => {
     },
   }), "Mumbai, Maharashtra");
 
-  assert.equal(card.title, "Jaipur plan is ready");
-  assert.equal(card.ctaLabel, "Plan weekend");
+  assert.equal(card.title, "Turn your Jaipur saves into a weekend Stroll");
+  assert.equal(card.ctaLabel, "Create Stroll");
 });
 
 test("planning copy uses city over locality when the location label starts with a locality", () => {
@@ -115,5 +117,40 @@ test("planning copy uses city over locality when the location label starts with 
     ],
   );
 
-  assert.equal(card.title, "Patna plan is ready");
+  assert.equal(card.title, "Turn your Patna saves into a weekend Stroll");
+});
+
+test("ready-stroll copy keeps the ready language", () => {
+  const card = normalizeHeroCardContent(createCard({
+    heroState: "ready_stroll",
+    ctaAction: "view_city_plan",
+    metadata: { targetCity: "Bengaluru" },
+  }), "Mumbai, Maharashtra");
+
+  assert.equal(card.title, "Your Bengaluru Weekend Stroll is ready");
+  assert.equal(card.ctaLabel, "Begin Here");
+});
+
+test("Patna Division normalizes to Patna in hero copy", () => {
+  const card = normalizeHeroCardContent(
+    createCard({
+      ctaAction: "view_city_plan",
+      metadata: { targetCity: "Patna Division" },
+    }),
+    "Patna Division, Bihar",
+  );
+
+  assert.equal(card.title, "Turn your Patna saves into a weekend Stroll");
+});
+
+test("legitimate city names remain intact", () => {
+  const card = normalizeHeroCardContent(
+    createCard({
+      ctaAction: "view_city_plan",
+      metadata: { targetCity: "New Delhi" },
+    }),
+    "New Delhi, Delhi",
+  );
+
+  assert.equal(card.title, "Turn your New Delhi saves into a weekend Stroll");
 });

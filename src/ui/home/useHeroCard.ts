@@ -6,6 +6,7 @@ import type { SavedPlaceRecord } from "./savedPlaces";
 export type HeroCardData = {
   type: "city_category_insight";
   cardKey?: string;
+  heroState?: "suggestion" | "ready_stroll";
   readyStrollId?: string;
   title: string;
   subtitle: string;
@@ -28,6 +29,7 @@ const HERO_CARD_COOLDOWN_MS = 24 * 60 * 60 * 1000;
 
 export const DEFAULT_DISCOVER_HERO_CARD: HeroCardData = {
   type: "city_category_insight",
+  heroState: "suggestion",
   title: "Start your list",
   subtitle: "Save places from reels and plan them later.",
   ctaLabel: "Add a place",
@@ -39,6 +41,7 @@ function isEquivalentHeroCard(current: HeroCardData | null, next: HeroCardData |
   if (!current || !next) return current === next;
   return (
     deriveHeroCardKey(current) === deriveHeroCardKey(next) &&
+    current.heroState === next.heroState &&
     current.readyStrollId === next.readyStrollId &&
     current.title === next.title &&
     current.subtitle === next.subtitle &&
