@@ -120,40 +120,40 @@ export function getStrollStatusPresentation(status: StrollLibraryStatus): Stroll
     return {
       label: "Draft",
       tone: "draft",
-      title: "Manual draft",
-      description: "Saved but not generated yet.",
+      title: "Draft in progress",
+      description: "Saved and ready to shape.",
     };
   }
   if (status === "queued") {
     return {
       label: "Queued",
       tone: "working",
-      title: "Waiting for curation",
-      description: "Wandreel will start shaping this soon.",
+      title: "Preparing your Stroll",
+      description: "Wandreel is lining up the next step.",
     };
   }
   if (status === "curating") {
     return {
       label: "Curating",
       tone: "working",
-      title: "Building your Stroll",
-      description: "Checking stops and preparing the route shell.",
+      title: "Shaping the route",
+      description: "Checking stops and preparing the path.",
     };
   }
   if (status === "ready") {
     return {
       label: "Ready",
       tone: "ready",
-      title: "Ready to start",
-      description: "Your ordered Stroll is available.",
+      title: "Ready to begin",
+      description: "Your Stroll is set when you are.",
     };
   }
   if (status === "failed") {
     return {
       label: "Failed",
       tone: "failed",
-      title: "Needs another try",
-      description: "Curation did not finish. You can retry it.",
+      title: "Needs another pass",
+      description: "You can adjust it and try again.",
     };
   }
   return {
@@ -190,6 +190,51 @@ export async function fetchStrollDetail(apiBaseUrl: string, strollId: string, fe
 
 export async function retryStrollCuration(apiBaseUrl: string, strollId: string, fetcher: Fetcher = fetch) {
   const response = await fetcher(`${ensureApiBaseUrl(apiBaseUrl)}/api/strolls/${encodeURIComponent(strollId)}/retry`, {
+    method: "POST",
+    credentials: "include",
+  });
+  const payload = await parseApiPayload(response);
+  return payload.stroll as PersistentStrollSummary;
+}
+
+export async function updateDraftStroll(apiBaseUrl: string, strollId: string, draft: {
+  updatedAt?: string | null;
+  name?: string;
+  city?: string;
+  startDate?: string | null;
+  endDate?: string | null;
+  requestedStartTime?: string | null;
+  travellerCount?: number | null;
+  interests?: string[];
+  latitude?: number | null;
+  longitude?: number | null;
+  placeIds?: string[];
+}, fetcher: Fetcher = fetch) {
+  const response = await fetcher(`${ensureApiBaseUrl(apiBaseUrl)}/api/strolls/${encodeURIComponent(strollId)}`, {
+    method: "PATCH",
+    credentials: "include",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(draft),
+  });
+  const payload = await parseApiPayload(response);
+  return payload.stroll as PersistentStrollSummary;
+}
+
+export async function curateStroll(apiBaseUrl: string, strollId: string, fetcher: Fetcher = fetch) {
+  const response = await fetcher(`${ensureApiBaseUrl(apiBaseUrl)}/api/strolls/${encodeURIComponent(strollId)}/curate`, {
+    method: "POST",
+    credentials: "include",
+  });
+  const payload = await parseApiPayload(response);
+  return {
+    stroll: payload.stroll as PersistentStrollSummary,
+    job: payload.job as Record<string, unknown>,
+    duplicate: Boolean(payload.duplicate),
+  };
+}
+
+export async function archiveStroll(apiBaseUrl: string, strollId: string, fetcher: Fetcher = fetch) {
+  const response = await fetcher(`${ensureApiBaseUrl(apiBaseUrl)}/api/strolls/${encodeURIComponent(strollId)}/archive`, {
     method: "POST",
     credentials: "include",
   });

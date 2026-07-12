@@ -320,6 +320,38 @@ async function handleApiRoute(route: Route, state: ApiState) {
     return ok({ ok: true, created: true, stroll: created });
   }
 
+  const updateMatch = pathname.match(/^\/api\/strolls\/([^/]+)$/);
+  if (updateMatch && method === "PATCH") {
+    const stroll = findStroll(state, updateMatch[1]);
+    if (!stroll) return fail(404, "not_found");
+    const body = request.postDataJSON() as {
+      name?: string;
+      city?: string;
+      startDate?: string | null;
+      endDate?: string | null;
+      requestedStartTime?: string | null;
+      travellerCount?: number | null;
+      interests?: string[];
+      latitude?: number | null;
+      longitude?: number | null;
+    };
+    const updated = {
+      ...stroll,
+      name: typeof body.name === "string" && body.name.trim() ? body.name.trim() : stroll.name,
+      city: typeof body.city === "string" && body.city.trim() ? body.city.trim() : stroll.city,
+      startDate: body.startDate ?? stroll.startDate,
+      endDate: body.endDate ?? stroll.endDate,
+      requestedStartTime: body.requestedStartTime ?? stroll.requestedStartTime,
+      travellerCount: body.travellerCount ?? stroll.travellerCount,
+      interests: Array.isArray(body.interests) ? body.interests : stroll.interests,
+      latitude: body.latitude ?? stroll.latitude,
+      longitude: body.longitude ?? stroll.longitude,
+      updatedAt: "2026-07-11T10:03:00.000Z",
+    };
+    state.strolls = state.strolls.map((item) => (item.id === stroll.id ? updated : item));
+    return ok({ ok: true, stroll: updated });
+  }
+
   const statusMatch = pathname.match(/^\/api\/strolls\/([^/]+)\/status$/);
   if (statusMatch && method === "GET") {
     const stroll = findStroll(state, statusMatch[1]);
@@ -571,10 +603,14 @@ test("manual draft creation submits once and refreshes the library", async ({ pa
 
   await page.getByRole("button", { name: "Create draft Stroll" }).click();
 
-  await expect(page).toHaveURL(/\/$/);
+  await expect(page).toHaveURL(/\/stroll\/draft-1\/edit$/);
+  await expect(page.getByRole("button", { name: "Generate My Stroll" })).toBeVisible();
   await expect(page.getByText("Gaya Stroll saved as a draft.")).toBeVisible();
-  await expect(page.getByRole("article").filter({ hasText: "Gaya Stroll" })).toBeVisible();
   expect(state.strolls.filter((stroll) => stroll.name === "Gaya Stroll")).toHaveLength(1);
+
+  await page.getByLabel("Travellers").fill("4");
+  await expect(page.getByText("Saved just now")).toBeVisible();
+  expect(state.strolls.find((stroll) => stroll.id === "draft-1")?.travellerCount).toBe(4);
 });
 
 test("curation polling reaches ready and failed Stroll retry queues again", async ({ page }) => {
