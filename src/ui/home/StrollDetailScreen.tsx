@@ -4,7 +4,16 @@ import { GoogleMap, MarkerF, OverlayViewF, PolylineF, useJsApiLoader, OVERLAY_MO
 import { useReducedMotion } from "framer-motion";
 import { useUx } from "../layout/UxProvider";
 import {
+  buildFirstStopDescription,
+  buildFirstStopLocality,
+  buildFirstStopReason,
+  buildFirstStopTitle,
+  buildStopRowSupportingText,
+  buildStrollContextLabel,
   buildStrollStopDirectionsUrl,
+  buildWhyThisJourney,
+  buildJourneyPreviewStops,
+  buildJourneySummaryItems,
   formatRouteDistance,
   formatStopDuration,
   getNumberedMapStops,
@@ -146,6 +155,7 @@ export function StrollDetailScreen({
   const [isAdaptationDismissed, setIsAdaptationDismissed] = useState(false);
   const [isAcceptingAdaptation, setIsAcceptingAdaptation] = useState(false);
   const [selectedStopId, setSelectedStopId] = useState<string | null>(null);
+  const [openStopId, setOpenStopId] = useState<string | null>(null);
   const [journeyPhase, setJourneyPhase] = useState<JourneyPhase>("idle");
   const [journeyRevealProgress, setJourneyRevealProgress] = useState(0);
   const [journeyFootprints, setJourneyFootprints] = useState<Array<{ id: string; point: JourneyPoint; side: "left" | "right"; rotation: number; scale: number; opacity: number }>>([]);
@@ -173,6 +183,7 @@ export function StrollDetailScreen({
           if (cancelled) return;
           setStroll(nextStroll);
           setSelectedStopId(nextStroll.stops[0]?.id ?? null);
+          setOpenStopId(null);
           setLoadState("ready");
         })
         .catch((fetchError) => {
@@ -220,6 +231,7 @@ export function StrollDetailScreen({
       .then((updatedStroll) => {
         setStroll(updatedStroll);
         setSelectedStopId(updatedStroll.stops[0]?.id ?? null);
+        setOpenStopId(null);
         setAdaptationRecommendation(null);
         setIsAdaptationDismissed(true);
       })
@@ -259,10 +271,23 @@ export function StrollDetailScreen({
   const orderedStops = useMemo(() => getOrderedStrollStops(stroll), [stroll]);
   const mapStops = useMemo(() => getNumberedMapStops(orderedStops), [orderedStops]);
   const routePath = useMemo(() => getStrollRoutePath(mapStops), [mapStops]);
-  const selectedStop = useMemo(() => selectStopById(orderedStops, selectedStopId), [orderedStops, selectedStopId]);
-  const selectedStopNumber = selectedStop
-    ? orderedStops.findIndex((stop) => stop.id === selectedStop.id) + 1
+  const openStop = useMemo(() => selectStopById(orderedStops, openStopId), [orderedStops, openStopId]);
+  const selectedStopNumber = openStop
+    ? orderedStops.findIndex((stop) => stop.id === openStop.id) + 1
     : 0;
+  const firstStop = orderedStops[0] ?? null;
+  const strollContextLabel = useMemo(() => buildStrollContextLabel(stroll), [stroll]);
+  const firstStopTitle = useMemo(() => buildFirstStopTitle(firstStop), [firstStop]);
+  const firstStopLocality = useMemo(() => buildFirstStopLocality(firstStop, stroll), [firstStop, stroll]);
+  const firstStopDescription = useMemo(() => buildFirstStopDescription(firstStop), [firstStop]);
+  const firstStopReason = useMemo(() => buildFirstStopReason(firstStop), [firstStop]);
+  const journeyPreviewStops = useMemo(() => buildJourneyPreviewStops(stroll), [stroll]);
+  const journeySummaryItems = useMemo(() => buildJourneySummaryItems(stroll), [stroll]);
+  const whyThisJourney = useMemo(() => buildWhyThisJourney(stroll), [stroll]);
+  const openStopDetails = (stopId: string) => {
+    setSelectedStopId(stopId);
+    setOpenStopId(stopId);
+  };
   const fallbackReason = getStrollMapFallbackReason({
     hasMapsKey: Boolean(googleMapsApiKey),
     isMapLoaded,
@@ -400,14 +425,44 @@ export function StrollDetailScreen({
         <button type="button" className="wr-map-back-btn" aria-label="Back" onClick={onBack}>
           <ArrowLeft size={18} />
         </button>
-        <div>
-          <p>STROLL</p>
-          <h2>{stroll.name}</h2>
-          <span>{stroll.city} - {orderedStops.length} stops</span>
+      </div>
+
+      <div className="wr-stroll-detail-first-view" data-testid="stroll-first-view">
+        <div className="wr-stroll-detail-arrival">
+          <p>{strollContextLabel}</p>
+        </div>
+
+        <div className="wr-stroll-detail-hero-card" aria-label="First stop hero">
+          <h1 data-testid="stroll-first-stop-title">{firstStopTitle}</h1>
+          <span>{firstStopLocality}</span>
+          <p>{firstStopDescription}</p>
+          <strong>{firstStopReason}</strong>
+          {firstStop ? (
+            <button type="button" className="wr-stroll-detail-begin-btn" onClick={() => openStopDetails(firstStop.id)}>
+              Begin Here
+            </button>
+          ) : null}
+        </div>
+
+        <div className="wr-stroll-detail-journey-card" aria-label="Today's Journey">
+          <span>Today&apos;s Journey</span>
+          <div className="wr-stroll-detail-journey-steps">
+            {journeyPreviewStops.map((stopTitle, index) => (
+              <div key={`${stopTitle}-${index}`} className="wr-stroll-detail-journey-step">
+                <strong>{stopTitle}</strong>
+                {index < journeyPreviewStops.length - 1 ? <small aria-hidden="true">↓</small> : null}
+              </div>
+            ))}
+          </div>
+          {journeySummaryItems.length ? <p>{journeySummaryItems.join(" • ")}</p> : null}
         </div>
       </div>
 
-      <div className="wr-stroll-detail-map-wrap" onClick={handleJourneyInteraction} onTouchStart={handleJourneyInteraction}>
+      <div className="wr-stroll-detail-map-section" data-testid="stroll-map-section">
+        <div className="wr-stroll-detail-section-heading">
+          <span>Map</span>
+        </div>
+        <div className="wr-stroll-detail-map-wrap" onClick={handleJourneyInteraction} onTouchStart={handleJourneyInteraction}>
         {!fallbackReason ? (
           <GoogleMap
             mapContainerClassName="wr-stroll-detail-google-map"
@@ -479,7 +534,7 @@ export function StrollDetailScreen({
                 key={stop.id}
                 position={{ lat: stop.lat, lng: stop.lng }}
                 label={{ text: String(stop.markerNumber), color: "#ffffff", fontWeight: "900" }}
-                onClick={() => setSelectedStopId(stop.id)}
+                onClick={() => openStopDetails(stop.id)}
                 icon={{
                   path: window.google.maps.SymbolPath.CIRCLE,
                   scale: selectedStopId === stop.id ? 13 : wakeupStopId === stop.id ? 13.5 : 11,
@@ -504,6 +559,12 @@ export function StrollDetailScreen({
             </span>
           </div>
         )}
+        </div>
+      </div>
+
+      <div className="wr-stroll-detail-why-card" aria-label="Why this journey">
+        <span>Why this journey</span>
+        <p>{whyThisJourney}</p>
       </div>
 
       <StrollLiveConditionsPanel
@@ -522,33 +583,39 @@ export function StrollDetailScreen({
         onDismiss={() => setIsAdaptationDismissed(true)}
       />
 
-      <div className="wr-stroll-detail-list" aria-label="Ordered Stroll stops. Select a stop to open details.">
-        {orderedStops.map((stop, index) => {
-          const isSelected = selectedStopId === stop.id;
-          return (
-            <button
-              type="button"
-              key={stop.id}
-              className={`wr-stroll-detail-stop-row ${isSelected ? "is-selected" : ""}`}
-              aria-pressed={isSelected}
-              aria-label={`Open details for stop ${index + 1}: ${getStopTitle(stop)}`}
-              onClick={() => setSelectedStopId(stop.id)}
-            >
-              <span>{index + 1}</span>
-              <div>
-                <strong>{getStopTitle(stop)}</strong>
-                <small>{stop.placeAddress || stop.placeLocality || stop.placeId}</small>
-              </div>
-            </button>
-          );
-        })}
-      </div>
+      {orderedStops.length > 1 ? (
+        <div className="wr-stroll-detail-list" aria-label="Remaining Stroll stops. Select a stop to open details.">
+          <div className="wr-stroll-detail-section-heading">
+            <span>Remaining stops</span>
+          </div>
+          {orderedStops.slice(1).map((stop, index) => {
+            const stopNumber = index + 2;
+            const isSelected = selectedStopId === stop.id;
+            return (
+              <button
+                type="button"
+                key={stop.id}
+                className={`wr-stroll-detail-stop-row ${isSelected ? "is-selected" : ""}`}
+                aria-pressed={isSelected}
+                aria-label={`Open details for stop ${stopNumber}: ${getStopTitle(stop)}`}
+                onClick={() => openStopDetails(stop.id)}
+              >
+                <span>{stopNumber}</span>
+                <div>
+                  <strong>{getStopTitle(stop)}</strong>
+                  <small>{buildStopRowSupportingText(stop, stopNumber - 1)}</small>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
-      {selectedStop ? (
+      {openStop ? (
         <StrollStopSheet
-          stop={selectedStop}
+          stop={openStop}
           stopNumber={selectedStopNumber}
-          onClose={() => setSelectedStopId(null)}
+          onClose={() => setOpenStopId(null)}
         />
       ) : null}
     </section>

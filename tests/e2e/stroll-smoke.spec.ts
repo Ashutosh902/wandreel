@@ -599,19 +599,25 @@ test("curation polling reaches ready and failed Stroll retry queues again", asyn
 test("ready Stroll detail shows fallback map, live unavailable, and adaptation dismiss", async ({ page }) => {
   const state = createApiState({ liveMode: "unavailable", adaptationMode: "recommended" });
   await installAppHarness(page, state);
+  await page.setViewportSize({ width: 390, height: 844 });
 
   await page.goto("/");
   await page.getByRole("button", { name: "Start or view Patna Stroll" }).click();
 
   await expect(page).toHaveURL(/\/stroll\/ready-stroll$/);
+  await expect(page.getByRole("heading", { name: "Golghar", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Begin Here" })).toBeVisible();
   await expect(page.getByText("Map preview unavailable")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open details for stop 1: Golghar" })).toBeVisible();
   await expect(page.getByText("Weather provider unavailable.")).toBeVisible();
+  const mapSectionBox = await page.getByTestId("stroll-map-section").boundingBox();
+  expect(mapSectionBox).not.toBeNull();
+  expect(mapSectionBox!.y).toBeGreaterThanOrEqual((page.viewportSize()?.height || 0) - 4);
 
+  await page.getByRole("button", { name: "Begin Here" }).click();
   await page.getByRole("button", { name: "Close stop details" }).click();
-  await expect(page.getByRole("region", { name: "Dynamic Stroll adaptation" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Route notes" })).toBeVisible();
   await page.getByRole("button", { name: "Keep the current Stroll order" }).click();
-  await expect(page.getByRole("region", { name: "Dynamic Stroll adaptation" })).toBeHidden();
+  await expect(page.getByRole("region", { name: "Route notes" })).toBeHidden();
 });
 
 test("adaptation accept persists reordered stops and bookmark state hydrates from backend", async ({ page }) => {
@@ -630,11 +636,11 @@ test("adaptation accept persists reordered stops and bookmark state hydrates fro
   await expect(page.getByRole("button", { name: "Remove saved hero idea" })).toBeVisible();
 
   await page.getByRole("button", { name: "Start or view Patna Stroll" }).click();
-  await page.getByRole("button", { name: "Close stop details" }).click();
   await page.getByRole("button", { name: "Accept the proposed Stroll stop order" }).click();
 
+  await expect(page.getByRole("heading", { name: "Bihar Museum Cafe", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Begin Here" }).click();
   await expect(page.getByRole("dialog", { name: "Bihar Museum Cafe" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Open details for stop 1: Bihar Museum Cafe" })).toBeVisible();
 });
 
 test("Stroll library error state is visible when the backend is unavailable", async ({ page }) => {

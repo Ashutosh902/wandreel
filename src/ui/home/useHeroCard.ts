@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { applyFoodTrailHeroEligibility, applyWeekendPlanHeroEligibility } from "./heroCardEligibility";
 import { normalizeHeroCardContent } from "./heroCardContent";
 import type { SavedPlaceRecord } from "./savedPlaces";
@@ -34,6 +34,18 @@ export const DEFAULT_DISCOVER_HERO_CARD: HeroCardData = {
   ctaAction: "add_first_place",
   metadata: { rule: "default" },
 };
+
+function isEquivalentHeroCard(current: HeroCardData | null, next: HeroCardData | null) {
+  if (!current || !next) return current === next;
+  return (
+    deriveHeroCardKey(current) === deriveHeroCardKey(next) &&
+    current.readyStrollId === next.readyStrollId &&
+    current.title === next.title &&
+    current.subtitle === next.subtitle &&
+    current.ctaLabel === next.ctaLabel &&
+    current.ctaAction === next.ctaAction
+  );
+}
 
 function buildHeroCardFreshnessStorageKey(userId: string | null) {
   const normalizedUserId = String(userId || "").trim();
@@ -100,6 +112,30 @@ function normalizeHeroCandidatesForHome(
     .filter((candidate): candidate is HeroCardData => candidate !== null);
 }
 
+export function selectHomeHeroCandidate(input: {
+  payload: HeroCardData;
+  visibleSavedPlaces: SavedPlaceRecord[];
+  currentLocationLabel: string;
+  freshnessState: HeroCardFreshnessState;
+  visibleHeroCardKey: string | null;
+}) {
+  const orderedCandidates = normalizeHeroCandidatesForHome(
+    [input.payload, ...(Array.isArray(input.payload.alternatives) ? input.payload.alternatives : [])],
+    input.visibleSavedPlaces,
+    input.currentLocationLabel,
+  );
+
+  const preferredCandidate = orderedCandidates.find((candidate) => {
+    const nextCardKey = deriveHeroCardKey(candidate);
+    const isInCooldown =
+      input.freshnessState.lastShownCardKey === nextCardKey &&
+      Date.now() - input.freshnessState.lastShownAtMs < HERO_CARD_COOLDOWN_MS;
+    return !isInCooldown || input.visibleHeroCardKey === nextCardKey;
+  });
+
+  return preferredCandidate || orderedCandidates[0] || null;
+}
+
 export function useHeroCard(options: {
   apiBaseUrl: string;
   currentLocationLabel: string;
@@ -107,20 +143,30 @@ export function useHeroCard(options: {
   userId: string | null;
   visibleSavedPlaces: SavedPlaceRecord[];
 }) {
-  const [heroCard, setHeroCard] = useState<HeroCardData | null>(DEFAULT_DISCOVER_HERO_CARD);
-  const visibleHeroCardKeyRef = useRef<string | null>(deriveHeroCardKey(DEFAULT_DISCOVER_HERO_CARD));
+  const [heroCard, setHeroCard] = useState<HeroCardData | null>(() => (
+    options.isAuthenticated ? null : DEFAULT_DISCOVER_HERO_CARD
+  ));
+  const visibleHeroCardKeyRef = useRef<string | null>(
+    options.isAuthenticated ? null : deriveHeroCardKey(DEFAULT_DISCOVER_HERO_CARD),
+  );
+  const defaultHeroCardKey = deriveHeroCardKey(DEFAULT_DISCOVER_HERO_CARD);
 
-  useEffect(() => {
-    visibleHeroCardKeyRef.current = heroCard ? deriveHeroCardKey(heroCard) : null;
-  }, [heroCard]);
+  const setVisibleHeroCard = useCallback((nextHeroCard: HeroCardData | null) => {
+    visibleHeroCardKeyRef.current = nextHeroCard ? deriveHeroCardKey(nextHeroCard) : null;
+    setHeroCard((current) => (isEquivalentHeroCard(current, nextHeroCard) ? current : nextHeroCard));
+  }, []);
 
   useEffect(() => {
     if (!options.isAuthenticated) {
-      setHeroCard(DEFAULT_DISCOVER_HERO_CARD);
+      setVisibleHeroCard(DEFAULT_DISCOVER_HERO_CARD);
       return;
     }
 
     let cancelled = false;
+
+    if (visibleHeroCardKeyRef.current === defaultHeroCardKey) {
+      setVisibleHeroCard(null);
+    }
 
     const syncHeroCard = async () => {
       try {
@@ -129,26 +175,21 @@ export function useHeroCard(options: {
         const payload = (await response.json()) as HeroCardData | null;
         if (!payload || !payload.title || cancelled) return;
         const freshnessState = readHeroCardFreshnessState(options.userId);
-        const orderedCandidates = normalizeHeroCandidatesForHome(
-          [payload, ...(Array.isArray(payload.alternatives) ? payload.alternatives : [])],
-          options.visibleSavedPlaces,
-          options.currentLocationLabel,
-        );
-        const selectedCandidate = orderedCandidates.find((candidate) => {
-          const nextCardKey = deriveHeroCardKey(candidate);
-          const isInCooldown =
-            freshnessState.lastShownCardKey === nextCardKey &&
-            Date.now() - freshnessState.lastShownAtMs < HERO_CARD_COOLDOWN_MS;
-          return !isInCooldown || visibleHeroCardKeyRef.current === nextCardKey;
-        }) || null;
+        const selectedCandidate = selectHomeHeroCandidate({
+          payload,
+          visibleSavedPlaces: options.visibleSavedPlaces,
+          currentLocationLabel: options.currentLocationLabel,
+          freshnessState,
+          visibleHeroCardKey: visibleHeroCardKeyRef.current,
+        });
 
         if (!selectedCandidate) {
-          setHeroCard(null);
+          setVisibleHeroCard(null);
           return;
         }
 
         const nextCardKey = deriveHeroCardKey(selectedCandidate);
-        setHeroCard(selectedCandidate);
+        setVisibleHeroCard(selectedCandidate);
         writeHeroCardFreshnessState(options.userId, {
           ...freshnessState,
           lastShownCardKey: nextCardKey,
@@ -163,7 +204,15 @@ export function useHeroCard(options: {
     return () => {
       cancelled = true;
     };
-  }, [options.apiBaseUrl, options.currentLocationLabel, options.isAuthenticated, options.userId, options.visibleSavedPlaces]);
+  }, [
+    defaultHeroCardKey,
+    options.apiBaseUrl,
+    options.currentLocationLabel,
+    options.isAuthenticated,
+    options.userId,
+    options.visibleSavedPlaces,
+    setVisibleHeroCard,
+  ]);
 
   return { heroCard };
 }

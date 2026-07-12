@@ -23,8 +23,8 @@
 .app-shell-root.wr-admin-page-active .main-layer {
   min-height: 100dvh;
 }
-.main-layer.is-hidden { opacity: 0; }
-.main-layer.is-visible { opacity: 1; }
+.main-layer.is-hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+.main-layer.is-visible { opacity: 1; visibility: visible; pointer-events: auto; }
 
 .wr-offline-banner {
   position: fixed;
