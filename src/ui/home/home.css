@@ -117,6 +117,74 @@
   will-change: transform, opacity;
 }
 
+.wr-hero-stroll-transition-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  pointer-events: none;
+}
+
+.wr-hero-stroll-transition-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(252, 248, 240, 0.18);
+  backdrop-filter: blur(8px);
+  opacity: 0;
+  animation: wr-hero-stroll-backdrop var(--wr-hero-stroll-transition-duration, 380ms) cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.wr-hero-stroll-transition-card {
+  position: fixed;
+  transform-origin: center center;
+  animation: wr-hero-stroll-card var(--wr-hero-stroll-transition-duration, 380ms) cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+
+.wr-hero-stroll-transition-layer.is-reduced-motion .wr-hero-stroll-transition-backdrop {
+  backdrop-filter: none;
+}
+
+.wr-hero-stroll-transition-layer.is-reduced-motion .wr-hero-stroll-transition-card {
+  animation-name: wr-hero-stroll-card-reduced;
+}
+
+@keyframes wr-hero-stroll-backdrop {
+  0% {
+    opacity: 0;
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes wr-hero-stroll-card {
+  0% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  55% {
+    opacity: 0.96;
+    transform: translateY(-8px) scale(1.03);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-14px) scale(1.015);
+  }
+}
+
+@keyframes wr-hero-stroll-card-reduced {
+  0% {
+    opacity: 1;
+    transform: none;
+  }
+  100% {
+    opacity: 0;
+    transform: none;
+  }
+}
+
 .wr-home-surface-map {
   height: 100%;
   padding: 0;
@@ -148,6 +216,9 @@
 .wr-bucketlist-wrap,
 .wr-recent-wrap { position: relative; z-index: 1; }
 .wr-location-section { z-index: 40; }
+.wr-hero-card.is-presentation-only {
+  pointer-events: none;
+}
 
 .wr-home-header {
   display: flex;

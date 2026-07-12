@@ -125,6 +125,16 @@ type HeroBookmarkRow = {
   updated_at: string | Date;
 };
 
+type ReadyHeroStrollCandidateRow = {
+  id: string;
+  user_id: string;
+  city: string;
+  source: StrollSource;
+  interests_json: unknown;
+  stop_place_ids_json: unknown;
+  stop_categories_json: unknown;
+};
+
 const strollSelectColumns = `
   s.id,
   s.name,
@@ -582,6 +592,52 @@ export async function listStrolls(userId: string, includeArchived = false): Prom
     [userId, includeArchived],
   );
   return result.rows.map(mapStrollRow);
+}
+
+export type ReadyHeroStrollCandidate = {
+  id: string;
+  userId: string;
+  city: string;
+  source: StrollSource;
+  interests: string[];
+  stopPlaceIds: string[];
+  stopCategories: string[];
+};
+
+export async function listReadyHeroStrollCandidates(userId: string): Promise<ReadyHeroStrollCandidate[]> {
+  const result = await database().query<ReadyHeroStrollCandidateRow>(
+    `select s.id,
+            s.user_id,
+            s.city,
+            s.source,
+            s.interests_json,
+            coalesce(
+              json_agg(ss.place_id order by ss.sequence) filter (where ss.place_id is not null),
+              '[]'::json
+            ) as stop_place_ids_json,
+            coalesce(
+              json_agg(usp.category order by ss.sequence) filter (where usp.category is not null),
+              '[]'::json
+            ) as stop_categories_json
+     from strolls s
+     left join stroll_stops ss on ss.stroll_id = s.id
+     left join user_saved_places usp
+       on usp.user_id = s.user_id and usp.place_id = ss.place_id
+     where s.user_id = $1 and s.status = 'ready'
+     group by s.id, s.user_id, s.city, s.source, s.interests_json, s.updated_at
+     order by s.updated_at desc`,
+    [userId],
+  );
+
+  return result.rows.map((row) => ({
+    id: row.id,
+    userId: row.user_id,
+    city: row.city,
+    source: row.source,
+    interests: toStringArray(row.interests_json),
+    stopPlaceIds: toStringArray(row.stop_place_ids_json),
+    stopCategories: toStringArray(row.stop_categories_json),
+  }));
 }
 
 export async function getStrollSummary(userId: string, strollId: string): Promise<StrollSummary | null> {

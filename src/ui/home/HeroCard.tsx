@@ -1,4 +1,5 @@
 import { Bookmark } from "lucide-react";
+import type { Ref } from "react";
 
 type HeroCardMode = "empty-memory" | "city-memory";
 
@@ -11,6 +12,8 @@ export function HeroCard({
   isBookmarked = false,
   isBookmarkBusy = false,
   onBookmarkToggle,
+  containerRef,
+  isPresentationOnly = false,
 }: {
   mode: HeroCardMode;
   title: string;
@@ -20,9 +23,14 @@ export function HeroCard({
   isBookmarked?: boolean;
   isBookmarkBusy?: boolean;
   onBookmarkToggle?: () => void;
+  containerRef?: Ref<HTMLElement>;
+  isPresentationOnly?: boolean;
 }) {
   return (
-    <section className={`wr-hero-card wr-hero-card-${mode}`}>
+    <section
+      ref={containerRef}
+      className={`wr-hero-card wr-hero-card-${mode} ${isPresentationOnly ? "is-presentation-only" : ""}`}
+    >
       <div className={`wr-hero-overlay wr-hero-overlay-${mode}`} />
       <div className="wr-hero-glow wr-hero-glow-right" />
       <div className="wr-hero-glow wr-hero-glow-left" />
@@ -43,7 +51,7 @@ export function HeroCard({
           <h2>{title}</h2>
           <p>{subtitle}</p>
           {ctaLabel ? (
-            <button type="button" className="wr-hero-cta" onClick={onCtaClick}>
+            <button type="button" className="wr-hero-cta" onClick={onCtaClick} tabIndex={isPresentationOnly ? -1 : 0}>
               {ctaLabel}
             </button>
           ) : null}

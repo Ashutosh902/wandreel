@@ -6,6 +6,16 @@ import { BucketlistSummary } from "./BucketlistSummary";
 import { CategoryDetailPage } from "./CategoryDetailPage";
 import { AddScreen } from "./AddScreen";
 import { FoodTrailScreen } from "./FoodTrailScreen";
+import { HeroStrollTransitionCoordinator } from "./HeroStrollTransitionCoordinator";
+import {
+  buildHeroStrollTransitionPlan,
+  captureHeroStrollTransitionSource,
+  createHeroStrollTransitionCoordinator,
+  resolveReadyHeroStroll,
+  type HeroStrollTransitionSource,
+  type HeroStrollTransitionRequest,
+  type HeroTransitionCardMode,
+} from "./heroStrollTransition";
 import {
   createFoodTrailDemoPlaces,
   FOOD_TRAIL_DEMO_QUERY_PARAM,
@@ -76,6 +86,7 @@ import { useHomeGestures } from "./useHomeGestures";
 import { useHomeNavigation } from "./useHomeNavigation";
 import { useReadyNotifications } from "./useReadyNotifications";
 import { useStrollLibrary } from "./useStrollLibrary";
+import { fetchStrollDetail } from "./strollLibrary";
 import "./home.css";
 
 runHomeDataChecks();
@@ -141,7 +152,7 @@ function DiscoverPage({
   savedPlacesByCategory: Record<CategoryLabel, SavedPlaceRecord[]>;
   recentSavedPlaces: SavedPlaceRecord[];
   heroCard: HeroCardData | null;
-  onHeroCta: (card: HeroCardData) => void;
+  onHeroCta: (card: HeroCardData, source: HeroStrollTransitionSource | null, mode: HeroTransitionCardMode) => void;
   heroBookmarkKeys: string[];
   pendingHeroBookmarkCardKey: string | null;
   onHeroBookmarkToggle: (card: HeroCardData) => void;
@@ -155,6 +166,7 @@ function DiscoverPage({
   onStartStroll: (stroll: PersistentStrollSummary) => void;
   currentLocationLabel: string;
 }) {
+  const heroCardRef = useRef<HTMLElement | null>(null);
   const counts = getSavedPlaceCounts(savedPlacesByCategory);
   const displayHeroCard = heroCard ? normalizeHeroCardContent(heroCard, currentLocationLabel, flattenSavedPlaces(savedPlacesByCategory)) : null;
   const displayHeroCardKey = displayHeroCard ? deriveHeroCardKey(displayHeroCard) : null;
@@ -203,10 +215,19 @@ function DiscoverPage({
               title={displayHeroCard.title}
               subtitle={displayHeroCard.subtitle}
               ctaLabel={displayHeroCard.ctaLabel}
-              onCtaClick={() => onHeroCta(displayHeroCard)}
+              onCtaClick={() => onHeroCta(
+                displayHeroCard,
+                captureHeroStrollTransitionSource({
+                  element: heroCardRef.current,
+                  mode: heroMode,
+                  card: displayHeroCard,
+                }),
+                heroMode,
+              )}
               isBookmarked={displayHeroCardKey ? heroBookmarkKeys.includes(displayHeroCardKey) : false}
               isBookmarkBusy={displayHeroCardKey ? pendingHeroBookmarkCardKey === displayHeroCardKey : false}
               onBookmarkToggle={() => onHeroBookmarkToggle(displayHeroCard)}
+              containerRef={heroCardRef}
             />
           ) : null}
           {showStrollLibrary ? (
@@ -377,7 +398,15 @@ export function HomeScreen() {
   const [strollOnboardingAction, setStrollOnboardingAction] = useState<"accept" | "decline" | null>(null);
   const [transitionDirection, setTransitionDirection] = useState(1);
   const [isScrolled, setIsScrolled] = useState(false);
+  const [heroStrollTransition, setHeroStrollTransition] = useState<HeroStrollTransitionRequest | null>(null);
   const isPollingAddJobsRef = useRef(false);
+  const heroStrollTransitionCoordinatorRef = useRef(
+    createHeroStrollTransitionCoordinator({
+      onSettled: (key) => {
+        setHeroStrollTransition((current) => (current?.key === key ? null : current));
+      },
+    }),
+  );
   const isMapTab = activeTab === "Map";
   const isAddTab = activeTab === "Add";
   const isCategoryView = activeTab === "Discover" && activeCategory !== null;
@@ -465,6 +494,7 @@ export function HomeScreen() {
     });
   }, []);
   const openStrollCreate = useCallback(() => {
+    setHeroStrollTransition(null);
     clearHeroNavigationContext();
     setTransitionDirection(1);
     setActiveTab("Discover");
@@ -477,6 +507,26 @@ export function HomeScreen() {
   const refreshSavedPlaces = useCallback(() => {
     setSavedPlacesByCategory(isAuthenticated ? readSavedPlacesByCategory() : createEmptySavedPlacesByCategory());
   }, [isAuthenticated]);
+
+  useEffect(() => {
+    const transitionCoordinator = heroStrollTransitionCoordinatorRef.current;
+    return () => {
+      transitionCoordinator.destroy();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!heroStrollTransition) return;
+    heroStrollTransitionCoordinatorRef.current.arm(heroStrollTransition);
+  }, [heroStrollTransition]);
+
+  useEffect(() => {
+    if (!heroStrollTransition) return;
+    const activeStrollId = getStrollIdFromPlannerRoute(plannerRoute);
+    if (!plannerRoute.startsWith("stroll-detail:") || activeStrollId !== heroStrollTransition.strollId) {
+      setHeroStrollTransition(null);
+    }
+  }, [heroStrollTransition, plannerRoute]);
 
   useEffect(() => {
     if (!isAuthenticated) {
@@ -532,6 +582,7 @@ export function HomeScreen() {
   }, [activeTab]);
 
   const openAddForReview = useCallback((runId: number) => {
+    setHeroStrollTransition(null);
     setReviewRunId(runId);
     setTransitionDirection(getTabOrderIndex("Add") >= getTabOrderIndex(activeTab) ? 1 : -1);
     setActiveCategory(null);
@@ -725,18 +776,21 @@ export function HomeScreen() {
     }
 
     if (plannerRoute === "food-trail") {
+      setHeroStrollTransition(null);
       setTransitionDirection(-1);
       setPlannerPath("home", true);
       return;
     }
 
     if (plannerRoute === "stroll-create") {
+      setHeroStrollTransition(null);
       setTransitionDirection(-1);
       setPlannerPath("home", true);
       return;
     }
 
     if (plannerRoute.startsWith("stroll-detail:")) {
+      setHeroStrollTransition(null);
       setTransitionDirection(-1);
       setPlannerPath("home", true);
       return;
@@ -820,6 +874,7 @@ export function HomeScreen() {
   };
 
   const handleStartStroll = useCallback((stroll: PersistentStrollSummary) => {
+    setHeroStrollTransition(null);
     clearHeroNavigationContext();
     setTransitionDirection(1);
     setActiveTab("Discover");
@@ -932,7 +987,9 @@ export function HomeScreen() {
       return strollId ? (
         <LazyStrollDetailScreen
           strollId={strollId}
+          allowInitialJourneyMotionStart={heroStrollTransition?.strollId !== strollId}
           onBack={() => {
+            setHeroStrollTransition(null);
             setTransitionDirection(-1);
             setPlannerPath("home", true);
           }}
@@ -976,21 +1033,12 @@ export function HomeScreen() {
           onCreateStroll={openStrollCreate}
           onRetryStroll={handleRetryStroll}
           onStartStroll={handleStartStroll}
-          onHeroCta={(card) => {
+          onHeroCta={(card, source) => {
             console.info("[hero-card] selected action", card.ctaAction, card.metadata);
             const plannerSelection = resolveHeroCardPlannerSelection(
               card,
               createLocalSavedPlacesPlannerDataSource(visibleSavedPlaces),
             );
-
-            if (card.ctaAction === "add_first_place" || card.ctaAction === "grow_saved_places") {
-              clearHeroNavigationContext();
-              setTransitionDirection(1);
-              setActiveCategory(null);
-              setActiveTab("Add");
-              return;
-            }
-
             const openCategoryFromHero = (category: CategoryLabel, sourcePlaces: SavedPlaceRecord[]) => {
               const categoryPlaces = sourcePlaces.filter((place) => place.category === category);
               if (!categoryPlaces.length) {
@@ -1024,44 +1072,106 @@ export function HomeScreen() {
                 cityName: resolvedCityName,
               });
               clearHeroNavigationContext();
+              setHeroStrollTransition(null);
               setTransitionDirection(1);
               setActiveCategory(null);
               setActiveTab("Discover");
               setPlannerPath("weekend-plan");
             };
 
-            if (
-              card.ctaAction === "build_food_trail" ||
-              card.ctaAction === "view_dominant_category" && plannerSelection.targetCategory === "Taste"
-            ) {
-              if (card.ctaAction === "build_food_trail") {
-                const tastePlaces = plannerSelection.getCategoryPlaces("Taste");
-                const tastePlaceIds = tastePlaces.map((place) => String(place.placeId || place.id || "").trim()).filter(Boolean);
-                setFoodTrailPlannerContext({
-                  matchingPlaceIds: tastePlaceIds.length ? tastePlaceIds : null,
-                });
+            const runFallbackHeroAction = () => {
+              if (card.ctaAction === "add_first_place" || card.ctaAction === "grow_saved_places") {
+                setHeroStrollTransition(null);
                 clearHeroNavigationContext();
                 setTransitionDirection(1);
-                setActiveTab("Discover");
                 setActiveCategory(null);
-                setPlannerPath("food-trail");
+                setActiveTab("Add");
                 return;
               }
-              openCategoryFromHero("Taste", plannerSelection.getCategoryPlaces("Taste"));
-              return;
-            }
 
-            if (isWeekendPlannerAction(card.ctaAction, plannerSelection.targetCategory)) {
-              openWeekendPlanFromHero(plannerSelection.getCityPlaces());
-              return;
-            }
+              if (
+                card.ctaAction === "build_food_trail" ||
+                card.ctaAction === "view_dominant_category" && plannerSelection.targetCategory === "Taste"
+              ) {
+                if (card.ctaAction === "build_food_trail") {
+                  const tastePlaces = plannerSelection.getCategoryPlaces("Taste");
+                  const tastePlaceIds = tastePlaces.map((place) => String(place.placeId || place.id || "").trim()).filter(Boolean);
+                  setFoodTrailPlannerContext({
+                    matchingPlaceIds: tastePlaceIds.length ? tastePlaceIds : null,
+                  });
+                  clearHeroNavigationContext();
+                  setHeroStrollTransition(null);
+                  setTransitionDirection(1);
+                  setActiveTab("Discover");
+                  setActiveCategory(null);
+                  setPlannerPath("food-trail");
+                  return;
+                }
+                openCategoryFromHero("Taste", plannerSelection.getCategoryPlaces("Taste"));
+                return;
+              }
 
-            if (card.ctaAction === "view_dominant_category" && plannerSelection.targetCategory) {
-              openCategoryFromHero(plannerSelection.targetCategory, plannerSelection.getCategoryPlaces(plannerSelection.targetCategory));
-              return;
-            }
+              if (isWeekendPlannerAction(card.ctaAction, plannerSelection.targetCategory)) {
+                openWeekendPlanFromHero(plannerSelection.getCityPlaces());
+                return;
+              }
 
-            showToast({ message: `${card.ctaLabel} coming soon`, variant: "success", durationMs: 1800 });
+              if (card.ctaAction === "view_dominant_category" && plannerSelection.targetCategory) {
+                openCategoryFromHero(plannerSelection.targetCategory, plannerSelection.getCategoryPlaces(plannerSelection.targetCategory));
+                return;
+              }
+
+              showToast({ message: `${card.ctaLabel} coming soon`, variant: "success", durationMs: 1800 });
+            };
+
+            const attemptReadyHeroTransition = async () => {
+              const readyHeroStroll = await resolveReadyHeroStroll({
+                card,
+                strolls,
+                strollLibraryState,
+                verifyStroll: async (strollId) => {
+                  try {
+                    return await fetchStrollDetail(API_BASE_URL, strollId);
+                  } catch {
+                    return null;
+                  }
+                },
+              });
+              const heroReadyStrollPlan = readyHeroStroll
+                ? buildHeroStrollTransitionPlan({
+                    card,
+                    strolls: [readyHeroStroll],
+                    source,
+                    prefersReducedMotion: Boolean(prefersReducedMotion),
+                  })
+                : null;
+
+              if (!heroReadyStrollPlan) {
+                runFallbackHeroAction();
+                return;
+              }
+
+              clearHeroNavigationContext();
+              setTransitionDirection(1);
+              setActiveTab("Discover");
+              setActiveCategory(null);
+              setMapEntryMode("global");
+              setMapSourceCategory(null);
+              if (heroReadyStrollPlan.kind === "transition" && heroReadyStrollPlan.source) {
+                setHeroStrollTransition({
+                  key: `${heroReadyStrollPlan.strollId}:${Date.now()}`,
+                  strollId: heroReadyStrollPlan.strollId,
+                  source: heroReadyStrollPlan.source,
+                  durationMs: heroReadyStrollPlan.durationMs,
+                  reducedMotion: heroReadyStrollPlan.reducedMotion,
+                });
+              } else {
+                setHeroStrollTransition(null);
+              }
+              setPlannerPath(getStrollDetailRoute(heroReadyStrollPlan.strollId));
+            };
+
+            void attemptReadyHeroTransition();
           }}
           onViewMap={(category) => {
             clearHeroNavigationContext();
@@ -1140,6 +1250,7 @@ export function HomeScreen() {
     heroFilteredPlacesByCategory,
     heroCard,
     heroBookmarkKeys,
+    heroStrollTransition?.strollId,
     heroNavigationContext.mapCategories,
     heroNavigationContext.mapPlaces,
     handleHeroBookmarkToggle,
@@ -1160,6 +1271,7 @@ export function HomeScreen() {
     strolls,
     retryingStrollId,
     currentLocationLabel,
+    prefersReducedMotion,
     visibleSavedPlaces,
     visibleSavedPlacesByCategory,
     plannerRoute,
@@ -1191,6 +1303,7 @@ export function HomeScreen() {
           {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob one" /> : null}
           {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob two" /> : null}
           {activeTab !== "Login" && activeTab !== "Map" ? <div className="wr-bg-blob three" /> : null}
+          <HeroStrollTransitionCoordinator transition={heroStrollTransition} />
 
           <motion.section
             key={pageKey}

@@ -90,6 +90,7 @@ export function shouldStartJourneyMotion({
   loadState,
   hasUserInteracted,
   hasStartedJourney,
+  allowInitialMotionStart,
   prefersReducedMotion,
   isEnabled,
   fallbackReason,
@@ -98,12 +99,13 @@ export function shouldStartJourneyMotion({
   loadState: "loading" | "ready" | "error";
   hasUserInteracted: boolean;
   hasStartedJourney: boolean;
+  allowInitialMotionStart: boolean;
   prefersReducedMotion: boolean;
   isEnabled: boolean;
   fallbackReason: string | null;
   routePointCount: number;
 }) {
-  return loadState === "ready" && !hasUserInteracted && !hasStartedJourney && !prefersReducedMotion && isEnabled && !fallbackReason && routePointCount >= 2;
+  return loadState === "ready" && allowInitialMotionStart && !hasUserInteracted && !hasStartedJourney && !prefersReducedMotion && isEnabled && !fallbackReason && routePointCount >= 2;
 }
 
 export function buildJourneyFootprints(routePoints: JourneyPoint[], currentLocation?: JourneyPoint | null) {

@@ -56,6 +56,7 @@ import { canonicalizeUrl } from "./extraction/url";
 import { runDatabaseMigrations } from "./db/migrations";
 import { registerStrollRoutes } from "./stroll/routes";
 import { strollCurationJobStore } from "./stroll/jobStore";
+import { listReadyHeroStrollCandidates, type ReadyHeroStrollCandidate } from "./stroll/store";
 
 const app = express();
 const googleIdTokenClient = new OAuth2Client();
@@ -472,6 +473,7 @@ type HeroCardBase = {
   priorityScore: number;
   reasonCodes: string[];
   metadata: Record<string, unknown>;
+  readyStrollId?: string;
 };
 
 type HeroCardResponse = HeroCardBase & {
@@ -495,6 +497,104 @@ type HeroCandidateInput = {
 };
 
 type HeroCardCandidate = HeroCardBase;
+
+function normalizeHeroPlaceIdList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || "").trim()).filter(Boolean);
+}
+
+function readHeroMetadataString(card: HeroCardBase, key: string): string | null {
+  return normalizeHeroField(card.metadata?.[key]);
+}
+
+function normalizeHeroSemanticToken(value: string | null | undefined): string {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function getHeroCategorySemanticTokens(category: string | null | undefined) {
+  const normalized = normalizeHeroSemanticToken(category);
+  if (normalized === "taste") return new Set(["taste", "food", "foods", "cafe", "cafes", "restaurant", "restaurants", "dining"]);
+  if (normalized === "explore") return new Set(["explore", "exploring", "sightseeing", "landmarks", "outdoor"]);
+  if (normalized === "activity") return new Set(["activity", "activities", "experience", "experiences", "adventure"]);
+  if (normalized === "stay") return new Set(["stay", "stays", "hotel", "hotels", "lodging", "accommodation"]);
+  return new Set(normalized ? [normalized] : []);
+}
+
+function strollMatchesHeroCategory(candidate: ReadyHeroStrollCandidate, targetCategory: string | null) {
+  if (!targetCategory) return true;
+  const semanticTokens = getHeroCategorySemanticTokens(targetCategory);
+  if (!semanticTokens.size) return true;
+  const normalizedStopCategories = candidate.stopCategories.map((value) => normalizeHeroSemanticToken(value));
+  const normalizedInterests = candidate.interests.map((value) => normalizeHeroSemanticToken(value));
+  return (
+    normalizedStopCategories.some((value) => semanticTokens.has(value)) ||
+    normalizedInterests.some((value) => semanticTokens.has(value))
+  );
+}
+
+function strollMatchesHeroAction(candidate: ReadyHeroStrollCandidate, card: HeroCardBase, targetCategory: string | null) {
+  if (candidate.source === "onboarding") return false;
+
+  if (card.ctaAction === "build_food_trail") {
+    return strollMatchesHeroCategory(candidate, "Taste");
+  }
+  if (card.ctaAction === "plan_weekend_explore") {
+    return strollMatchesHeroCategory(candidate, "Explore");
+  }
+  if (card.ctaAction === "view_dominant_category" && targetCategory) {
+    return strollMatchesHeroCategory(candidate, targetCategory);
+  }
+  if (card.ctaAction === "view_city_plan" || card.ctaAction === "create_itinerary") {
+    return candidate.stopPlaceIds.length >= 2;
+  }
+  return false;
+}
+
+function findMatchingReadyStrollId(
+  card: HeroCardBase,
+  readyStrollCandidates: ReadyHeroStrollCandidate[],
+  userId: string,
+) {
+  const targetCity = normalizeHeroSemanticToken(readHeroMetadataString(card, "targetCity"));
+  const targetCategory = readHeroMetadataString(card, "targetCategory");
+  const heroMatchingPlaceIds = normalizeHeroPlaceIdList(card.metadata?.matchingPlaceIds);
+  const heroMatchingPlaceIdSet = new Set(heroMatchingPlaceIds);
+  const minimumOverlap = heroMatchingPlaceIds.length >= 2 ? 2 : heroMatchingPlaceIds.length;
+
+  const matches = readyStrollCandidates.filter((candidate) => {
+    if (candidate.userId !== userId) return false;
+    if (!strollMatchesHeroAction(candidate, card, targetCategory)) return false;
+
+    const normalizedCandidateCity = normalizeHeroSemanticToken(candidate.city);
+    if (targetCity && normalizedCandidateCity !== targetCity) return false;
+
+    if (heroMatchingPlaceIdSet.size > 0) {
+      if (!candidate.stopPlaceIds.length) return false;
+      const overlapCount = candidate.stopPlaceIds.filter((placeId) => heroMatchingPlaceIdSet.has(placeId)).length;
+      if (overlapCount < minimumOverlap) return false;
+      if (candidate.stopPlaceIds.some((placeId) => !heroMatchingPlaceIdSet.has(placeId))) return false;
+    }
+
+    if (targetCategory && !strollMatchesHeroCategory(candidate, targetCategory)) return false;
+
+    return true;
+  });
+
+  return matches.length === 1 ? matches[0]?.id || null : null;
+}
+
+function attachReadyStrollId(
+  card: HeroCardCandidate,
+  readyStrollCandidates: ReadyHeroStrollCandidate[],
+  userId: string,
+): HeroCardCandidate {
+  const readyStrollId = findMatchingReadyStrollId(card, readyStrollCandidates, userId);
+  if (!readyStrollId) return card;
+  return {
+    ...card,
+    readyStrollId,
+  };
+}
 
 function normalizeHeroField(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -647,7 +747,11 @@ function buildFallbackHeroCard(totalSaves: number): HeroCardCandidate {
   };
 }
 
-function buildHeroCardFromSavedPlaces(items: HeroCardSavedPlace[]): HeroCardResponse {
+function buildHeroCardFromSavedPlaces(
+  items: HeroCardSavedPlace[],
+  readyStrollCandidates: ReadyHeroStrollCandidate[] = [],
+  userId: string | null = null,
+): HeroCardResponse {
   const totalSaves = items.length;
   if (totalSaves < 3) {
     return {
@@ -894,7 +998,10 @@ function buildHeroCardFromSavedPlaces(items: HeroCardSavedPlace[]): HeroCardResp
 
   const sortedCandidates = candidateCards
     .sort((a, b) => b.priorityScore - a.priorityScore);
-  const selectedCard = sortedCandidates[0] || buildFallbackHeroCard(totalSaves);
+  const baseSelectedCard = sortedCandidates[0] || buildFallbackHeroCard(totalSaves);
+  const selectedCard = userId
+    ? attachReadyStrollId(baseSelectedCard, readyStrollCandidates, userId)
+    : baseSelectedCard;
   const seenCardKeys = new Set<string>([selectedCard.cardKey]);
   const seenSemanticIdentities = new Set<string>([
     buildHeroSemanticIdentity({
@@ -2707,7 +2814,8 @@ app.get("/api/hero-card", requireAuth, async (req, res) => {
   try {
     const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
     const items = await listSavedPlaces(authUser!.userId);
-    const card = buildHeroCardFromSavedPlaces(items as HeroCardSavedPlace[]);
+    const readyStrollCandidates = await listReadyHeroStrollCandidates(authUser!.userId);
+    const card = buildHeroCardFromSavedPlaces(items as HeroCardSavedPlace[], readyStrollCandidates, authUser!.userId);
     return res.json(card);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not build hero card";

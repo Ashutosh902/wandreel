@@ -988,11 +988,18 @@ test("saved places route saves normally when placeId is missing by using stable 
   assert.match(String(insertCall?.params?.[2] || ""), /^manual:/);
 });
 
-async function fetchHeroCardForSavedPlaces(savedRows: Array<Record<string, unknown>>) {
+async function fetchHeroCardForSavedPlaces(
+  savedRows: Array<Record<string, unknown>>,
+  options: {
+    readyStrollRows?: Array<Record<string, unknown>>;
+    authUserOverrides?: Partial<Record<string, unknown>>;
+  } = {},
+) {
   process.env.NODE_ENV = "test";
   const mock = createDatabaseMock([
-    [buildAuthSessionUserRow()],
+    [buildAuthSessionUserRow(options.authUserOverrides)],
     savedRows,
+    options.readyStrollRows ?? [],
   ]);
   __setPostgresTestConfig({
     databaseOverride: mock.db,
@@ -1010,7 +1017,7 @@ async function fetchHeroCardForSavedPlaces(savedRows: Array<Record<string, unkno
       headers: { Cookie: "wr_session=test-token" },
     });
     const body = await response.json() as any;
-    return { response, body };
+    return { response, body, calls: mock.calls };
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
@@ -1788,6 +1795,302 @@ test("hero card can surface a meaningful secondary category as an alternative", 
   assert.equal(body.metadata?.rule, "taste_trail");
   assert.ok(Array.isArray(body.alternatives));
   assert.ok(body.alternatives.some((item: any) => item.metadata?.rule === "secondary_explore"));
+});
+
+test("matching ready Stroll adds canonical readyStrollId", async () => {
+  const savedRows = [
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Cafe One",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Anjuna" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Cafe Two",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Vagator" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Cafe Three",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Morjim" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    }, {
+      id: "saved-4",
+      user_id: "user-1",
+      place_id: "place-4",
+      title: "Cafe Four",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Assagao" },
+      created_at: "2026-01-04T00:00:00.000Z",
+      updated_at: "2026-01-04T00:00:00.000Z",
+    }, {
+      id: "saved-5",
+      user_id: "user-1",
+      place_id: "place-5",
+      title: "Cafe Five",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Siolim" },
+      created_at: "2026-01-05T00:00:00.000Z",
+      updated_at: "2026-01-05T00:00:00.000Z",
+    },
+  ];
+  const { response, body } = await fetchHeroCardForSavedPlaces(savedRows, {
+    readyStrollRows: [{
+      id: "stroll-1",
+      user_id: "user-1",
+      city: "Goa",
+      source: "hero",
+      interests_json: ["Taste"],
+      stop_place_ids_json: ["place-1", "place-2", "place-3"],
+      stop_categories_json: ["Taste", "Taste", "Taste"],
+    }],
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.ctaAction, "build_food_trail");
+  assert.equal(body.readyStrollId, "stroll-1");
+});
+
+test("no reliable ready Stroll match leaves readyStrollId absent", async () => {
+  const savedRows = [
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Cafe One",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Anjuna" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Cafe Two",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Vagator" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Cafe Three",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Morjim" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    }, {
+      id: "saved-4",
+      user_id: "user-1",
+      place_id: "place-4",
+      title: "Cafe Four",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Assagao" },
+      created_at: "2026-01-04T00:00:00.000Z",
+      updated_at: "2026-01-04T00:00:00.000Z",
+    }, {
+      id: "saved-5",
+      user_id: "user-1",
+      place_id: "place-5",
+      title: "Cafe Five",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Siolim" },
+      created_at: "2026-01-05T00:00:00.000Z",
+      updated_at: "2026-01-05T00:00:00.000Z",
+    },
+  ];
+  const { response, body } = await fetchHeroCardForSavedPlaces(savedRows, {
+    readyStrollRows: [{
+      id: "stroll-2",
+      user_id: "user-1",
+      city: "Goa",
+      source: "hero",
+      interests_json: ["Taste"],
+      stop_place_ids_json: ["place-1", "place-2", "outside-place"],
+      stop_categories_json: ["Taste", "Taste", "Taste"],
+    }],
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.ctaAction, "build_food_trail");
+  assert.equal("readyStrollId" in body, false);
+});
+
+test("hero ready Stroll lookup is scoped to authenticated user and ready status only", async () => {
+  const { calls } = await fetchHeroCardForSavedPlaces([
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Cafe One",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Anjuna" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Cafe Two",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Vagator" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Cafe Three",
+      category: "Taste",
+      metadata_json: { city: "Goa", locality: "Morjim" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    },
+  ]);
+
+  const readyLookupCall = calls.find((call) => /from strolls s/i.test(call.sql) && /json_agg\(ss\.place_id/i.test(call.sql));
+  assert.ok(readyLookupCall);
+  assert.match(readyLookupCall?.sql || "", /where s\.user_id = \$1 and s\.status = 'ready'/i);
+  assert.equal(readyLookupCall?.params?.[0], "user-1");
+});
+
+test("cross-user and category-mismatched ready Stroll rows are rejected", async () => {
+  const savedRows = [
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Walk One",
+      category: "Explore",
+      metadata_json: { city: "Jaipur", locality: "Amer" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Walk Two",
+      category: "Explore",
+      metadata_json: { city: "Jaipur", locality: "Pink City" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Walk Three",
+      category: "Explore",
+      metadata_json: { city: "Jaipur", locality: "Nahargarh" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    }, {
+      id: "saved-4",
+      user_id: "user-1",
+      place_id: "place-4",
+      title: "Walk Four",
+      category: "Explore",
+      metadata_json: { city: "Jaipur", locality: "Bapu Nagar" },
+      created_at: "2026-01-04T00:00:00.000Z",
+      updated_at: "2026-01-04T00:00:00.000Z",
+    }, {
+      id: "saved-5",
+      user_id: "user-1",
+      place_id: "place-5",
+      title: "Walk Five",
+      category: "Explore",
+      metadata_json: { city: "Jaipur", locality: "Jal Mahal" },
+      created_at: "2026-01-05T00:00:00.000Z",
+      updated_at: "2026-01-05T00:00:00.000Z",
+    },
+  ];
+  const { response, body } = await fetchHeroCardForSavedPlaces(savedRows, {
+    readyStrollRows: [
+      {
+        id: "stroll-cross-user",
+        user_id: "user-2",
+        city: "Jaipur",
+        source: "hero",
+        interests_json: ["Explore"],
+        stop_place_ids_json: ["place-1", "place-2", "place-3"],
+        stop_categories_json: ["Explore", "Explore", "Explore"],
+      },
+      {
+        id: "stroll-category-mismatch",
+        user_id: "user-1",
+        city: "Jaipur",
+        source: "hero",
+        interests_json: ["Taste"],
+        stop_place_ids_json: ["place-1", "place-2", "place-3"],
+        stop_categories_json: ["Taste", "Taste", "Taste"],
+      },
+    ],
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.ctaAction, "plan_weekend_explore");
+  assert.equal("readyStrollId" in body, false);
+});
+
+test("city mismatch is rejected for city-plan hero matching", async () => {
+  const savedRows = [
+    {
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Food One",
+      category: "Taste",
+      metadata_json: { city: "Jaipur", locality: "Amer" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }, {
+      id: "saved-2",
+      user_id: "user-1",
+      place_id: "place-2",
+      title: "Stay Two",
+      category: "Stay",
+      metadata_json: { city: "Jaipur", locality: "Pink City" },
+      created_at: "2026-01-02T00:00:00.000Z",
+      updated_at: "2026-01-02T00:00:00.000Z",
+    }, {
+      id: "saved-3",
+      user_id: "user-1",
+      place_id: "place-3",
+      title: "Explore Three",
+      category: "Explore",
+      metadata_json: { city: "Jaipur", locality: "Nahargarh" },
+      created_at: "2026-01-03T00:00:00.000Z",
+      updated_at: "2026-01-03T00:00:00.000Z",
+    },
+  ];
+  const { response, body } = await fetchHeroCardForSavedPlaces(savedRows, {
+    readyStrollRows: [{
+      id: "stroll-city-mismatch",
+      user_id: "user-1",
+      city: "Goa",
+      source: "hero",
+      interests_json: ["Taste", "Explore"],
+      stop_place_ids_json: ["place-1", "place-2", "place-3"],
+      stop_categories_json: ["Taste", "Stay", "Explore"],
+    }],
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(body.ctaAction, "view_city_plan");
+  assert.equal(body.metadata?.targetCity, "Jaipur");
+  assert.equal("readyStrollId" in body, false);
 });
 
 test("admin overview requires authentication", async () => {

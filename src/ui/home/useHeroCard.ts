@@ -6,6 +6,7 @@ import type { SavedPlaceRecord } from "./savedPlaces";
 export type HeroCardData = {
   type: "city_category_insight";
   cardKey?: string;
+  readyStrollId?: string;
   title: string;
   subtitle: string;
   ctaLabel: string;

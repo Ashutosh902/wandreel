@@ -80,3 +80,12 @@ test("buildPlannerUrlUpdate removes food demo query when opening Stroll create",
   assert.equal(result.url.hash, "#saved");
   assert.equal(result.historyPath, "/stroll/create?source=manual#saved");
 });
+
+test("buildPlannerUrlUpdate preserves history continuity when opening a Stroll detail route", () => {
+  const result = buildPlannerUrlUpdate("https://app.test/?source=hero#discover", "stroll-detail:ready-stroll", "demo");
+
+  assert.equal(result.url.pathname, "/stroll/ready-stroll");
+  assert.equal(result.url.search, "?source=hero");
+  assert.equal(result.url.hash, "#discover");
+  assert.equal(result.historyPath, "/stroll/ready-stroll?source=hero#discover");
+});

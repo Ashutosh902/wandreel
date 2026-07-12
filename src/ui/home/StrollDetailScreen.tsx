@@ -56,6 +56,7 @@ const STROLL_MAP_STYLES: google.maps.MapTypeStyle[] = [
 type StrollDetailScreenProps = {
   strollId: string;
   onBack: () => void;
+  allowInitialJourneyMotionStart?: boolean;
 };
 
 function getStopTitle(stop: PersistentStrollStop) {
@@ -126,7 +127,11 @@ function StrollStopSheet({
   );
 }
 
-export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps) {
+export function StrollDetailScreen({
+  strollId,
+  onBack,
+  allowInitialJourneyMotionStart = true,
+}: StrollDetailScreenProps) {
   const prefersReducedMotion = useReducedMotion();
   const { currentCoords } = useUx();
   const [loadState, setLoadState] = useState<StrollDetailLoadState>("loading");
@@ -281,6 +286,7 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
       loadState,
       hasUserInteracted,
       hasStartedJourney: hasStartedJourneyRef.current,
+      allowInitialMotionStart: allowInitialJourneyMotionStart,
       prefersReducedMotion: Boolean(prefersReducedMotion),
       isEnabled: motionEnabled,
       fallbackReason,
@@ -288,7 +294,18 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
     });
 
     if (!shouldStart) {
-      if (loadState === "ready") {
+      if (
+        loadState === "ready" &&
+        allowInitialJourneyMotionStart &&
+        (
+          hasUserInteracted ||
+          hasStartedJourneyRef.current ||
+          Boolean(prefersReducedMotion) ||
+          !motionEnabled ||
+          Boolean(fallbackReason) ||
+          mapStops.length < 2
+        )
+      ) {
         setJourneyPhase("completed");
         setJourneyRevealProgress(1);
         setJourneyFootprints([]);
@@ -328,7 +345,7 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
       setJourneyFootprints([]);
       setWakeupStopId(null);
     };
-  }, [currentCoords, fallbackReason, hasUserInteracted, loadState, mapStops, motionEnabled, prefersReducedMotion, stroll?.id]);
+  }, [allowInitialJourneyMotionStart, currentCoords, fallbackReason, hasUserInteracted, loadState, mapStops, motionEnabled, prefersReducedMotion, stroll?.id]);
 
   useEffect(() => {
     if (prefersReducedMotion) return;
@@ -341,7 +358,7 @@ export function StrollDetailScreen({ strollId, onBack }: StrollDetailScreenProps
       bounds.extend(currentCoords);
     }
     googleMapRef.current.fitBounds(bounds, 56);
-  }, [currentCoords, mapStops]);
+  }, [currentCoords, mapStops, prefersReducedMotion]);
 
   if (loadState === "loading") {
     return (
