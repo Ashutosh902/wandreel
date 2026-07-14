@@ -89,12 +89,13 @@ test("StrollLiveConditionsPanel renders verified alerts with source freshness", 
     />,
   );
 
-  assert.match(html, /Live conditions/);
+  assert.match(html, /Weather may affect this Stroll/);
   assert.match(html, /aria-live="polite"/);
   assert.match(html, /role="list"/);
   assert.match(html, /Rain is reported near this Stroll/);
   assert.match(html, /Open-Meteo/);
   assert.match(html, /updated 10 min ago/);
+  assert.match(html, /Weather details/);
 });
 
 test("StrollLiveConditionsPanel renders no-alert and unavailable states without all-clear copy", () => {
@@ -126,7 +127,9 @@ test("StrollLiveConditionsPanel renders no-alert and unavailable states without 
     />,
   );
 
-  assert.match(noAlerts, /No current verified alerts/);
+  assert.match(noAlerts, /No current verified issues are affecting this journey\./);
+  assert.match(noAlerts, /Good weather for this Stroll/);
+  assert.match(noAlerts, /Weather details/);
   assert.doesNotMatch(noAlerts, /all clear/i);
   assert.match(unavailable, /Provider unavailable/);
 });

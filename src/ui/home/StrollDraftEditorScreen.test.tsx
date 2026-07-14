@@ -38,6 +38,8 @@ function renderEditor(summary: DraftStrollSummary = baseSummary) {
       strollId={summary.id}
       seed={baseSeed}
       initialStrollSummary={summary}
+      currentLocationLabel="Dhanaut, Bihar"
+      searchLocations={async () => []}
       onBack={() => undefined}
       onStartStroll={() => undefined}
       onArchiveComplete={() => undefined}
@@ -51,6 +53,16 @@ test("StrollDraftEditorScreen renders draft actions for editable Strolls", () =>
   assert.match(html, /Stroll Draft/);
   assert.match(html, /Generate My Stroll/);
   assert.match(html, /Delete Draft/);
+});
+
+test("StrollDraftEditorScreen renders guided city, traveller, and interest controls", () => {
+  const html = renderEditor();
+
+  assert.match(html, /aria-controls="wr-stroll-city-menu"/);
+  assert.match(html, /<select[^>]*><option value="1">1 traveller<\/option><option value="2" selected="">2 travellers<\/option>/);
+  assert.match(html, /<option value="10">10 travellers<\/option>/);
+  assert.doesNotMatch(html, /max="20"/);
+  assert.match(html, /Your curated Stroll will consider Food while suggesting stops\./);
 });
 
 test("StrollDraftEditorScreen renders the start action for ready Strolls", () => {

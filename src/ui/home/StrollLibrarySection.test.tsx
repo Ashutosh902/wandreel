@@ -89,12 +89,13 @@ test("StrollLibrarySection renders every active Stroll status", () => {
   assert.match(html, /role="button"/);
   assert.match(html, /aria-label="Open draft draft Stroll for editing"/);
   assert.match(html, /Continue Editing/);
-  assert.match(html, /Delete Draft/);
+  assert.match(html, /Delete/);
   assert.match(html, /View Progress/);
-  assert.match(html, /Start Stroll/);
+  assert.match(html, /View Stroll/);
+  assert.match(html, /wr-stroll-card-progress/);
   assert.match(html, />Retry</);
   assert.match(html, /aria-label="Retry curation for failed Stroll"/);
-  assert.match(html, /Edit Inputs/);
+  assert.match(html, />Edit</);
   assert.match(html, /Stop ownership failed/);
 });
 

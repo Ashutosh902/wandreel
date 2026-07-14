@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, CheckCircle2, LoaderCircle, Play, RefreshCw, Trash2 } from "lucide-react";
 import { useReducedMotion } from "framer-motion";
 import { useDialogFocus } from "./useDialogFocus";
-import { STROLL_INTEREST_OPTIONS, type DraftStrollSeed, type DraftStrollSummary } from "./strollOnboarding";
+import { getDefaultStrollCity, STROLL_INTEREST_OPTIONS, type DraftStrollSeed, type DraftStrollSummary } from "./strollOnboarding";
 import {
   getStrollDraftAutosaveLabel,
   getStrollDraftProgressCopy,
@@ -26,9 +26,18 @@ type DraftStrollEditorScreenProps = {
   strollId: string;
   seed?: DraftStrollSeed | null;
   initialStrollSummary?: DraftStrollSummary | null;
+  currentLocationLabel: string;
+  searchLocations: (query: string) => Promise<LocationSuggestion[]>;
   onBack: () => void;
   onStartStroll: (stroll: PersistentStrollSummary) => void;
   onArchiveComplete: () => void;
+};
+
+type LocationSuggestion = {
+  placeId: string;
+  label: string;
+  secondaryText: string | null;
+  description: string | null;
 };
 
 type DraftState = {
@@ -146,10 +155,28 @@ function draftFingerprint(draft: DraftState) {
   });
 }
 
+function formatInterestList(interests: string[]) {
+  if (interests.length <= 1) return interests[0] ?? "";
+  if (interests.length === 2) return `${interests[0]} and ${interests[1]}`;
+  return `${interests.slice(0, -1).join(", ")}, and ${interests[interests.length - 1]}`;
+}
+
+function focusAndOpenPicker(element: HTMLInputElement | HTMLSelectElement | null) {
+  if (!element) return;
+  element.focus();
+  try {
+    (element as (HTMLInputElement | HTMLSelectElement) & { showPicker?: () => void }).showPicker?.();
+  } catch {
+    // Some browsers only allow native pickers during a direct user gesture; focus still advances the flow.
+  }
+}
+
 export function StrollDraftEditorScreen({
   strollId,
   seed,
   initialStrollSummary,
+  currentLocationLabel,
+  searchLocations,
   onBack,
   onStartStroll,
   onArchiveComplete,
@@ -164,7 +191,16 @@ export function StrollDraftEditorScreen({
   const [actionError, setActionError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [pollingTick, setPollingTick] = useState(0);
+  const [isCityMenuOpen, setIsCityMenuOpen] = useState(false);
+  const [cityQuery, setCityQuery] = useState("");
+  const [cityResults, setCityResults] = useState<LocationSuggestion[]>([]);
+  const [isCitySearching, setIsCitySearching] = useState(false);
+  const [citySearchUnavailable, setCitySearchUnavailable] = useState(false);
   const dialogRef = useDialogFocus<HTMLElement>(true, onBack);
+  const cityPickerRef = useRef<HTMLDivElement | null>(null);
+  const endDateInputRef = useRef<HTMLInputElement | null>(null);
+  const startTimeInputRef = useRef<HTMLInputElement | null>(null);
+  const travellerSelectRef = useRef<HTMLSelectElement | null>(null);
   const dirtyRef = useRef(false);
   const draftRef = useRef(draft);
   const strollRef = useRef<PersistentStrollDetail | PersistentStrollSummary | null>(stroll);
@@ -187,6 +223,47 @@ export function StrollDraftEditorScreen({
   useEffect(() => {
     strollRef.current = stroll;
   }, [stroll]);
+
+  useEffect(() => {
+    if (!isCityMenuOpen) {
+      setCityQuery(draft.city);
+    }
+  }, [draft.city, isCityMenuOpen]);
+
+  useEffect(() => {
+    if (!isCityMenuOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!cityPickerRef.current?.contains(event.target as Node)) {
+        setIsCityMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [isCityMenuOpen]);
+
+  useEffect(() => {
+    if (!isCityMenuOpen) return;
+    const handle = window.setTimeout(async () => {
+      const query = cityQuery.trim();
+      if (query.length < 2) {
+        setCityResults([]);
+        setCitySearchUnavailable(false);
+        return;
+      }
+      setIsCitySearching(true);
+      setCitySearchUnavailable(false);
+      try {
+        const nextResults = await searchLocations(query);
+        setCityResults(nextResults);
+      } catch {
+        setCityResults([]);
+        setCitySearchUnavailable(true);
+      } finally {
+        setIsCitySearching(false);
+      }
+    }, 220);
+    return () => window.clearTimeout(handle);
+  }, [cityQuery, isCityMenuOpen, searchLocations]);
 
   useEffect(() => {
     let cancelled = false;
@@ -263,6 +340,24 @@ export function StrollDraftEditorScreen({
         : [...current.interests, interest].slice(0, 10),
     }));
     setDirty(true);
+  };
+
+  const updateDraft = (patch: Partial<DraftState>) => {
+    setDraft((current) => ({ ...current, ...patch }));
+    setDirty(true);
+  };
+
+  const openCityMenu = () => {
+    if (!canEdit) return;
+    setCityQuery(draft.city || getDefaultStrollCity(currentLocationLabel));
+    setIsCityMenuOpen(true);
+  };
+
+  const selectCity = (label: string) => {
+    const cityName = getDefaultStrollCity(label) || label.trim();
+    updateDraft({ city: cityName });
+    setCityQuery(cityName);
+    setIsCityMenuOpen(false);
   };
 
   const saveLatestDraft = async (mode: "autosave" | "generate"): Promise<PersistentStrollSummary | null> => {
@@ -503,37 +598,94 @@ export function StrollDraftEditorScreen({
         <div className="wr-stroll-form-card">
           <label className="wr-stroll-field">
             <span>City</span>
-            <input value={draft.city} onChange={(event) => { setDraft((current) => ({ ...current, city: event.target.value })); setDirty(true); }} />
+            <div className="wr-stroll-city-picker" ref={cityPickerRef}>
+              <input
+                value={isCityMenuOpen ? cityQuery : draft.city}
+                autoComplete="off"
+                aria-expanded={isCityMenuOpen}
+                aria-controls="wr-stroll-city-menu"
+                onFocus={openCityMenu}
+                onClick={openCityMenu}
+                onChange={(event) => {
+                  setCityQuery(event.target.value);
+                  updateDraft({ city: event.target.value });
+                  setIsCityMenuOpen(true);
+                }}
+              />
+              {isCityMenuOpen ? (
+                <div className="wr-stroll-city-menu" id="wr-stroll-city-menu" role="listbox">
+                  <button type="button" className="wr-stroll-city-option is-current" onClick={() => selectCity(currentLocationLabel)}>
+                    <strong>Current city</strong>
+                    <span>{currentLocationLabel}</span>
+                  </button>
+                  {isCitySearching ? <p className="wr-stroll-city-helper">Finding cities...</p> : null}
+                  {!isCitySearching && cityResults.length > 0 ? cityResults.map((result) => (
+                    <button type="button" className="wr-stroll-city-option" key={result.placeId} onClick={() => selectCity(result.label)}>
+                      <strong>{result.label}</strong>
+                      {result.secondaryText || result.description ? <span>{result.secondaryText || result.description}</span> : null}
+                    </button>
+                  )) : null}
+                  {!isCitySearching && citySearchUnavailable ? <p className="wr-stroll-city-helper">City suggestions are unavailable. You can still type the city.</p> : null}
+                  {!isCitySearching && !citySearchUnavailable && cityQuery.trim().length >= 2 && cityResults.length === 0 ? (
+                    <p className="wr-stroll-city-helper">Keep typing or use the city as entered.</p>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
           </label>
 
           <div className="wr-stroll-field-grid">
             <label className="wr-stroll-field">
               <span>Start date</span>
-              <input type="date" value={draft.startDate} onChange={(event) => { setDraft((current) => ({ ...current, startDate: event.target.value })); setDirty(true); }} />
+              <input
+                type="date"
+                value={draft.startDate}
+                onChange={(event) => {
+                  updateDraft({ startDate: event.target.value });
+                  focusAndOpenPicker(endDateInputRef.current);
+                }}
+              />
             </label>
             <label className="wr-stroll-field">
               <span>End date</span>
-              <input type="date" value={draft.endDate} onChange={(event) => { setDraft((current) => ({ ...current, endDate: event.target.value })); setDirty(true); }} />
+              <input
+                ref={endDateInputRef}
+                type="date"
+                value={draft.endDate}
+                onChange={(event) => {
+                  updateDraft({ endDate: event.target.value });
+                  focusAndOpenPicker(startTimeInputRef.current);
+                }}
+              />
             </label>
           </div>
 
           <div className="wr-stroll-field-grid">
             <label className="wr-stroll-field">
               <span>Start time</span>
-              <input type="time" value={draft.requestedStartTime} onChange={(event) => { setDraft((current) => ({ ...current, requestedStartTime: event.target.value })); setDirty(true); }} />
+              <input
+                ref={startTimeInputRef}
+                type="time"
+                value={draft.requestedStartTime}
+                onChange={(event) => {
+                  updateDraft({ requestedStartTime: event.target.value });
+                  focusAndOpenPicker(travellerSelectRef.current);
+                }}
+              />
             </label>
             <label className="wr-stroll-field">
               <span>Travellers</span>
-              <input
-                type="number"
-                min={1}
-                max={20}
+              <select
+                ref={travellerSelectRef}
                 value={draft.travellerCount}
                 onChange={(event) => {
-                  setDraft((current) => ({ ...current, travellerCount: Math.min(20, Math.max(1, Number(event.target.value) || 1)) }));
-                  setDirty(true);
+                  updateDraft({ travellerCount: Math.min(10, Math.max(1, Number(event.target.value) || 1)) });
                 }}
-              />
+              >
+                {Array.from({ length: 10 }, (_, index) => index + 1).map((count) => (
+                  <option key={count} value={count}>{count} {count === 1 ? "traveller" : "travellers"}</option>
+                ))}
+              </select>
             </label>
           </div>
 
@@ -551,6 +703,11 @@ export function StrollDraftEditorScreen({
                 </button>
               ))}
             </div>
+            <p className="wr-stroll-interest-note" aria-live="polite">
+              {draft.interests.length
+                ? `Your curated Stroll will consider ${formatInterestList(draft.interests)} while suggesting stops.`
+                : "Choose at least one interest so Wandreel can shape the suggestions."}
+            </p>
           </div>
 
           <div className="wr-stroll-location-opt">

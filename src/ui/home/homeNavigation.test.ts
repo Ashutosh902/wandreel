@@ -19,6 +19,7 @@ test("getPlannerRouteFromPathname maps current compatibility paths to planner st
   assert.equal(getPlannerRouteFromPathname("/plan/weekend/preview"), "weekend-plan");
   assert.equal(getPlannerRouteFromPathname("/stroll/create"), "stroll-create");
   assert.equal(getPlannerRouteFromPathname("/stroll/create/manual"), "stroll-create");
+  assert.equal(getPlannerRouteFromPathname("/stroll/stroll-1/edit"), "stroll-edit:stroll-1");
   assert.equal(getPlannerRouteFromPathname("/stroll/stroll-1"), "stroll-detail:stroll-1");
   assert.equal(getPlannerRouteFromPathname("/stroll/stroll%20with%20space"), "stroll-detail:stroll with space");
 });
@@ -29,6 +30,7 @@ test("getPlannerPathname maps planner state back to current paths", () => {
     ["food-trail", "/trail/food"],
     ["weekend-plan", "/plan/weekend"],
     ["stroll-create", "/stroll/create"],
+    ["stroll-edit:stroll-1", "/stroll/stroll-1/edit"],
     ["stroll-detail:stroll-1", "/stroll/stroll-1"],
   ];
 
@@ -43,6 +45,13 @@ test("Stroll detail route helpers preserve selected Stroll identity", () => {
   assert.equal(route, "stroll-detail:stroll/a b");
   assert.equal(getStrollIdFromPlannerRoute(route), "stroll/a b");
   assert.equal(getPlannerPathname(route), "/stroll/stroll%2Fa%20b");
+});
+
+test("Stroll edit route helpers preserve selected Stroll identity", () => {
+  const route = "stroll-edit:stroll/a b" as const;
+
+  assert.equal(getStrollIdFromPlannerRoute(route), "stroll/a b");
+  assert.equal(getPlannerPathname(route), "/stroll/stroll%2Fa%20b/edit");
 });
 
 test("buildPlannerUrlUpdate preserves query and hash when opening food trail", () => {

@@ -1,5 +1,7 @@
 import { expect, test, type Page, type Route } from "playwright/test";
 
+test.describe.configure({ mode: "serial" });
+
 type StrollStatus = "draft" | "queued" | "curating" | "ready" | "failed" | "archived";
 type OnboardingDecision = "unseen" | "accepted" | "declined";
 
@@ -66,6 +68,12 @@ type ApiState = {
   adaptationMode: "recommended" | "none";
   listShouldFail: boolean;
   draftCreateCount: number;
+  archiveCount: number;
+};
+
+type StrollDetailConsoleEvent = {
+  event?: string;
+  [key: string]: unknown;
 };
 
 const user = {
@@ -213,8 +221,24 @@ function createApiState(overrides: Partial<ApiState> = {}): ApiState {
     adaptationMode: "recommended",
     listShouldFail: false,
     draftCreateCount: 0,
+    archiveCount: 0,
     ...overrides,
   };
+}
+
+function collectStrollDetailConsoleEvents(page: Page) {
+  const events: StrollDetailConsoleEvent[] = [];
+  page.on("console", async (message) => {
+    if (message.type() !== "info") return;
+    const args = message.args();
+    const prefix = await args[0]?.jsonValue().catch(() => null);
+    if (prefix !== "[stroll-detail]") return;
+    const payload = await args[1]?.jsonValue().catch(() => null);
+    if (payload && typeof payload === "object") {
+      events.push(payload as StrollDetailConsoleEvent);
+    }
+  });
+  return events;
 }
 
 async function installAppHarness(page: Page, state: ApiState) {
@@ -261,6 +285,11 @@ async function installAppHarness(page: Page, state: ApiState) {
 async function handleApiRoute(route: Route, state: ApiState) {
   const request = route.request();
   const url = new URL(request.url());
+  // Only mock Wandreel API traffic. Google Maps uses /maps/api/js, and a broad
+  // API mock would turn that script into JSON and break the real map loader.
+  if (!["127.0.0.1", "localhost", "api.wandreel.com"].includes(url.hostname)) {
+    return route.continue();
+  }
   const method = request.method();
   const pathname = url.pathname;
   const ok = (body: unknown) => route.fulfill({
@@ -311,12 +340,28 @@ async function handleApiRoute(route: Route, state: ApiState) {
   }
   if (pathname === "/api/strolls" && method === "POST") {
     state.draftCreateCount += 1;
-    const body = request.postDataJSON() as { city?: string };
+    const body = request.postDataJSON() as {
+      city?: string;
+      startDate?: string | null;
+      endDate?: string | null;
+      requestedStartTime?: string | null;
+      travellerCount?: number | null;
+      interests?: string[];
+      latitude?: number | null;
+      longitude?: number | null;
+    };
     const city = String(body.city || "Patna").trim() || "Patna";
     const created = strollSummary(`draft-${state.strolls.length + 1}`, "draft", {
       name: `${city} Stroll`,
       city,
       source: "manual",
+      startDate: body.startDate ?? null,
+      endDate: body.endDate ?? null,
+      requestedStartTime: body.requestedStartTime ?? null,
+      travellerCount: body.travellerCount ?? null,
+      interests: Array.isArray(body.interests) ? body.interests : [],
+      latitude: body.latitude ?? null,
+      longitude: body.longitude ?? null,
       stopCount: 0,
     });
     state.strolls = [created, ...state.strolls];
@@ -372,6 +417,39 @@ async function handleApiRoute(route: Route, state: ApiState) {
     if (!stroll) return fail(404, "not_found");
     updateStrollStatus(state, stroll.id, "queued");
     state.statusSequences.set(stroll.id, ["curating", "ready"]);
+    return ok({ ok: true, stroll: findStroll(state, stroll.id) });
+  }
+
+  const curateMatch = pathname.match(/^\/api\/strolls\/([^/]+)\/curate$/);
+  if (curateMatch && method === "POST") {
+    const stroll = findStroll(state, curateMatch[1]);
+    if (!stroll) return fail(404, "not_found");
+    updateStrollStatus(state, stroll.id, "queued");
+    state.statusSequences.set(stroll.id, ["curating", "ready"]);
+    state.stopsByStrollId.set(stroll.id, defaultStops());
+    return ok({
+      ok: true,
+      stroll: findStroll(state, stroll.id),
+      job: { id: `job-${stroll.id}`, status: "queued" },
+      duplicate: false,
+    });
+  }
+
+  const archiveMatch = pathname.match(/^\/api\/strolls\/([^/]+)\/archive$/);
+  if (archiveMatch && method === "POST") {
+    const stroll = findStroll(state, archiveMatch[1]);
+    if (!stroll) return fail(404, "not_found");
+    state.archiveCount += 1;
+    state.strolls = state.strolls.map((item) => (
+      item.id === stroll.id
+        ? {
+          ...item,
+          status: "archived",
+          archivedAt: "2026-07-11T10:04:00.000Z",
+          updatedAt: "2026-07-11T10:04:00.000Z",
+        }
+        : item
+    ));
     return ok({ ok: true, stroll: findStroll(state, stroll.id) });
   }
 
@@ -637,19 +715,168 @@ test("manual draft creation submits once and refreshes the library", async ({ pa
   await page.getByLabel("Start date").fill("2026-07-12");
   await page.getByLabel("End date").fill("2026-07-13");
   await page.getByLabel("Start time").fill("10:30");
-  await page.getByLabel("Travellers").fill("3");
+  await page.getByLabel("Travellers").selectOption("3");
   await page.getByRole("button", { name: "Art" }).click();
 
-  await page.getByRole("button", { name: "Create draft Stroll" }).click();
+  await page.getByRole("button", { name: "Save Draft" }).click();
 
-  await expect(page).toHaveURL(/\/stroll\/draft-1\/edit$/);
-  await expect(page.getByRole("button", { name: "Generate My Stroll" })).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
   await expect(page.getByText("Gaya Stroll saved as a draft.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Continue editing Gaya Stroll" })).toBeVisible();
   expect(state.strolls.filter((stroll) => stroll.name === "Gaya Stroll")).toHaveLength(1);
 
-  await page.getByLabel("Travellers").fill("4");
+  await page.getByRole("button", { name: "Continue editing Gaya Stroll" }).click();
+  await expect(page).toHaveURL(/\/stroll\/draft-1\/edit$/);
+  await expect(page.getByRole("button", { name: "Generate My Stroll" })).toBeVisible();
+  await page.getByLabel("Travellers").selectOption("4");
   await expect(page.getByText("Saved just now")).toBeVisible();
   expect(state.strolls.find((stroll) => stroll.id === "draft-1")?.travellerCount).toBe(4);
+});
+
+test("save and generate returns home with a working Stroll card", async ({ page }) => {
+  const state = createApiState({ onboardingDecision: "declined", strolls: [] });
+  await installAppHarness(page, state);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Create a new Stroll draft" }).click();
+  await page.getByLabel("City").fill("Nalanda");
+  await page.getByRole("button", { name: "Heritage" }).click();
+  await page.getByRole("button", { name: "Save & Generate" }).click();
+
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.getByText("Nalanda Stroll is being prepared.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "View progress for Nalanda Stroll" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Delete Nalanda Stroll" })).toBeVisible();
+  expect(state.draftCreateCount).toBe(1);
+  expect(["queued", "curating"]).toContain(state.strolls.find((stroll) => stroll.id === "draft-1")?.status);
+});
+
+test.describe("visual Draft Stroll lifecycle", () => {
+  test("creates, reopens, generates, opens, and deletes through the browser", async ({ page }, testInfo) => {
+    test.setTimeout(60_000);
+    const state = createApiState({ onboardingDecision: "declined", strolls: [] });
+    await installAppHarness(page, state);
+    await page.setViewportSize({ width: 390, height: 844 });
+
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: "Your walking plans" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Create a new Stroll draft" }).click();
+    await expect(page).toHaveURL(/\/stroll\/create$/);
+    await page.getByLabel("City").fill("Patna");
+    await expect(page.getByRole("button", { name: "Food" })).toHaveClass(/is-selected/);
+    await page.getByRole("button", { name: "Heritage" }).click();
+    await expect(page.getByRole("button", { name: "Heritage" })).toHaveClass(/is-selected/);
+    await page.getByRole("button", { name: "Save Draft" }).click();
+
+    await expect(page).toHaveURL(/\/$/);
+    const draftCard = page.getByRole("button", { name: "Open draft Patna Stroll for editing" });
+    await expect(draftCard).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("01-draft-card-before-click.png"), fullPage: true });
+
+    const hitDiagnostics = await draftCard.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const x = rect.left + 24;
+      const y = rect.top + 56;
+      const hit = document.elementFromPoint(x, y);
+      const styles = window.getComputedStyle(element);
+      return {
+        role: element.getAttribute("role"),
+        tabIndex: element.getAttribute("tabindex"),
+        pointerEvents: styles.pointerEvents,
+        hitTag: hit?.tagName || null,
+        hitClass: hit instanceof HTMLElement ? hit.className : null,
+        cardContainsHitTarget: Boolean(hit && element.contains(hit)),
+      };
+    });
+    await testInfo.attach("draft-card-hit-target.json", {
+      body: JSON.stringify(hitDiagnostics, null, 2),
+      contentType: "application/json",
+    });
+    expect(hitDiagnostics.role).toBe("button");
+    expect(hitDiagnostics.pointerEvents).not.toBe("none");
+    expect(hitDiagnostics.cardContainsHitTarget).toBe(true);
+
+    await draftCard.click({ position: { x: 24, y: 56 } });
+    await expect(page).toHaveURL(/\/stroll\/draft-1\/edit$/);
+    await expect(page.getByLabel("City")).toHaveValue("Patna");
+    await expect(page.getByRole("button", { name: "Food" })).toHaveClass(/is-selected/);
+    await expect(page.getByRole("button", { name: "Heritage" })).toHaveClass(/is-selected/);
+    await expect(page.getByRole("button", { name: "Generate My Stroll" })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("02-draft-editor-after-card-click.png"), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath("03-food-heritage-preserved.png"), fullPage: true });
+    expect(state.draftCreateCount).toBe(1);
+    expect(state.strolls.filter((stroll) => stroll.id === "draft-1")).toHaveLength(1);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+    await page.getByRole("button", { name: "Continue editing Patna Stroll" }).click();
+    await expect(page).toHaveURL(/\/stroll\/draft-1\/edit$/);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+    await page.getByRole("button", { name: "Open draft Patna Stroll for editing" }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/stroll\/draft-1\/edit$/);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+    await page.getByRole("button", { name: "Open draft Patna Stroll for editing" }).focus();
+    await page.keyboard.press("Space");
+    await expect(page).toHaveURL(/\/stroll\/draft-1\/edit$/);
+
+    await page.goBack();
+    await expect(page).toHaveURL(/\/$/);
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Open draft Patna Stroll for editing" })).toBeVisible();
+    await page.getByRole("button", { name: "Open draft Patna Stroll for editing" }).click({ position: { x: 24, y: 56 } });
+    await expect(page).toHaveURL(/\/stroll\/draft-1\/edit$/);
+    await expect(page.getByLabel("City")).toHaveValue("Patna");
+    await expect(page.getByRole("button", { name: "Food" })).toHaveClass(/is-selected/);
+    await expect(page.getByRole("button", { name: "Heritage" })).toHaveClass(/is-selected/);
+    expect(state.draftCreateCount).toBe(1);
+
+    await page.getByRole("button", { name: "Generate My Stroll" }).click();
+    await expect(page.getByRole("heading", { name: /Curating|Ready to start/ })).toBeVisible({ timeout: 10_000 });
+    await page.screenshot({ path: testInfo.outputPath("04-curating-state.png"), fullPage: true });
+
+    await expect(page.getByText("Ready to start")).toBeVisible({ timeout: 10_000 });
+    await page.screenshot({ path: testInfo.outputPath("05-ready-state.png"), fullPage: true });
+
+    await page.getByRole("button", { name: "Start Stroll" }).click();
+    await expect(page).toHaveURL(/\/stroll\/draft-1$/);
+    await expect(page.getByTestId("stroll-first-stop-title")).toContainText("Start at Golghar");
+    await expect(page.getByTestId("stroll-first-view").getByRole("button", { name: "Start Stroll" })).toBeVisible();
+    await expect(page.locator('[aria-label="Next journey action"]')).toBeVisible();
+    await expect(page.locator('[aria-label="Next journey action"]')).toContainText("Next: Golghar");
+    await page.getByTestId("stroll-map-section").scrollIntoViewIfNeeded();
+    await expect(page.getByTestId("stroll-map-section")).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("06-guided-journey-open.png"), fullPage: true });
+
+    const finalTimelineRow = page.getByRole("button", { name: /Open details for stop 2: Bihar Museum Cafe/ });
+    await finalTimelineRow.evaluate((element) => element.scrollIntoView({ block: "center" }));
+    const finalTimelineBox = await finalTimelineRow.boundingBox();
+    const stickyActionBox = await page.locator('[aria-label="Next journey action"]').boundingBox();
+    expect(finalTimelineBox).not.toBeNull();
+    expect(stickyActionBox).not.toBeNull();
+    expect(finalTimelineBox!.y + finalTimelineBox!.height).toBeLessThanOrEqual(stickyActionBox!.y - 6);
+
+    await page.getByRole("button", { name: "Open details for Golghar" }).click();
+    await expect(page.getByRole("dialog", { name: "Golghar" })).toBeVisible();
+    await expect(page.locator('[aria-label="Next journey action"]')).toBeHidden();
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "Create a new Stroll draft" }).click();
+    await page.getByLabel("City").fill("Cleanup");
+    await page.getByRole("button", { name: "Save Draft" }).click();
+    await expect(page).toHaveURL(/\/$/);
+    await page.getByRole("button", { name: "Delete Cleanup Stroll" }).click();
+    await expect(page.getByRole("button", { name: "Open draft Cleanup Stroll for editing" })).toBeHidden();
+    await page.reload();
+    await expect(page.getByRole("button", { name: "Open draft Cleanup Stroll for editing" })).toBeHidden();
+    await page.screenshot({ path: testInfo.outputPath("07-after-draft-delete.png"), fullPage: true });
+    expect(state.archiveCount).toBe(1);
+  });
 });
 
 test("curation polling reaches ready and failed Stroll retry queues again", async ({ page }) => {
@@ -673,6 +900,7 @@ test("curation polling reaches ready and failed Stroll retry queues again", asyn
 
 test("ready Stroll detail shows fallback map, live unavailable, and adaptation dismiss", async ({ page }) => {
   const state = createApiState({ liveMode: "unavailable", adaptationMode: "recommended" });
+  const strollEvents = collectStrollDetailConsoleEvents(page);
   await installAppHarness(page, state);
   await page.setViewportSize({ width: 390, height: 844 });
 
@@ -680,19 +908,159 @@ test("ready Stroll detail shows fallback map, live unavailable, and adaptation d
   await page.getByRole("button", { name: "Start or view Patna Stroll" }).click();
 
   await expect(page).toHaveURL(/\/stroll\/ready-stroll$/);
-  await expect(page.getByRole("heading", { name: "Golghar", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Begin Here" })).toBeVisible();
-  await expect(page.getByText("Map preview unavailable")).toBeVisible();
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("Start at Golghar");
+  await expect(page.getByTestId("stroll-first-view").getByRole("button", { name: "Start Stroll" })).toBeVisible();
+  await expect(page.locator('[aria-label="Next journey action"]')).toContainText("Next: Golghar");
   await expect(page.getByText("Weather provider unavailable.")).toBeVisible();
-  const mapSectionBox = await page.getByTestId("stroll-map-section").boundingBox();
-  expect(mapSectionBox).not.toBeNull();
-  expect(mapSectionBox!.y).toBeGreaterThanOrEqual((page.viewportSize()?.height || 0) - 4);
+  await expect(page.getByTestId("stroll-map-section")).toBeVisible();
+  await expect.poll(async () => {
+    return page.getByTestId("stroll-map-section").evaluate((section) => {
+      const hasFallback = section.textContent?.includes("Map preview unavailable") ?? false;
+      const hasGoogleMap = Boolean(section.querySelector(".gm-style"));
+      return hasFallback || hasGoogleMap;
+    });
+  }).toBe(true);
 
-  await page.getByRole("button", { name: "Begin Here" }).click();
+  await page.getByRole("button", { name: "Stop 2, Bihar Museum Cafe, upcoming" }).click();
+  const secondTimelineRow = page.getByRole("button", { name: "Open details for stop 2: Bihar Museum Cafe, upcoming" });
+  await expect(secondTimelineRow).toBeVisible();
+  await expect(secondTimelineRow).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("Start at Golghar");
+
+  await page.getByRole("button", { name: "Weather details" }).click();
+  await expect(page.getByRole("dialog", { name: "Good weather for this Stroll" })).toBeVisible();
+  await expect(page.getByText("Current conditions")).toBeVisible();
+  await expect(page.getByText("Source")).toBeVisible();
+  await page.getByRole("button", { name: "Close weather details" }).click();
+
+  await page.getByRole("button", { name: "Open details for Golghar" }).click();
   await page.getByRole("button", { name: "Close stop details" }).click();
-  await expect(page.getByRole("region", { name: "Route notes" })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Route status" })).toBeVisible();
+  await page.getByRole("button", { name: "View route details" }).click();
+  await expect(page.getByRole("dialog", { name: "What we checked" })).toBeVisible();
+  await expect(page.getByText("Checked for this Stroll")).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "What we checked" })).not.toContainText(/25\.\d+|85\.\d+|2026-\d{2}-\d{2}T/);
+  await page.getByRole("button", { name: "Close route details" }).click();
   await page.getByRole("button", { name: "Keep the current Stroll order" }).click();
-  await expect(page.getByRole("region", { name: "Route notes" })).toBeHidden();
+  await expect(page.getByRole("region", { name: "Route status" })).toBeHidden();
+
+  await page.locator('[aria-label="Next journey action"]').getByRole("button", { name: "Navigate" }).click();
+  await expect(page.getByRole("dialog", { name: "Start Stroll and navigate?" })).toBeVisible();
+  await expect(page.getByText("You can still mark arrival or completion yourself.")).toBeVisible();
+  await expect(page.locator('[aria-label="Next journey action"]')).toBeHidden();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "Start Stroll and navigate?" })).toBeHidden();
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("Start at Golghar");
+  await expect(page.getByTestId("stroll-first-view").getByRole("button", { name: "Start Stroll" })).toBeVisible();
+
+  await page.getByTestId("stroll-first-view").getByRole("button", { name: "Start Stroll" }).click();
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("Current stop: Golghar");
+  await expect(page.getByRole("button", { name: "I'm here" })).toBeVisible();
+
+  await page.getByRole("button", { name: "I'm here" }).click();
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("You're at Golghar");
+  await expect(page.getByRole("button", { name: "Mark as visited" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Skip stop" })).toBeVisible();
+
+  await page.getByRole("button", { name: "Mark as visited" }).click();
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("Current stop: Bihar Museum Cafe");
+  const progressStrip = page.locator(".wr-stroll-progress-card");
+  await expect(progressStrip.getByRole("button", { name: "Stop 1, Golghar, completed" })).toBeVisible();
+  await expect(progressStrip.getByRole("button", { name: "Stop 2, Bihar Museum Cafe, active" })).toBeVisible();
+
+  await expect.poll(() => strollEvents.map((event) => event.event)).toEqual(
+    expect.arrayContaining([
+      "stroll_detail_viewed",
+      "weather_details_opened",
+      "progress_node_selected",
+      "itinerary_stop_selected",
+      "route_details_opened",
+      "route_adaptation_reviewed",
+      "route_adaptation_rejected",
+      "stroll_started",
+      "stop_marked_arrived",
+      "stop_completed",
+    ]),
+  );
+  expect(JSON.stringify(strollEvents)).not.toMatch(/25\.\d+|85\.\d+|latitude|longitude/);
+});
+
+test("pre-start Navigate asks before starting the Stroll and opening directions", async ({ page }) => {
+  const state = createApiState({ liveMode: "unavailable", adaptationMode: "none" });
+  await installAppHarness(page, state);
+  await page.addInitScript(() => {
+    window.localStorage.setItem("wr_test_opened_urls", JSON.stringify([]));
+    window.open = (url?: string | URL) => {
+      const urls = JSON.parse(window.localStorage.getItem("wr_test_opened_urls") || "[]") as string[];
+      urls.push(String(url || ""));
+      window.localStorage.setItem("wr_test_opened_urls", JSON.stringify(urls));
+      return null;
+    };
+  });
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Start or view Patna Stroll" }).click();
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("Start at Golghar");
+
+  await page.getByTestId("stroll-map-section").getByRole("button", { name: "Navigate" }).click();
+  await expect(page.getByRole("dialog", { name: "Start Stroll and navigate?" })).toBeVisible();
+  await page.getByRole("button", { name: "Start Stroll and navigate" }).click();
+
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("Current stop: Golghar");
+  await expect(page.getByRole("button", { name: "I'm here" })).toBeVisible();
+  await expect(page.locator(".wr-stroll-progress-card").getByRole("button", { name: "Stop 1, Golghar, active" })).toBeVisible();
+  const openedUrls = await page.evaluate(() => JSON.parse(window.localStorage.getItem("wr_test_opened_urls") || "[]") as string[]);
+  expect(openedUrls).toHaveLength(1);
+  expect(openedUrls[0]).toContain("https://www.google.com/maps/search/");
+  expect(openedUrls[0]).toContain("25.612%2C85.143");
+});
+
+test("skip flow keeps the skipped stop in the itinerary and advances the journey", async ({ page }) => {
+  const state = createApiState({ liveMode: "unavailable", adaptationMode: "none" });
+  await installAppHarness(page, state);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Start or view Patna Stroll" }).click();
+  await page.getByTestId("stroll-first-view").getByRole("button", { name: "Start Stroll" }).click();
+  await page.getByRole("button", { name: "I'm here" }).click();
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("You're at Golghar");
+
+  await page.getByRole("button", { name: "Skip stop" }).click();
+  await expect(page.getByRole("dialog", { name: "Skip Golghar?" })).toBeVisible();
+  await expect(page.getByText("This stop will stay in your Stroll")).toBeVisible();
+  await page.getByRole("button", { name: "Skip this stop" }).click();
+
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("Current stop: Bihar Museum Cafe");
+  await expect(page.getByRole("button", { name: "Stop 1, Golghar, skipped" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop 2, Bihar Museum Cafe, active" })).toBeVisible();
+  await expect(page.locator('[aria-label="Next journey action"]')).toContainText("Next: Bihar Museum Cafe");
+});
+
+test("completing every stop shows completion state and persists after refresh", async ({ page }) => {
+  const state = createApiState({ liveMode: "unavailable", adaptationMode: "none" });
+  await installAppHarness(page, state);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "Start or view Patna Stroll" }).click();
+  await page.getByTestId("stroll-first-view").getByRole("button", { name: "Start Stroll" }).click();
+
+  await page.getByRole("button", { name: "I'm here" }).click();
+  await page.getByRole("button", { name: "Mark as visited" }).click();
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("Current stop: Bihar Museum Cafe");
+
+  await page.getByRole("button", { name: "I'm here" }).click();
+  await page.getByRole("button", { name: "Mark as visited" }).click();
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("Stroll complete");
+  await expect(page.getByText("2 stops wrapped.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "View completed route" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Return to Strolls" })).toBeVisible();
+  await expect(page.locator('[aria-label="Next journey action"]')).toBeHidden();
+  await expect(page.getByRole("button", { name: "Stop 1, Golghar, completed" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Stop 2, Bihar Museum Cafe, completed" })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("Stroll complete");
+  await expect(page.locator('[aria-label="Next journey action"]')).toBeHidden();
 });
 
 test("adaptation accept persists reordered stops and bookmark state hydrates from backend", async ({ page }) => {
@@ -713,8 +1081,8 @@ test("adaptation accept persists reordered stops and bookmark state hydrates fro
   await page.getByRole("button", { name: "Start or view Patna Stroll" }).click();
   await page.getByRole("button", { name: "Accept the proposed Stroll stop order" }).click();
 
-  await expect(page.getByRole("heading", { name: "Bihar Museum Cafe", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Begin Here" }).click();
+  await expect(page.getByTestId("stroll-first-stop-title")).toContainText("Start at Bihar Museum Cafe");
+  await page.getByRole("button", { name: "Open details for Bihar Museum Cafe" }).click();
   await expect(page.getByRole("dialog", { name: "Bihar Museum Cafe" })).toBeVisible();
 });
 

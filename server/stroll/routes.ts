@@ -5,6 +5,7 @@ import {
   heroBookmarkSchema,
   heroInteractionSchema,
   removeHeroBookmarkSchema,
+  updateDraftStrollSchema,
   updateOnboardingSchema,
 } from "./contracts";
 import { recommendStrollAdaptation } from "./adaptation";
@@ -30,7 +31,9 @@ import {
   recordHeroInteraction,
   removeHeroBookmark,
   StrollDraftValidationError,
+  StrollUpdateValidationError,
   StrollReorderValidationError,
+  updateDraftStroll,
   updateStrollOnboarding,
   upsertHeroBookmark,
 } from "./store";
@@ -265,6 +268,25 @@ export function registerStrollRoutes(app: express.Express, options: RegisterStro
     } catch (error) {
       console.error("stroll detail failed", error);
       return res.status(500).json({ ok: false, error: "Failed to read Stroll" });
+    }
+  });
+
+  app.patch("/api/strolls/:strollId", requireAuth, async (req, res) => {
+    const parsed = updateDraftStrollSchema.safeParse(req.body ?? {});
+    if (!parsed.success) return sendValidationError(res, parsed.error.flatten());
+
+    try {
+      const userId = getUserId(req);
+      if (!userId) return res.status(401).json({ ok: false, error: "Unauthorized" });
+      const stroll = await updateDraftStroll(userId, String(req.params.strollId || ""), parsed.data);
+      if (!stroll) return res.status(404).json({ ok: false, error: "Stroll not found" });
+      return res.json({ ok: true, stroll });
+    } catch (error) {
+      if (error instanceof StrollUpdateValidationError) {
+        return res.status(error.statusCode).json({ ok: false, error: error.message, code: error.code });
+      }
+      console.error("stroll update failed", error);
+      return res.status(500).json({ ok: false, error: "Failed to update Stroll" });
     }
   });
 

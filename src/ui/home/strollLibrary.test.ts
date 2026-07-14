@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  archiveStroll,
   fetchStrollLibrary,
   fetchStrollDetail,
   fetchStrollStatus,
@@ -10,6 +11,7 @@ import {
   getStrollStatusPresentation,
   mergePolledStroll,
   retryStrollCuration,
+  updateDraftStroll,
   type PersistentStrollSummary,
   type StrollLibraryStatus,
 } from "./strollLibrary";
@@ -129,6 +131,26 @@ test("retryStrollCuration posts to the retry endpoint", async () => {
   assert.equal(result.status, "queued");
   assert.equal(mock.calls[0]?.url, "https://api.test/api/strolls/stroll-1/retry");
   assert.equal(mock.calls[0]?.init?.method, "POST");
+});
+
+test("updateDraftStroll patches editable draft content and archiveStroll posts to archive", async () => {
+  const updateMock = createFetchMock({ ok: true, stroll: stroll("draft", { id: "stroll-1", name: "Updated" }) });
+  const archiveMock = createFetchMock({ ok: true, stroll: stroll("archived", { id: "stroll-1" }) });
+
+  const updated = await updateDraftStroll("https://api.test/", "stroll-1", {
+    updatedAt: "2026-07-11T10:00:00.000Z",
+    name: "Updated",
+    city: "Patna",
+    placeIds: ["place-1"],
+  }, updateMock.fetcher);
+  const archived = await archiveStroll("https://api.test/", "stroll-1", archiveMock.fetcher);
+
+  assert.equal(updated.name, "Updated");
+  assert.equal(updateMock.calls[0]?.url, "https://api.test/api/strolls/stroll-1");
+  assert.equal(updateMock.calls[0]?.init?.method, "PATCH");
+  assert.equal(archived.status, "archived");
+  assert.equal(archiveMock.calls[0]?.url, "https://api.test/api/strolls/stroll-1/archive");
+  assert.equal(archiveMock.calls[0]?.init?.method, "POST");
 });
 
 test("Stroll API helpers surface backend errors", async () => {

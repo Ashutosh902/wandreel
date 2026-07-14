@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import {
   STROLL_INTEREST_OPTIONS,
@@ -7,22 +7,49 @@ import {
   createDraftStroll,
   createStrollClientRequestId,
   getDefaultStrollCity,
+  type DraftStrollSeed,
   type DraftStrollSummary,
 } from "./strollOnboarding";
+import { curateStroll } from "./strollLibrary";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 
 type StrollCreateScreenProps = {
   currentLocationLabel: string;
   isLocating: boolean;
+  searchLocations: (query: string) => Promise<LocationSuggestion[]>;
   requestCurrentLocation: () => Promise<{ ok: boolean; coords?: { lat: number; lng: number }; reason?: string }>;
   onBack: () => void;
-  onCreated: (stroll: DraftStrollSummary) => void;
+  onCreated: (input: { stroll: DraftStrollSummary; seed: DraftStrollSeed; mode: "draft" | "generate"; curationStarted: boolean }) => void;
 };
+
+type LocationSuggestion = {
+  placeId: string;
+  label: string;
+  secondaryText: string | null;
+  description: string | null;
+};
+
+function formatInterestList(interests: string[]) {
+  if (interests.length <= 1) return interests[0] ?? "";
+  if (interests.length === 2) return `${interests[0]} and ${interests[1]}`;
+  return `${interests.slice(0, -1).join(", ")}, and ${interests[interests.length - 1]}`;
+}
+
+function focusAndOpenPicker(element: HTMLInputElement | HTMLSelectElement | null) {
+  if (!element) return;
+  element.focus();
+  try {
+    (element as (HTMLInputElement | HTMLSelectElement) & { showPicker?: () => void }).showPicker?.();
+  } catch {
+    // Native pickers may require a direct user gesture; focus still guides the next step.
+  }
+}
 
 export function StrollCreateScreen({
   currentLocationLabel,
   isLocating,
+  searchLocations,
   requestCurrentLocation,
   onBack,
   onCreated,
@@ -34,10 +61,60 @@ export function StrollCreateScreen({
   const [travellerCount, setTravellerCount] = useState(2);
   const [interests, setInterests] = useState<string[]>(["Food"]);
   const [includedCoords, setIncludedCoords] = useState<{ lat: number; lng: number } | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submittingAction, setSubmittingAction] = useState<"draft" | "generate" | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [isCityMenuOpen, setIsCityMenuOpen] = useState(false);
+  const [cityQuery, setCityQuery] = useState("");
+  const [cityResults, setCityResults] = useState<LocationSuggestion[]>([]);
+  const [isCitySearching, setIsCitySearching] = useState(false);
+  const [citySearchUnavailable, setCitySearchUnavailable] = useState(false);
+  const cityPickerRef = useRef<HTMLDivElement | null>(null);
+  const endDateInputRef = useRef<HTMLInputElement | null>(null);
+  const startTimeInputRef = useRef<HTMLInputElement | null>(null);
+  const travellerSelectRef = useRef<HTMLSelectElement | null>(null);
 
+  const isSubmitting = submittingAction !== null;
   const submitEnabled = canSubmitDraftStroll({ city, isSubmitting });
+
+  useEffect(() => {
+    if (!isCityMenuOpen) {
+      setCityQuery(city);
+    }
+  }, [city, isCityMenuOpen]);
+
+  useEffect(() => {
+    if (!isCityMenuOpen) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!cityPickerRef.current?.contains(event.target as Node)) {
+        setIsCityMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [isCityMenuOpen]);
+
+  useEffect(() => {
+    if (!isCityMenuOpen) return;
+    const handle = window.setTimeout(async () => {
+      const query = cityQuery.trim();
+      if (query.length < 2) {
+        setCityResults([]);
+        setCitySearchUnavailable(false);
+        return;
+      }
+      setIsCitySearching(true);
+      setCitySearchUnavailable(false);
+      try {
+        setCityResults(await searchLocations(query));
+      } catch {
+        setCityResults([]);
+        setCitySearchUnavailable(true);
+      } finally {
+        setIsCitySearching(false);
+      }
+    }, 220);
+    return () => window.clearTimeout(handle);
+  }, [cityQuery, isCityMenuOpen, searchLocations]);
 
   const toggleInterest = (interest: string) => {
     setInterests((current) => (
@@ -57,9 +134,22 @@ export function StrollCreateScreen({
     setIncludedCoords(result.coords);
   };
 
-  const submitDraft = async () => {
+  const openCityMenu = () => {
+    if (isSubmitting) return;
+    setCityQuery(city || getDefaultStrollCity(currentLocationLabel));
+    setIsCityMenuOpen(true);
+  };
+
+  const selectCity = (label: string) => {
+    const cityName = getDefaultStrollCity(label) || label.trim();
+    setCity(cityName);
+    setCityQuery(cityName);
+    setIsCityMenuOpen(false);
+  };
+
+  const submitDraft = async (mode: "draft" | "generate") => {
     if (!submitEnabled) return;
-    setIsSubmitting(true);
+    setSubmittingAction(mode);
     setError(null);
     try {
       const payload = buildDraftStrollPayload({
@@ -73,11 +163,38 @@ export function StrollCreateScreen({
         coords: includedCoords,
       });
       const stroll = await createDraftStroll(API_BASE_URL, payload);
-      onCreated(stroll);
+      let nextStroll = stroll;
+      let curationStarted = false;
+      if (mode === "generate") {
+        try {
+          const curated = await curateStroll(API_BASE_URL, stroll.id);
+          nextStroll = curated.stroll;
+          curationStarted = true;
+        } catch {
+          curationStarted = false;
+        }
+      }
+      onCreated({
+        stroll: nextStroll,
+        seed: {
+          name: payload.name,
+          city: payload.city,
+          startDate: payload.startDate ?? "",
+          endDate: payload.endDate ?? "",
+          requestedStartTime: payload.requestedStartTime ?? "",
+          travellerCount: payload.travellerCount ?? 2,
+          interests: payload.interests,
+          latitude: payload.latitude ?? null,
+          longitude: payload.longitude ?? null,
+          placeIds: payload.placeIds,
+        },
+        mode,
+        curationStarted,
+      });
     } catch (submitError) {
       setError(submitError instanceof Error ? submitError.message : "Could not create draft Stroll.");
     } finally {
-      setIsSubmitting(false);
+      setSubmittingAction(null);
     }
   };
 
@@ -96,34 +213,93 @@ export function StrollCreateScreen({
       <div className="wr-stroll-form-card">
         <label className="wr-stroll-field">
           <span>City</span>
-          <input value={city} onChange={(event) => setCity(event.target.value)} placeholder="Patna" />
+          <div className="wr-stroll-city-picker" ref={cityPickerRef}>
+            <input
+              value={isCityMenuOpen ? cityQuery : city}
+              autoComplete="off"
+              aria-expanded={isCityMenuOpen}
+              aria-controls="wr-stroll-create-city-menu"
+              onFocus={openCityMenu}
+              onClick={openCityMenu}
+              onChange={(event) => {
+                setCityQuery(event.target.value);
+                setCity(event.target.value);
+                setIsCityMenuOpen(true);
+              }}
+              placeholder="Patna"
+            />
+            {isCityMenuOpen ? (
+              <div className="wr-stroll-city-menu" id="wr-stroll-create-city-menu" role="listbox">
+                <button type="button" className="wr-stroll-city-option is-current" onClick={() => selectCity(currentLocationLabel)}>
+                  <strong>Current city</strong>
+                  <span>{currentLocationLabel}</span>
+                </button>
+                {isCitySearching ? <p className="wr-stroll-city-helper">Finding cities...</p> : null}
+                {!isCitySearching && cityResults.length > 0 ? cityResults.map((result) => (
+                  <button type="button" className="wr-stroll-city-option" key={result.placeId} onClick={() => selectCity(result.label)}>
+                    <strong>{result.label}</strong>
+                    {result.secondaryText || result.description ? <span>{result.secondaryText || result.description}</span> : null}
+                  </button>
+                )) : null}
+                {!isCitySearching && citySearchUnavailable ? <p className="wr-stroll-city-helper">City suggestions are unavailable. You can still type the city.</p> : null}
+                {!isCitySearching && !citySearchUnavailable && cityQuery.trim().length >= 2 && cityResults.length === 0 ? (
+                  <p className="wr-stroll-city-helper">Keep typing or use the city as entered.</p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
         </label>
 
         <div className="wr-stroll-field-grid">
           <label className="wr-stroll-field">
             <span>Start date</span>
-            <input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+            <input
+              type="date"
+              value={startDate}
+              onChange={(event) => {
+                setStartDate(event.target.value);
+                focusAndOpenPicker(endDateInputRef.current);
+              }}
+            />
           </label>
           <label className="wr-stroll-field">
             <span>End date</span>
-            <input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+            <input
+              ref={endDateInputRef}
+              type="date"
+              value={endDate}
+              onChange={(event) => {
+                setEndDate(event.target.value);
+                focusAndOpenPicker(startTimeInputRef.current);
+              }}
+            />
           </label>
         </div>
 
         <div className="wr-stroll-field-grid">
           <label className="wr-stroll-field">
             <span>Start time</span>
-            <input type="time" value={requestedStartTime} onChange={(event) => setRequestedStartTime(event.target.value)} />
+            <input
+              ref={startTimeInputRef}
+              type="time"
+              value={requestedStartTime}
+              onChange={(event) => {
+                setRequestedStartTime(event.target.value);
+                focusAndOpenPicker(travellerSelectRef.current);
+              }}
+            />
           </label>
           <label className="wr-stroll-field">
             <span>Travellers</span>
-            <input
-              type="number"
-              min={1}
-              max={20}
+            <select
+              ref={travellerSelectRef}
               value={travellerCount}
-              onChange={(event) => setTravellerCount(Math.min(20, Math.max(1, Number(event.target.value) || 1)))}
-            />
+              onChange={(event) => setTravellerCount(Math.min(10, Math.max(1, Number(event.target.value) || 1)))}
+            >
+              {Array.from({ length: 10 }, (_, index) => index + 1).map((count) => (
+                <option key={count} value={count}>{count} {count === 1 ? "traveller" : "travellers"}</option>
+              ))}
+            </select>
           </label>
         </div>
 
@@ -141,6 +317,11 @@ export function StrollCreateScreen({
               </button>
             ))}
           </div>
+          <p className="wr-stroll-interest-note" aria-live="polite">
+            {interests.length
+              ? `Your curated Stroll will consider ${formatInterestList(interests)} while suggesting stops.`
+              : "Choose at least one interest so Wandreel can shape the suggestions."}
+          </p>
         </div>
 
         <div className="wr-stroll-location-opt">
@@ -163,14 +344,24 @@ export function StrollCreateScreen({
 
         {error ? <p className="wr-stroll-error" role="alert">{error}</p> : null}
 
-        <button
-          type="button"
-          className="wr-stroll-submit"
-          disabled={!submitEnabled}
-          onClick={() => void submitDraft()}
-        >
-          {isSubmitting ? "Saving draft..." : "Create draft Stroll"}
-        </button>
+        <div className="wr-stroll-create-actions">
+          <button
+            type="button"
+            className="wr-stroll-submit-secondary"
+            disabled={!submitEnabled}
+            onClick={() => void submitDraft("draft")}
+          >
+            {submittingAction === "draft" ? "Saving..." : "Save Draft"}
+          </button>
+          <button
+            type="button"
+            className="wr-stroll-submit"
+            disabled={!submitEnabled}
+            onClick={() => void submitDraft("generate")}
+          >
+            {submittingAction === "generate" ? "Starting..." : "Save & Generate"}
+          </button>
+        </div>
       </div>
     </section>
   );

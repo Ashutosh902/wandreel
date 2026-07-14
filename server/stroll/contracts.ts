@@ -45,6 +45,26 @@ export const createDraftStrollSchema = z
     placeIds: value.placeIds ?? [],
   }));
 
+export const updateDraftStrollSchema = z
+  .object({
+    updatedAt: z.string().trim().datetime().optional().nullable(),
+    name: trimmedString(160).optional(),
+    city: trimmedString(120).optional(),
+    startDate: dateStringSchema.optional().nullable(),
+    endDate: dateStringSchema.optional().nullable(),
+    requestedStartTime: timeStringSchema.optional().nullable(),
+    travellerCount: z.number().int().min(1).max(20).optional().nullable(),
+    interests: stringListSchema(10, 60).optional(),
+    latitude: finiteCoordinateSchema.min(-90).max(90).optional().nullable(),
+    longitude: finiteCoordinateSchema.min(-180).max(180).optional().nullable(),
+    placeIds: stringListSchema(30, 200).optional(),
+  })
+  .transform((value) => ({
+    ...value,
+    interests: value.interests ?? [],
+    placeIds: value.placeIds ?? [],
+  }));
+
 export const heroBookmarkSchema = z.object({
   cardKey: trimmedString(200),
   heroType: trimmedString(80).default("city_category_insight"),
@@ -80,6 +100,7 @@ export const acceptStrollOrderSchema = z.object({
 
 export type UpdateOnboardingInput = z.infer<typeof updateOnboardingSchema>;
 export type CreateDraftStrollInput = z.infer<typeof createDraftStrollSchema>;
+export type UpdateDraftStrollInput = z.infer<typeof updateDraftStrollSchema>;
 export type HeroBookmarkInput = z.infer<typeof heroBookmarkSchema>;
 export type RemoveHeroBookmarkInput = z.infer<typeof removeHeroBookmarkSchema>;
 export type HeroInteractionInput = z.infer<typeof heroInteractionSchema>;

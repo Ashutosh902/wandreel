@@ -3,6 +3,7 @@ import type {
   CreateDraftStrollInput,
   HeroBookmarkInput,
   HeroInteractionInput,
+  UpdateDraftStrollInput,
   UpdateOnboardingInput,
 } from "./contracts";
 import {
@@ -574,6 +575,128 @@ export async function createDraftStroll(userId: string, input: CreateDraftStroll
         stopCount: input.placeIds.length,
       },
     };
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+export class StrollUpdateValidationError extends Error {
+  statusCode: number;
+  code: string;
+
+  constructor(statusCode: number, code: string, message: string) {
+    super(message);
+    this.name = "StrollUpdateValidationError";
+    this.statusCode = statusCode;
+    this.code = code;
+  }
+}
+
+export async function updateDraftStroll(userId: string, strollId: string, input: UpdateDraftStrollInput) {
+  const existing = await getStrollDetail(userId, strollId);
+  if (!existing) return null;
+  if (existing.status !== "draft" && existing.status !== "failed") {
+    throw new StrollUpdateValidationError(409, "invalid_status", "Only draft or failed Strolls can be edited.");
+  }
+  if (input.updatedAt && existing.updatedAt !== input.updatedAt) {
+    throw new StrollUpdateValidationError(409, "stale_update", "This Stroll changed while you were editing it.");
+  }
+
+  if (input.placeIds.length > 0) {
+    const owned = await database().query<SavedPlaceIdRow>(
+      `select place_id
+       from user_saved_places
+       where user_id = $1 and place_id = any($2::text[])`,
+      [userId, input.placeIds],
+    );
+    const ownedIds = new Set(owned.rows.map((row) => row.place_id));
+    const unowned = input.placeIds.filter((placeId) => !ownedIds.has(placeId));
+    if (unowned.length > 0) {
+      throw new StrollUpdateValidationError(400, "invalid_place_ids", "Every draft Stroll placeId must belong to your saved places.");
+    }
+  }
+
+  const client = await connectTransaction();
+  try {
+    await client.query("begin");
+    const locked = await client.query<StrollRow>(
+      `select ${strollSelectColumns}
+       from strolls s
+       where s.user_id = $1 and s.id = $2
+       limit 1
+       for update`,
+      [userId, strollId],
+    );
+    const current = locked.rows[0];
+    if (!current) {
+      await client.query("rollback");
+      return null;
+    }
+    if (current.status !== "draft" && current.status !== "failed") {
+      await client.query("rollback");
+      throw new StrollUpdateValidationError(409, "invalid_status", "Only draft or failed Strolls can be edited.");
+    }
+    if (input.updatedAt && toIso(current.updated_at) !== input.updatedAt) {
+      await client.query("rollback");
+      throw new StrollUpdateValidationError(409, "stale_update", "This Stroll changed while you were editing it.");
+    }
+
+    const nextName = input.name ?? current.name;
+    const nextCity = input.city ?? current.city;
+    const nextStartDate = input.startDate ?? toDateOnly(current.start_date);
+    const nextEndDate = input.endDate ?? toDateOnly(current.end_date);
+    const nextRequestedStartTime = input.requestedStartTime ?? current.requested_start_time;
+    const nextTravellerCount = input.travellerCount ?? toNullableNumber(current.traveller_count);
+    const nextInterests = input.interests.length > 0 ? input.interests : toStringArray(current.interests_json);
+    const nextLatitude = input.latitude ?? toNullableNumber(current.latitude);
+    const nextLongitude = input.longitude ?? toNullableNumber(current.longitude);
+
+    const updated = await client.query<StrollRow>(
+      `update strolls
+       set name = $3,
+           city = $4,
+           start_date = $5,
+           end_date = $6,
+           requested_start_time = $7,
+           traveller_count = $8,
+           interests_json = $9::jsonb,
+           latitude = $10,
+           longitude = $11,
+           failure_code = case when status = 'failed' then failure_code else null end,
+           failure_message = case when status = 'failed' then failure_message else null end,
+           updated_at = now()
+       where user_id = $1 and id = $2
+       returning ${strollReturningColumns}`,
+      [
+        userId,
+        strollId,
+        nextName,
+        nextCity,
+        nextStartDate ?? null,
+        nextEndDate ?? null,
+        nextRequestedStartTime ?? null,
+        nextTravellerCount ?? null,
+        JSON.stringify(nextInterests),
+        nextLatitude ?? null,
+        nextLongitude ?? null,
+      ],
+    );
+
+    await client.query("delete from stroll_stops where stroll_id = $1", [strollId]);
+    for (const [index, placeId] of input.placeIds.entries()) {
+      await client.query(
+        `insert into stroll_stops (stroll_id, place_id, sequence)
+         values ($1, $2, $3)`,
+        [strollId, placeId, index + 1],
+      );
+    }
+
+    await client.query("commit");
+    const row = updated.rows[0];
+    return row ? { ...mapStrollRow(row), stopCount: input.placeIds.length } : null;
   } catch (error) {
     await client.query("rollback").catch(() => undefined);
     throw error;

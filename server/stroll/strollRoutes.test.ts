@@ -157,6 +157,11 @@ function createRouteDatabaseMock() {
             ? { rows: [], rowCount: 0 }
             : { rows: [...stopRows].sort((a, b) => a.sequence - b.sequence), rowCount: stopRows.length };
         }
+        if (/for update/i.test(sql) && /from strolls s/i.test(sql)) {
+          return String(params?.[1] ?? "") === "missing"
+            ? { rows: [], rowCount: 0 }
+            : { rows: [strollRow()], rowCount: 1 };
+        }
         if (/select id from strolls/i.test(sql)) {
           return String(params?.[1] ?? "") === "missing" ? { rows: [], rowCount: 0 } : { rows: [{ id: "stroll-1" }], rowCount: 1 };
         }
@@ -167,7 +172,12 @@ function createRouteDatabaseMock() {
           if (stop) stop.sequence = sequence;
           return { rows: [], rowCount: stop ? 1 : 0 };
         }
-        if (/update strolls/i.test(sql)) return { rows: [], rowCount: 1 };
+        if (/update strolls/i.test(sql)) {
+          return {
+            rows: [strollRow({ name: String(params?.[2] ?? "Patna Stroll"), city: String(params?.[3] ?? "Patna") })],
+            rowCount: 1,
+          };
+        }
         return { rows: [], rowCount: 1 };
       },
       release: () => undefined,
@@ -292,6 +302,28 @@ test("POST /api/strolls creates an idempotent draft with ordered stops", async (
   assert.equal(response.body.created, true);
   assert.equal((response.body.stroll as Record<string, unknown>).status, "draft");
   assert.equal((response.body.stroll as Record<string, unknown>).stopCount, 2);
+  assert.equal(mock.clientCalls.filter((call) => /insert into stroll_stops/i.test(call.sql)).length, 2);
+});
+
+test("PATCH /api/strolls/:strollId updates an editable draft in place", async () => {
+  const mock = createRouteDatabaseMock();
+  __setPostgresTestConfig({ databaseOverride: mock.database, databaseUrlOverride: "postgres://unit-test" });
+
+  const response = await request(createApp(), "/api/strolls/stroll-1", {
+    method: "PATCH",
+    body: JSON.stringify({
+      updatedAt: "2026-07-11T10:00:00.000Z",
+      name: "Updated Stroll",
+      city: "Patna",
+      placeIds: ["place-1", "place-2"],
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal((response.body.stroll as Record<string, unknown>).name, "Updated Stroll");
+  assert.equal((response.body.stroll as Record<string, unknown>).city, "Patna");
+  assert.equal((response.body.stroll as Record<string, unknown>).stopCount, 2);
+  assert.equal(mock.clientCalls.some((call) => /delete from stroll_stops/i.test(call.sql)), true);
   assert.equal(mock.clientCalls.filter((call) => /insert into stroll_stops/i.test(call.sql)).length, 2);
 });
 

@@ -69,6 +69,7 @@ import { isWeekendPlannerAction } from "./weekendPlanner";
 import { createWeekendPlannerDemoPlaces } from "./weekendPlannerDemo";
 import {
   getStrollDetailRoute,
+  getStrollEditRoute,
   getStrollIdFromPlannerRoute,
 } from "./homeNavigation";
 import {
@@ -76,6 +77,8 @@ import {
   fetchStrollOnboarding,
   shouldShowStrollOnboardingPrompt,
   updateStrollOnboardingDecision,
+  type DraftStrollSeed,
+  type DraftStrollSummary,
   type StrollOnboardingDecision,
 } from "./strollOnboarding";
 import type { PersistentStrollSummary, StrollLibraryLoadState } from "./strollLibrary";
@@ -97,6 +100,7 @@ const IS_DEV = import.meta.env.DEV;
 
 const LazyMapScreen = lazy(() => import("../map/MapScreen").then((module) => ({ default: module.MapScreen })));
 const LazyStrollCreateScreen = lazy(() => import("./StrollCreateScreen").then((module) => ({ default: module.StrollCreateScreen })));
+const LazyStrollDraftEditorScreen = lazy(() => import("./StrollDraftEditorScreen").then((module) => ({ default: module.StrollDraftEditorScreen })));
 const LazyStrollDetailScreen = lazy(() => import("./StrollDetailScreen").then((module) => ({ default: module.StrollDetailScreen })));
 
 type HeroMode = "empty-memory" | "city-memory";
@@ -137,8 +141,11 @@ function DiscoverPage({
   strollLibraryState,
   strollLibraryError,
   retryingStrollId,
+  archivingStrollId,
   onCreateStroll,
   onRetryStroll,
+  onArchiveStroll,
+  onOpenStroll,
   onStartStroll,
   currentLocationLabel,
 }: {
@@ -161,8 +168,11 @@ function DiscoverPage({
   strollLibraryState: StrollLibraryLoadState;
   strollLibraryError: string | null;
   retryingStrollId: string | null;
+  archivingStrollId: string | null;
   onCreateStroll: () => void;
   onRetryStroll: (strollId: string) => void;
+  onArchiveStroll: (strollId: string) => void;
+  onOpenStroll: (stroll: PersistentStrollSummary) => void;
   onStartStroll: (stroll: PersistentStrollSummary) => void;
   currentLocationLabel: string;
 }) {
@@ -236,8 +246,11 @@ function DiscoverPage({
               loadState={strollLibraryState}
               error={strollLibraryError}
               retryingStrollId={retryingStrollId}
+              archivingStrollId={archivingStrollId}
               onCreateStroll={onCreateStroll}
               onRetryStroll={onRetryStroll}
+              onArchiveStroll={onArchiveStroll}
+              onOpenStroll={onOpenStroll}
               onStartStroll={onStartStroll}
             />
           ) : null}
@@ -355,9 +368,37 @@ function ReadyNotificationsSheet({
   );
 }
 
+function normalizeCreatedStrollSummary(stroll: DraftStrollSummary): PersistentStrollSummary {
+  const full = stroll as Partial<PersistentStrollSummary>;
+  return {
+    id: stroll.id,
+    name: stroll.name,
+    description: full.description ?? null,
+    city: stroll.city,
+    status: stroll.status,
+    source: stroll.source,
+    startDate: full.startDate ?? null,
+    endDate: full.endDate ?? null,
+    requestedStartTime: full.requestedStartTime ?? null,
+    travellerCount: full.travellerCount ?? null,
+    interests: full.interests ?? [],
+    latitude: full.latitude ?? null,
+    longitude: full.longitude ?? null,
+    totalDistanceMeters: full.totalDistanceMeters ?? null,
+    estimatedDurationMinutes: full.estimatedDurationMinutes ?? null,
+    stopCount: stroll.stopCount,
+    failureCode: full.failureCode ?? null,
+    failureMessage: full.failureMessage ?? null,
+    createdAt: stroll.createdAt,
+    updatedAt: stroll.updatedAt,
+    curatedAt: full.curatedAt ?? null,
+    archivedAt: full.archivedAt ?? null,
+  };
+}
+
 export function HomeScreen() {
   const prefersReducedMotion = useReducedMotion();
-  const { currentLocationLabel, isLocating, requestCurrentLocation, showToast } = useUx();
+  const { currentLocationLabel, isLocating, requestCurrentLocation, searchLocations, showToast } = useUx();
   const { isAuthenticated, sessionUser } = useAuth();
   const [activeTab, setActiveTab] = useState<NavLabel>("Discover");
   const [activeCategory, setActiveCategory] = useState<CategoryLabel | null>(null);
@@ -399,6 +440,8 @@ export function HomeScreen() {
   const [transitionDirection, setTransitionDirection] = useState(1);
   const [isScrolled, setIsScrolled] = useState(false);
   const [heroStrollTransition, setHeroStrollTransition] = useState<HeroStrollTransitionRequest | null>(null);
+  const [pendingDraftSeeds, setPendingDraftSeeds] = useState<Record<string, DraftStrollSeed>>({});
+  const [pendingDraftSummaries, setPendingDraftSummaries] = useState<Record<string, DraftStrollSummary>>({});
   const isPollingAddJobsRef = useRef(false);
   const heroStrollTransitionCoordinatorRef = useRef(
     createHeroStrollTransitionCoordinator({
@@ -415,6 +458,8 @@ export function HomeScreen() {
     ? "trail-food"
     : plannerRoute === "stroll-create"
       ? "stroll-create"
+    : plannerRoute.startsWith("stroll-edit:")
+      ? `stroll-edit-${getStrollIdFromPlannerRoute(plannerRoute) || "missing"}`
     : plannerRoute.startsWith("stroll-detail:")
       ? `stroll-detail-${getStrollIdFromPlannerRoute(plannerRoute) || "missing"}`
     : activeTab === "Discover" && activeCategory
@@ -477,8 +522,11 @@ export function HomeScreen() {
     strollLibraryState,
     strollLibraryError,
     retryingStrollId,
+    archivingStrollId,
     refreshStrollLibrary,
+    mergeLocalStroll,
     handleRetryStroll,
+    handleArchiveStroll,
   } = useStrollLibrary({
     apiBaseUrl: API_BASE_URL,
     isAuthenticated,
@@ -789,6 +837,13 @@ export function HomeScreen() {
       return;
     }
 
+    if (plannerRoute.startsWith("stroll-edit:")) {
+      setHeroStrollTransition(null);
+      setTransitionDirection(-1);
+      setPlannerPath("home", true);
+      return;
+    }
+
     if (plannerRoute.startsWith("stroll-detail:")) {
       setHeroStrollTransition(null);
       setTransitionDirection(-1);
@@ -884,6 +939,41 @@ export function HomeScreen() {
     setPlannerPath(getStrollDetailRoute(stroll.id));
   }, [clearHeroNavigationContext, setPlannerPath]);
 
+  const handleOpenStroll = useCallback((stroll: PersistentStrollSummary) => {
+    setHeroStrollTransition(null);
+    clearHeroNavigationContext();
+    setTransitionDirection(1);
+    setActiveTab("Discover");
+    setActiveCategory(null);
+    setMapEntryMode("global");
+    setMapSourceCategory(null);
+    setPlannerPath(getStrollEditRoute(stroll.id));
+  }, [clearHeroNavigationContext, setPlannerPath]);
+
+  const handleCreateStrollDraft = useCallback((input: {
+    stroll: DraftStrollSummary;
+    seed: DraftStrollSeed;
+    mode: "draft" | "generate";
+    curationStarted: boolean;
+  }) => {
+    const { stroll, seed, mode, curationStarted } = input;
+    setPendingDraftSeeds((current) => ({ ...current, [stroll.id]: seed }));
+    setPendingDraftSummaries((current) => ({ ...current, [stroll.id]: stroll }));
+    mergeLocalStroll(normalizeCreatedStrollSummary(stroll));
+    showToast({
+      message: mode === "generate"
+        ? curationStarted
+          ? `${stroll.name} is being prepared.`
+          : `${stroll.name} saved. Start generation from the card.`
+        : `${stroll.name} saved as a draft.`,
+      variant: mode === "generate" && !curationStarted ? "info" : "success",
+      durationMs: 2600,
+    });
+    setTransitionDirection(-1);
+    setPlannerPath("home", true);
+    void refreshStrollLibrary({ silent: true });
+  }, [mergeLocalStroll, refreshStrollLibrary, setPlannerPath, showToast]);
+
   const heroFilteredPlacesByCategory = useMemo(() => {
     if (!heroNavigationContext.filteredPlaceIds?.length) return visibleSavedPlacesByCategory;
     const allowedIds = new Set(heroNavigationContext.filteredPlaceIds);
@@ -964,22 +1054,52 @@ export function HomeScreen() {
 
     if (plannerRoute === "stroll-create") {
       return (
-        <LazyStrollCreateScreen
-          currentLocationLabel={currentLocationLabel}
-          isLocating={isLocating}
-          requestCurrentLocation={requestCurrentLocation}
-          onBack={() => {
+          <LazyStrollCreateScreen
+            currentLocationLabel={currentLocationLabel}
+            isLocating={isLocating}
+            searchLocations={searchLocations}
+            requestCurrentLocation={requestCurrentLocation}
+            onBack={() => {
             setTransitionDirection(-1);
             setPlannerPath("home", true);
           }}
-          onCreated={(stroll) => {
-            showToast({ message: `${stroll.name} saved as a draft.`, variant: "success", durationMs: 2400 });
+          onCreated={handleCreateStrollDraft}
+        />
+      );
+    }
+
+    if (plannerRoute.startsWith("stroll-edit:")) {
+      const strollId = getStrollIdFromPlannerRoute(plannerRoute);
+      return strollId ? (
+          <LazyStrollDraftEditorScreen
+          strollId={strollId}
+          seed={pendingDraftSeeds[strollId] ?? null}
+          initialStrollSummary={pendingDraftSummaries[strollId] ?? null}
+          currentLocationLabel={currentLocationLabel}
+          searchLocations={searchLocations}
+          onBack={() => {
+            setHeroStrollTransition(null);
+            setTransitionDirection(-1);
+            setPlannerPath("home", true);
+          }}
+          onStartStroll={handleStartStroll}
+          onArchiveComplete={() => {
+            setPendingDraftSeeds((current) => {
+              const next = { ...current };
+              delete next[strollId];
+              return next;
+            });
+            setPendingDraftSummaries((current) => {
+              const next = { ...current };
+              delete next[strollId];
+              return next;
+            });
             setTransitionDirection(-1);
             setPlannerPath("home", true);
             void refreshStrollLibrary({ silent: true });
           }}
         />
-      );
+      ) : null;
     }
 
     if (plannerRoute.startsWith("stroll-detail:")) {
@@ -987,6 +1107,7 @@ export function HomeScreen() {
       return strollId ? (
         <LazyStrollDetailScreen
           strollId={strollId}
+          userId={sessionUser?.userId ?? null}
           allowInitialJourneyMotionStart={heroStrollTransition?.strollId !== strollId}
           onBack={() => {
             setHeroStrollTransition(null);
@@ -1030,8 +1151,11 @@ export function HomeScreen() {
           strollLibraryState={strollLibraryState}
           strollLibraryError={strollLibraryError}
           retryingStrollId={retryingStrollId}
+          archivingStrollId={archivingStrollId}
           onCreateStroll={openStrollCreate}
           onRetryStroll={handleRetryStroll}
+          onArchiveStroll={handleArchiveStroll}
+          onOpenStroll={handleOpenStroll}
           onStartStroll={handleStartStroll}
           onHeroCta={(card, source) => {
             console.info("[hero-card] selected action", card.ctaAction, card.metadata);
@@ -1254,12 +1378,17 @@ export function HomeScreen() {
     heroNavigationContext.mapCategories,
     heroNavigationContext.mapPlaces,
     handleHeroBookmarkToggle,
+    handleArchiveStroll,
+    handleCreateStrollDraft,
+    handleOpenStroll,
     handleRetryStroll,
     handleStartStroll,
     mapEntryMode,
     mapSourceCategory,
     openStrollCreate,
     pendingHeroBookmarkCardKey,
+    pendingDraftSeeds,
+    pendingDraftSummaries,
     visibleReadyNotifications.length,
     recentSavedPlaces,
     requestCurrentLocation,
@@ -1268,14 +1397,16 @@ export function HomeScreen() {
     showManualStrollEntry,
     strollLibraryError,
     strollLibraryState,
-    strolls,
-    retryingStrollId,
-    currentLocationLabel,
-    prefersReducedMotion,
+      strolls,
+      retryingStrollId,
+      currentLocationLabel,
+      searchLocations,
+      prefersReducedMotion,
     visibleSavedPlaces,
     visibleSavedPlacesByCategory,
     plannerRoute,
     setPlannerPath,
+    archivingStrollId,
   ]);
 
   return (

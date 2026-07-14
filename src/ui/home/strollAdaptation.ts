@@ -93,22 +93,32 @@ export function getAdaptationViewState(input: {
   return input.recommendation.status === "recommended" ? "recommended" : "none";
 }
 
+function formatProviderName(provider: string) {
+  return provider
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
 export function formatAdaptationEvidence(evidence: StrollAdaptationEvidence) {
   if (evidence.type === "live_condition") {
-    return `${evidence.severity} ${evidence.conditionType} from ${evidence.provider}: ${evidence.message}`;
+    const source = formatProviderName(evidence.provider);
+    return `${source} checked ${evidence.conditionType}: ${evidence.message}`;
   }
   if (evidence.type === "stop_suitability") {
-    return `${evidence.stopTitle}: ${evidence.weather} weather suitability`;
+    const weather = evidence.weather === "unknown" ? "weather context" : `${evidence.weather} stop`;
+    return `${evidence.stopTitle} was reviewed as a ${weather}.`;
   }
   if (evidence.type === "route_metric") {
     const distance = evidence.routeDistanceMeters == null ? "unknown distance" : `${Math.round(evidence.routeDistanceMeters / 100) / 10} km`;
     const duration = evidence.routeDurationMinutes == null ? "unknown duration" : `${evidence.routeDurationMinutes} min`;
-    return `Route into stop: ${distance}, ${duration}`;
+    return `Travel into this stop was checked: ${distance}, ${duration}.`;
   }
   if (evidence.type === "current_location") {
-    return `Current location available (${evidence.latitude.toFixed(4)}, ${evidence.longitude.toFixed(4)})`;
+    return "Your current location was available for route checks.";
   }
-  return `Current time ${evidence.currentTime}${evidence.requestedStartTime ? `, requested start ${evidence.requestedStartTime}` : ""}`;
+  return evidence.requestedStartTime
+    ? `Timing was checked against your requested start time.`
+    : "Current time was checked for this route.";
 }
 
 export async function fetchStrollAdaptationRecommendation(

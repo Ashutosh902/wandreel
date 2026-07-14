@@ -27,6 +27,19 @@ export type DraftStrollPayload = {
   placeIds: string[];
 };
 
+export type DraftStrollSeed = {
+  name: string;
+  city: string;
+  startDate: string;
+  endDate: string;
+  requestedStartTime: string;
+  travellerCount: number;
+  interests: string[];
+  latitude: number | null;
+  longitude: number | null;
+  placeIds: string[];
+};
+
 export type DraftStrollSummary = {
   id: string;
   name: string;

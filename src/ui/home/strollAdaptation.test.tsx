@@ -45,7 +45,16 @@ function recommendation(overrides: Partial<Extract<StrollAdaptationRecommendatio
 test("adaptation helpers classify dismiss and format evidence", () => {
   assert.equal(getAdaptationViewState({ loadState: "ready", recommendation: recommendation(), dismissed: false }), "recommended");
   assert.equal(getAdaptationViewState({ loadState: "ready", recommendation: recommendation(), dismissed: true }), "dismissed");
-  assert.match(formatAdaptationEvidence(recommendation().evidence[0]), /high weather from open_meteo/);
+  assert.match(formatAdaptationEvidence(recommendation().evidence[0]), /Open Meteo checked weather/);
+  assert.doesNotMatch(formatAdaptationEvidence(recommendation().evidence[0]), /2026-07-11T10:00:00/);
+  assert.equal(
+    formatAdaptationEvidence({ type: "current_location", latitude: 25.6123, longitude: 85.1432 }),
+    "Your current location was available for route checks.",
+  );
+  assert.doesNotMatch(
+    formatAdaptationEvidence({ type: "current_location", latitude: 25.6123, longitude: 85.1432 }),
+    /25\.6123|85\.1432/,
+  );
 });
 
 test("adaptation fetch and accept APIs use authenticated endpoints", async () => {
@@ -81,9 +90,16 @@ test("StrollAdaptationPanel renders proposed order and explicit actions", () => 
     />,
   );
 
-  assert.match(html, /Dynamic order check/);
+  assert.match(html, /Route status/);
+  assert.match(html, /Moderate confidence/);
+  assert.doesNotMatch(html, /Route notes/);
   assert.match(html, /Cafe/);
   assert.match(html, /Was stop 2/);
+  assert.match(html, /View route details/);
+  assert.doesNotMatch(html, /What we checked/);
+  assert.doesNotMatch(html, /Checked for this Stroll/);
+  assert.doesNotMatch(html, /Still not included/);
+  assert.doesNotMatch(html, /Evidence used/);
   assert.match(html, /Accept new order/);
   assert.match(html, /aria-label="Accept the proposed Stroll stop order"/);
   assert.match(html, /Keep current order/);
@@ -112,7 +128,9 @@ test("StrollAdaptationPanel renders no-recommendation fallback", () => {
     />,
   );
 
-  assert.match(html, /No reliable adaptation is available/);
+  assert.match(html, /Route status/);
+  assert.match(html, /No weather changes needed/);
+  assert.match(html, /Limited live information/);
   assert.match(html, /Keep current order/);
   assert.doesNotMatch(html, /Accept new order/);
 });

@@ -94,6 +94,8 @@ export function StrollLibrarySection({
           const isRetrying = retryingStrollId === stroll.id;
           const isArchiving = archivingStrollId === stroll.id;
           const isDraft = stroll.status === "draft";
+          const isWorking = stroll.status === "queued" || stroll.status === "curating";
+          const canEditInputs = stroll.status === "failed";
           return (
             <article
               className={`wr-stroll-card is-${presentation.tone} ${isDraft ? "is-activatable" : ""}`}
@@ -111,35 +113,27 @@ export function StrollLibrarySection({
               <strong>{stroll.name}</strong>
               <small>{formatStrollMeta(stroll) || presentation.title}</small>
               <p>{stroll.failureMessage || presentation.description}</p>
+              {isWorking ? (
+                <div className="wr-stroll-card-progress" role="status" aria-label={`${stroll.name} is ${presentation.label.toLowerCase()}`}>
+                  <span className="wr-stroll-card-progress-ring" aria-hidden="true" />
+                  <span>{presentation.title}</span>
+                </div>
+              ) : null}
               <div className="wr-stroll-card-actions">
                 {stroll.status === "draft" ? (
-                  <>
-                    <button
-                      type="button"
-                      className="wr-stroll-card-primary"
-                      aria-label={`Continue editing ${stroll.name}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onOpenStroll(stroll);
-                      }}
-                    >
-                      Continue Editing
-                    </button>
-                    <button
-                      type="button"
-                      className="wr-stroll-card-secondary"
-                      disabled={isArchiving}
-                      aria-label={`Delete draft ${stroll.name}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onArchiveStroll(stroll.id);
-                      }}
-                    >
-                      {isArchiving ? "Deleting..." : "Delete Draft"}
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    className="wr-stroll-card-primary"
+                    aria-label={`Continue editing ${stroll.name}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenStroll(stroll);
+                    }}
+                  >
+                    Continue Editing
+                  </button>
                 ) : null}
-                {(stroll.status === "queued" || stroll.status === "curating") ? (
+                {isWorking ? (
                   <button
                     type="button"
                     className="wr-stroll-card-primary"
@@ -162,36 +156,48 @@ export function StrollLibrarySection({
                       onStartStroll(stroll);
                     }}
                   >
-                    Start Stroll
+                    View Stroll
                   </button>
                 ) : null}
                 {stroll.status === "failed" ? (
-                  <>
-                    <button
-                      type="button"
-                      className="wr-stroll-card-primary"
-                      disabled={isRetrying}
-                      aria-label={`Retry curation for ${stroll.name}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onRetryStroll(stroll.id);
-                      }}
-                    >
-                      {isRetrying ? "Retrying..." : "Retry"}
-                    </button>
-                    <button
-                      type="button"
-                      className="wr-stroll-card-secondary"
-                      aria-label={`Edit inputs for ${stroll.name}`}
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        onOpenStroll(stroll);
-                      }}
-                    >
-                      Edit Inputs
-                    </button>
-                  </>
+                  <button
+                    type="button"
+                    className="wr-stroll-card-primary"
+                    disabled={isRetrying}
+                    aria-label={`Retry curation for ${stroll.name}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onRetryStroll(stroll.id);
+                    }}
+                  >
+                    {isRetrying ? "Retrying..." : "Retry"}
+                  </button>
                 ) : null}
+                {canEditInputs ? (
+                  <button
+                    type="button"
+                    className="wr-stroll-card-secondary"
+                    aria-label={`Edit inputs for ${stroll.name}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onOpenStroll(stroll);
+                    }}
+                  >
+                    Edit
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  className="wr-stroll-card-secondary"
+                  disabled={isArchiving}
+                  aria-label={`Delete ${stroll.name}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onArchiveStroll(stroll.id);
+                  }}
+                >
+                  {isArchiving ? "Deleting..." : "Delete"}
+                </button>
               </div>
             </article>
           );
