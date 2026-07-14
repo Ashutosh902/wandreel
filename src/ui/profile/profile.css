@@ -361,6 +361,107 @@
   font-weight: 700;
 }
 
+.wr-profile-coin-card {
+  background: rgba(255, 255, 255, 0.62);
+  border-bottom: 1px solid #d8dde3;
+  padding: 0.9rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.wr-profile-coin-balance {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  gap: 0.7rem;
+}
+
+.wr-profile-coin-icon {
+  width: 2.2rem;
+  height: 2.2rem;
+  border-radius: 0.75rem;
+  background: #ecfdf5;
+  color: #047857;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #bbf7d0;
+  flex: 0 0 auto;
+}
+
+.wr-profile-coin-balance p,
+.wr-profile-coin-empty,
+.wr-profile-coin-error {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: #64748b;
+  font-weight: 800;
+}
+
+.wr-profile-coin-balance strong {
+  display: block;
+  margin-top: 0.08rem;
+  font-size: 1.28rem;
+  line-height: 1.1;
+  color: #10213f;
+  font-weight: 950;
+}
+
+.wr-profile-coin-error {
+  padding: 0.72rem 1rem 0;
+  color: #b91c1c;
+}
+
+.wr-profile-coin-history {
+  background: rgba(255, 255, 255, 0.45);
+}
+
+.wr-profile-coin-row {
+  min-height: 3.05rem;
+  padding: 0.68rem 1rem;
+  border-bottom: 1px solid #d8dde3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.wr-profile-coin-row span {
+  min-width: 0;
+  color: #10213f;
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.wr-profile-coin-row small {
+  display: block;
+  margin-top: 0.14rem;
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+
+.wr-profile-coin-row strong {
+  flex: 0 0 auto;
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.wr-profile-coin-row strong.is-credit {
+  color: #047857;
+}
+
+.wr-profile-coin-row strong.is-debit {
+  color: #b91c1c;
+}
+
+.wr-profile-coin-empty {
+  padding: 0.85rem 1rem;
+}
+
 .wr-profile-logout {
   color: #9f1239;
   font-size: 0.94rem;

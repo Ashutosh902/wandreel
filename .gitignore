@@ -32,6 +32,9 @@ dist-ssr
 .codex-remote-attachments/
 tmp/
 artifacts/add-flow-e2e/
+artifacts/screenshots/coin-*.png
+artifacts/screenshots/coin-real-*.png
+test-results/
 
 # Android / Gradle generated files
 android/.gradle/

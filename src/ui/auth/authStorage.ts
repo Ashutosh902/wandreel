@@ -8,6 +8,7 @@ export type SessionUser = {
   displayName: string | null;
   avatarUrl: string | null;
   authProvider: string | null;
+  coinBalance?: number | null;
 };
 
 export type AuthSessionSnapshot = {
@@ -38,6 +39,7 @@ export function normalizeSessionUser(value: unknown): SessionUser | null {
     displayName: normalizeNullableString(candidate.displayName),
     avatarUrl: normalizeNullableString(candidate.avatarUrl),
     authProvider: normalizeNullableString(candidate.authProvider),
+    coinBalance: Number.isFinite(Number(candidate.coinBalance)) ? Number(candidate.coinBalance) : null,
   };
 }
 

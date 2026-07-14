@@ -2,6 +2,7 @@ import type { CategoryLabel } from "./home.data";
 import { CATEGORY_FEED_CACHE_KEY } from "./addFlowState";
 import type { EntityIntent } from "./intent";
 import { resolveEntityIntent } from "./intent";
+import { notifyCoinWalletUpdated, type CoinWallet } from "../economy/coinWallet";
 
 const API_BASE_URL = (import.meta as { env?: { VITE_API_BASE_URL?: string } }).env?.VITE_API_BASE_URL || "http://localhost:8787";
 
@@ -57,6 +58,11 @@ export type SavedPlaceApiItem = {
     createdAt?: string | number | null;
     updatedAt?: string | number | null;
   } | null;
+};
+
+type PersistSavedPlaceOptions = {
+  coinSource?: "external_import" | "discover";
+  idempotencyKey?: string;
 };
 
 export const SAVED_PLACES_UPDATED_EVENT = "wr:category-saved-updated";
@@ -280,7 +286,7 @@ export function togglePlaceGlobal(place: SavedPlaceRecord, nextGlobal = !isPlace
   return nextPlace;
 }
 
-export async function persistSavedPlace(place: SavedPlaceRecord) {
+export async function persistSavedPlace(place: SavedPlaceRecord, options: PersistSavedPlaceOptions = {}) {
   const response = await fetch(`${API_BASE_URL}/api/saved-places`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -306,6 +312,8 @@ export async function persistSavedPlace(place: SavedPlaceRecord) {
         sharedVisibility: place.sharedVisibility || "private",
         sharedAt: place.sharedAt ?? null,
       },
+      coinSource: options.coinSource,
+      idempotencyKey: options.idempotencyKey,
     }),
   });
 
@@ -313,12 +321,22 @@ export async function persistSavedPlace(place: SavedPlaceRecord) {
     if (response.status === 401) {
       throw new Error("Please log in to save places.");
     }
-    throw new Error("Could not save place.");
+    if (response.status === 402) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.error || "Not enough coins for this save.");
+    }
+    const payload = await response.json().catch(() => null);
+    throw new Error(payload?.error || "Could not save place.");
   }
 
-  const payload = (await response.json().catch(() => null)) as { ok?: boolean; item?: SavedPlaceApiItem } | null;
+  const payload = (await response.json().catch(() => null)) as
+    | { ok?: boolean; item?: SavedPlaceApiItem; coin?: { wallet?: CoinWallet } }
+    | null;
   if (payload?.ok && payload.item) {
     mergeSavedPlacesFromApi([payload.item]);
+  }
+  if (payload?.coin?.wallet) {
+    notifyCoinWalletUpdated(payload.coin.wallet);
   }
 }
 

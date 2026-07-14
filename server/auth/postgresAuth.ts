@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
+import { grantFirstLoginCoins } from "../economy/store";
 
 export type AuthProvider = "EMAIL" | "GOOGLE" | "PHONE" | "FACEBOOK" | "APPLE";
 
@@ -111,8 +112,43 @@ const pool = new Pool({
   ssl: DATABASE_URL.includes("sslmode=require") ? { rejectUnauthorized: false } : undefined,
 });
 
+function quotePostgresIdentifier(value: string) {
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
+function createSearchPathDatabase(basePool: Pool, schema: string): DatabaseLike {
+  const normalizedSchema = String(schema || "").trim();
+  if (!normalizedSchema) return basePool;
+  const searchPathSql = `set search_path to ${quotePostgresIdentifier(normalizedSchema)}, public`;
+  return {
+    query: async <T = any>(sql: string, params?: unknown[]) => {
+      const client = await basePool.connect();
+      try {
+        await client.query(searchPathSql);
+        const result = await client.query(sql, params);
+        return { rows: result.rows as T[], rowCount: result.rowCount };
+      } finally {
+        client.release();
+      }
+    },
+    connect: async () => {
+      const client = await basePool.connect();
+      await client.query(searchPathSql);
+      return {
+        ...client,
+        query: async (sql: any, params?: any) => {
+          await client.query(searchPathSql);
+          return client.query(sql, params);
+        },
+        release: () => client.release(),
+      } as PoolClient;
+    },
+  };
+}
+
 let databaseUrl = DATABASE_URL;
-let database: DatabaseLike = pool;
+const configuredDatabase = createSearchPathDatabase(pool, process.env.DATABASE_SEARCH_PATH || "");
+let database: DatabaseLike = configuredDatabase;
 let schemaReady = false;
 
 export function isPostgresConfigured() {
@@ -769,7 +805,7 @@ export function __setPostgresTestConfig(input: {
 }
 
 export function __resetPostgresTestConfig() {
-  database = pool;
+  database = configuredDatabase;
   databaseUrl = DATABASE_URL;
   schemaReady = false;
 }
@@ -1346,6 +1382,7 @@ export async function createSession(userId: string) {
     `,
     [sessionId, userId, tokenHash, expiresAt],
   );
+  await grantFirstLoginCoins(database, userId);
 
   return { rawToken, expiresAt };
 }

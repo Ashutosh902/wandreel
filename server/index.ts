@@ -17,6 +17,7 @@ import {
   findSavedPlaceByUserAndPlaceId,
   finalizeReelAnalyticsAttempt,
   findSessionUser,
+  getPostgresDatabase,
   getAdminObservabilityOverview,
   getAdminObservabilityLinks,
   getAdminObservabilityLinkDetail,
@@ -47,6 +48,7 @@ import {
   updateDisplayName,
   verifyEmailOtp,
 } from "./auth/postgresAuth";
+import { chargeSavedPlaceCoins, getCoinLedger, type CoinSaveSource } from "./economy/store";
 import { featureFlags } from "./featureFlags";
 import { saveAttemptHypothesisSummary } from "./attemptHypothesisStore";
 import { buildAttemptHypothesisSummary } from "./intelligence/hypothesisSummary";
@@ -2773,7 +2775,8 @@ app.post("/api/auth/email/verify-otp", async (req, res) => {
 
 app.get("/api/auth/session/me", requireAuth, async (_req, res) => {
   const user = (_req as express.Request & { authUser?: { userId: string } }).authUser;
-  return res.json({ ok: true, user });
+  const ledger = await getCoinLedger(getPostgresDatabase(), user!.userId, { limit: 5 });
+  return res.json({ ok: true, user: { ...user, coinBalance: ledger.wallet.balanceCoins } });
 });
 
 app.post("/api/auth/profile/display-name", requireAuth, async (req, res) => {
@@ -2814,6 +2817,18 @@ app.get("/api/saved-places", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/api/economy/ledger", requireAuth, async (req, res) => {
+  try {
+    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+    const limit = Number(req.query?.limit) || 25;
+    const ledger = await getCoinLedger(getPostgresDatabase(), authUser!.userId, { limit });
+    return res.json({ ok: true, ...ledger });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not fetch coin ledger";
+    return res.status(400).json({ ok: false, error: message });
+  }
+});
+
 app.get("/api/hero-card", requireAuth, async (req, res) => {
   try {
     const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
@@ -2834,6 +2849,10 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
     const title = String(req.body?.title || "").trim();
     const category = req.body?.category ? String(req.body.category).trim() : null;
     const metadata = req.body?.metadata ?? {};
+    const coinSourceRaw = String(req.body?.coinSource || req.body?.saveSource || "").trim();
+    const coinSource: CoinSaveSource | null =
+      coinSourceRaw === "external_import" || coinSourceRaw === "discover" ? coinSourceRaw : null;
+    const idempotencyKey = String(req.body?.idempotencyKey || "").trim();
     const existing = await findSavedPlaceByUserAndPlaceId(authUser!.userId, placeId);
     if (existing) {
       const duplicate: SavedPlaceDuplicateInfo = {
@@ -2842,17 +2861,56 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
         placeId,
         existingSavedPlaceId: existing.id,
       };
-      return res.json({ ok: true, alreadySaved: true, duplicate, item: existing });
+      const ledger = await getCoinLedger(getPostgresDatabase(), authUser!.userId, { limit: 5 });
+      return res.json({ ok: true, alreadySaved: true, duplicate, item: existing, coin: { wallet: ledger.wallet } });
     }
 
-    const saveResult = await upsertSavedPlace(authUser!.userId, {
+    if (!coinSource) {
+      const saveResult = await upsertSavedPlace(authUser!.userId, {
+        placeId,
+        title,
+        category,
+        metadata,
+      });
+      const ledger = await getCoinLedger(getPostgresDatabase(), authUser!.userId, { limit: 5 });
+      return res.status(201).json({ ok: true, alreadySaved: saveResult.alreadySaved, item: saveResult.item, coin: { wallet: ledger.wallet } });
+    }
+
+    const chargeResult = await chargeSavedPlaceCoins({
+      database: getPostgresDatabase(),
+      userId: authUser!.userId,
       placeId,
-      title,
-      category,
-      metadata,
+      source: coinSource,
+      idempotencyKey: idempotencyKey || `save:${authUser!.userId}:${placeId}`,
+      metadata: {
+        title,
+        category,
+        source: coinSource,
+      },
+      commitWithCharge: async (client) => {
+        await client.query(
+          `
+            insert into user_saved_places (id, user_id, place_id, title, category, metadata_json, created_at, updated_at)
+            values (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, now(), now())
+          `,
+          [authUser!.userId, placeId, title, category, JSON.stringify(metadata)],
+        );
+      },
     });
-    return res.status(201).json({ ok: true, alreadySaved: saveResult.alreadySaved, item: saveResult.item });
+    const saved = await findSavedPlaceByUserAndPlaceId(authUser!.userId, placeId);
+    return res.status(201).json({
+      ok: true,
+      alreadySaved: false,
+      item: saved,
+      coin: {
+        wallet: chargeResult.wallet,
+        saveEvent: chargeResult.saveEvent,
+      },
+    });
   } catch (error) {
+    if (error instanceof Error && error.message === "INSUFFICIENT_COINS") {
+      return res.status(402).json({ ok: false, error: "Not enough coins for this save." });
+    }
     const message = error instanceof Error ? error.message : "Could not save place";
     return res.status(400).json({ ok: false, error: message });
   }

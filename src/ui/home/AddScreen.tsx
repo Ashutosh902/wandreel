@@ -33,6 +33,7 @@ import {
 } from "../../pwa/shareTarget";
 import { useAuth } from "../auth/AuthProvider";
 import { getSharedIntentPlan, shouldResetAddFlowForAuthStatus } from "./sharedIntentState";
+import { notifyCoinWalletUpdated, type CoinWallet } from "../economy/coinWallet";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
@@ -1985,11 +1986,18 @@ export function AddScreen() {
             state: place.state ?? null,
             country: place.country ?? null,
           },
+          coinSource: "external_import",
+          idempotencyKey: `external-import:${String(place.runId)}:${place.placeId || place.id}`,
         }),
       });
       if (!response.ok) {
         if (response.status === 401) {
           showToast({ message: "Please log in to save places.", variant: "error" });
+          return;
+        }
+        if (response.status === 402) {
+          const payload = await response.json().catch(() => null);
+          showToast({ message: payload?.error || "Not enough coins for this save.", variant: "error" });
           return;
         }
         throw new Error("save_failed");
@@ -2000,8 +2008,12 @@ export function AddScreen() {
             alreadySaved?: boolean;
             item?: unknown;
             duplicate?: { kind?: string; scope?: string; placeId?: string; existingSavedPlaceId?: string };
+            coin?: { wallet?: CoinWallet };
           }
         | null;
+      if (payload?.coin?.wallet) {
+        notifyCoinWalletUpdated(payload.coin.wallet);
+      }
       if (payload?.alreadySaved) {
         setSavedPlaceIds((current) => new Set(current).add(place.id));
         showToast({ message: "You already saved this place.", variant: "info" });
