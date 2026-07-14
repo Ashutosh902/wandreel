@@ -122,7 +122,7 @@ test("loadDatabaseMigrations verifies the production migration manifest order", 
   const migrations = await loadDatabaseMigrations();
   const versions = migrations.map((migration) => migration.version);
 
-  assert.deepEqual(versions, ["0000", "0001", "0002"]);
+  assert.deepEqual(versions, ["0000", "0001", "0002", "0003"]);
   assert.deepEqual(new Set(versions).size, versions.length);
   assert.ok(migrations.every((migration) => migration.sql.trim().length > 0));
 });
