@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { allocateRewardMillis, economyConstants } from "./store";
+import { allocateRewardMillis, computeContributionScore, economyConstants } from "./store";
 
 test("signup and save constants use exact coin millis", () => {
   assert.equal(economyConstants.coinMillisPerCoin, 1000);
@@ -62,4 +62,26 @@ test("discover save conservation equation balances exactly", () => {
 
   assert.equal(distributed, 500);
   assert.equal(distributed + platformRetention, economyConstants.discoverSaveChargeMillis);
+});
+
+test("contribution score uses recommendations, saves, quality, and recency without wallet balance", () => {
+  const score = computeContributionScore({
+    placesRecommended: 25,
+    communitySaves: 50,
+    recentRecommendations: 5,
+    recentCommunitySaves: 5,
+  });
+
+  assert.equal(score.score, 48);
+  assert.equal(score.level, "Guide");
+  assert.deepEqual(score.components, {
+    recommendations: 15,
+    communitySaves: 15,
+    recommendationQuality: 8,
+    recentActivity: 10,
+  });
+  assert.equal(score.formula.recommendationsWeight, 30);
+  assert.equal(score.formula.communitySavesWeight, 30);
+  assert.equal(score.formula.recommendationQualityWeight, 20);
+  assert.equal(score.formula.recentActivityWeight, 20);
 });

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, Coins, Info, RotateCcw, X } from "lucide-react";
+import { ArrowLeft, BarChart3, Coins, Info, MapPinPlus, RotateCcw, Sparkles, X } from "lucide-react";
 import { useAuth } from "../auth/AuthProvider";
 import { trackCoinEducationEvent } from "../economy/coinEducation";
 import {
+  fetchCoinImpact,
   fetchCoinLedger,
   formatCoinMillis,
   getCoinTransactionLabel,
+  type CoinImpact,
   type CoinLedger,
   type CoinLedgerDatePreset,
   type CoinLedgerSort,
@@ -17,6 +19,7 @@ import "./profile.css";
 
 type WalletScreenProps = {
   onBack: () => void;
+  onRecommendPlace?: () => void;
 };
 
 function signedTransactionMillis(transaction: CoinTransaction) {
@@ -42,6 +45,23 @@ function formatTransactionDate(value: string) {
     date: date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }),
     time: date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }),
   };
+}
+
+function formatInteger(value: number) {
+  return new Intl.NumberFormat("en").format(Number.isFinite(value) ? value : 0);
+}
+
+function formatMonthDay(value: string | null) {
+  if (!value) return "Recently";
+  return new Date(value).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+
+function getTrendMax(impact: CoinImpact | null) {
+  if (!impact?.monthlyTrend.length) return 1;
+  return Math.max(
+    1,
+    ...impact.monthlyTrend.map((month) => Math.max(month.coinsEarnedMillis, month.communitySaves * 1000, month.recommendations * 1000)),
+  );
 }
 
 function CoinHelpSheet({ onClose }: { onClose: () => void }) {
@@ -87,7 +107,7 @@ function CoinHelpSheet({ onClose }: { onClose: () => void }) {
   );
 }
 
-export function WalletScreen({ onBack }: WalletScreenProps) {
+export function WalletScreen({ onBack, onRecommendPlace }: WalletScreenProps) {
   const { isAuthenticated } = useAuth();
   const [type, setType] = useState<CoinLedgerTypeFilter>("all");
   const [datePreset, setDatePreset] = useState<CoinLedgerDatePreset>("6m");
@@ -98,8 +118,11 @@ export function WalletScreen({ onBack }: WalletScreenProps) {
   const [sort, setSort] = useState<CoinLedgerSort>("newest");
   const [page, setPage] = useState(1);
   const [ledger, setLedger] = useState<CoinLedger | null>(null);
+  const [impact, setImpact] = useState<CoinImpact | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [isImpactLoading, setIsImpactLoading] = useState(false);
   const [error, setError] = useState("");
+  const [impactError, setImpactError] = useState("");
   const [customError, setCustomError] = useState("");
   const [isCoinHelpOpen, setIsCoinHelpOpen] = useState(false);
 
@@ -125,9 +148,29 @@ export function WalletScreen({ onBack }: WalletScreenProps) {
     }
   }, [appliedFrom, appliedTo, datePreset, isAuthenticated, page, sort, type]);
 
+  const loadImpact = useCallback(async () => {
+    if (!isAuthenticated) return;
+    setIsImpactLoading(true);
+    setImpactError("");
+    try {
+      const nextImpact = await fetchCoinImpact();
+      setImpact(nextImpact);
+    } catch (loadError) {
+      const message = loadError instanceof Error ? loadError.message : "Could not load your impact.";
+      setImpactError(message);
+    } finally {
+      setIsImpactLoading(false);
+    }
+  }, [isAuthenticated]);
+
   useEffect(() => {
     void loadLedger();
   }, [loadLedger]);
+
+  useEffect(() => {
+    void loadImpact();
+    if (isAuthenticated) void trackCoinEducationEvent("impact_opened");
+  }, [isAuthenticated, loadImpact]);
 
   const hasCustomDates = datePreset === "custom";
   const customRangeInvalid = useMemo(() => Boolean(customFrom && customTo && customTo < customFrom), [customFrom, customTo]);
@@ -155,6 +198,15 @@ export function WalletScreen({ onBack }: WalletScreenProps) {
     setAppliedTo(customTo);
     setPage(1);
   }
+
+  const visibleWallet = impact?.wallet ?? ledger?.wallet ?? null;
+  const trendMax = getTrendMax(impact);
+  const hasImpact = Boolean(impact && (
+    impact.impact.placesRecommended > 0 ||
+    impact.impact.communitySaves > 0 ||
+    impact.impact.coinsEarnedMillis > 0 ||
+    impact.impact.coinsSavedMillis > 0
+  ));
 
   if (!isAuthenticated) {
     return (
@@ -197,8 +249,146 @@ export function WalletScreen({ onBack }: WalletScreenProps) {
         <span className="wr-wallet-balance-icon" aria-hidden="true"><Coins size={20} /></span>
         <div>
           <p>Current balance</p>
-          <strong>{ledger ? formatCoinMillis(ledger.wallet.balanceMillis ?? Math.round(ledger.wallet.balanceCoins * 1000)) : "..."}</strong>
+          <strong>{visibleWallet ? formatCoinMillis(visibleWallet.balanceMillis ?? Math.round(visibleWallet.balanceCoins * 1000)) : "..."}</strong>
+          <small>
+            This month <b>+{impact ? formatCoinMillis(impact.month.earnedMillis) : "..."}</b> earned <b>-{impact ? formatCoinMillis(impact.month.spentMillis) : "..."}</b> spent <b>{impact ? formatCoinMillis(impact.month.netMillis, { signed: true }) : "..."}</b> net
+          </small>
         </div>
+      </section>
+
+      <section className="wr-impact" aria-labelledby="wr-impact-title">
+        <div className="wr-impact-hero">
+          <Sparkles size={18} aria-hidden="true" />
+          <p>You helped</p>
+          <strong>{impact ? formatInteger(impact.impact.travelersHelped) : "..."}</strong>
+          <span>travelers discover amazing places.</span>
+        </div>
+        <div className="wr-impact-heading">
+          <div>
+            <h3 id="wr-impact-title">Your Impact</h3>
+            <p>{impact ? `${impact.contributionScore.level} · Contribution Score ${impact.contributionScore.score}/100` : "Loading your community impact"}</p>
+          </div>
+          <span className="wr-impact-score" aria-label={impact ? `Contribution Score ${impact.contributionScore.score} out of 100` : "Contribution Score loading"}>
+            {impact ? `${impact.contributionScore.score}/100` : "..."}
+          </span>
+        </div>
+
+        {impactError ? (
+          <div className="wr-wallet-state">
+            <p>{impactError}</p>
+            <button type="button" onClick={() => void loadImpact()}>
+              <RotateCcw size={15} aria-hidden="true" />
+              Retry
+            </button>
+          </div>
+        ) : isImpactLoading && !impact ? (
+          <div className="wr-impact-summary-grid" aria-label="Loading your impact">
+            {Array.from({ length: 6 }, (_unused, index) => <span className="wr-impact-skeleton" key={index} />)}
+          </div>
+        ) : impact && !hasImpact ? (
+          <div className="wr-impact-empty">
+            <MapPinPlus size={18} aria-hidden="true" />
+            <strong>Start recommending amazing places.</strong>
+            <p>When other travelers save them, you'll earn community rewards.</p>
+            <button
+              type="button"
+              onClick={() => {
+                void trackCoinEducationEvent("impact_empty_cta_clicked");
+                onRecommendPlace?.();
+              }}
+            >
+              Recommend a Place
+            </button>
+          </div>
+        ) : impact ? (
+          <>
+            <div className="wr-impact-summary-grid">
+              {[
+                ["Travelers Helped", impact.impact.travelersHelped],
+                ["Places Added", impact.impact.placesAdded],
+                ["Community Saves", impact.impact.communitySaves],
+                ["Places Recommended", impact.impact.placesRecommended],
+                ["Coins Earned", formatCoinMillis(impact.impact.coinsEarnedMillis)],
+                ["Coins Saved", formatCoinMillis(impact.impact.coinsSavedMillis)],
+              ].map(([label, value]) => (
+                <article className="wr-impact-summary-card" key={label}>
+                  <strong>{typeof value === "number" ? formatInteger(value) : value}</strong>
+                  <span>{label}</span>
+                </article>
+              ))}
+            </div>
+
+            <div className="wr-impact-recent" aria-label="Past 30 days">
+              <h4>Past 30 Days</h4>
+              <div>
+                <span>Recommendations <b>{formatInteger(impact.summary30Days.recommendations)}</b></span>
+                <span>Community Saves <b>{formatInteger(impact.summary30Days.communitySaves)}</b></span>
+                <span>Coins Earned <b>+{formatCoinMillis(impact.summary30Days.coinsEarnedMillis)}</b></span>
+                <span>Coins Saved <b>{formatCoinMillis(impact.summary30Days.coinsSavedMillis)}</b></span>
+              </div>
+            </div>
+
+            <section className="wr-impact-top" aria-labelledby="wr-impact-top-title">
+              <h4 id="wr-impact-top-title">Top Recommendations</h4>
+              {impact.topRecommendations.length ? impact.topRecommendations.map((place) => (
+                <button
+                  type="button"
+                  className="wr-impact-top-card"
+                  key={place.placeId}
+                  onClick={() => void trackCoinEducationEvent("impact_top_place_clicked")}
+                >
+                  <span>
+                    <strong>{place.title}</strong>
+                    <small>Added {formatMonthDay(place.addedAt)}</small>
+                  </span>
+                  <span>
+                    <b>{formatInteger(place.communitySaves)}</b>
+                    <small>Travelers</small>
+                  </span>
+                  <span>
+                    <b>{formatCoinMillis(place.coinsEarnedMillis)}</b>
+                    <small>Coins earned</small>
+                  </span>
+                </button>
+              )) : (
+                <p className="wr-impact-muted">Your top recommendations will appear after travelers save them.</p>
+              )}
+            </section>
+
+            <section className="wr-impact-trend" aria-labelledby="wr-impact-trend-title">
+              <div className="wr-impact-trend-title">
+                <BarChart3 size={16} aria-hidden="true" />
+                <h4 id="wr-impact-trend-title">Monthly Trend</h4>
+              </div>
+              <div className="wr-impact-bars">
+                {impact.monthlyTrend.map((month) => {
+                  const earnedHeight = Math.max(4, Math.round((month.coinsEarnedMillis / trendMax) * 100));
+                  const savesHeight = Math.max(4, Math.round(((month.communitySaves * 1000) / trendMax) * 100));
+                  const recHeight = Math.max(4, Math.round(((month.recommendations * 1000) / trendMax) * 100));
+                  return (
+                    <button
+                      type="button"
+                      className="wr-impact-bar-group"
+                      key={month.month}
+                      aria-label={`${month.label}: ${formatCoinMillis(month.coinsEarnedMillis)} coins earned, ${month.communitySaves} community saves, ${month.recommendations} recommendations`}
+                      onClick={() => void trackCoinEducationEvent("impact_month_changed")}
+                    >
+                      <span style={{ height: `${earnedHeight}%` }} className="is-earned" />
+                      <span style={{ height: `${savesHeight}%` }} className="is-saves" />
+                      <span style={{ height: `${recHeight}%` }} className="is-recs" />
+                      <small>{month.month.slice(5)}</small>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="wr-impact-legend" aria-hidden="true">
+                <span>Coins Earned</span>
+                <span>Community Saves</span>
+                <span>Recommendations</span>
+              </div>
+            </section>
+          </>
+        ) : null}
       </section>
 
       <section className="wr-wallet-controls" aria-label="Wallet filters">

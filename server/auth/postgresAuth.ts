@@ -481,7 +481,11 @@ export type AppUsageEventInput = {
     | "coin_onboarding_explore_discover_clicked"
     | "coin_onboarding_add_place_clicked"
     | "coin_onboarding_dismissed"
-    | "coin_help_opened";
+    | "coin_help_opened"
+    | "impact_opened"
+    | "impact_top_place_clicked"
+    | "impact_month_changed"
+    | "impact_empty_cta_clicked";
   userId?: string | null;
   anonymousId?: string | null;
   metadataJson?: Record<string, unknown> | null;

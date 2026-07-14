@@ -537,6 +537,304 @@
   font-weight: 950;
 }
 
+.wr-wallet-balance small {
+  display: block;
+  margin-top: 0.32rem;
+  color: #64748b;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  font-weight: 800;
+}
+
+.wr-wallet-balance small b {
+  color: #10213f;
+  font-weight: 950;
+}
+
+.wr-impact {
+  margin: 0 1rem 0.85rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.wr-impact-hero,
+.wr-impact-heading,
+.wr-impact-recent,
+.wr-impact-top,
+.wr-impact-trend,
+.wr-impact-empty {
+  border: 1px solid #d8dde3;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.74);
+}
+
+.wr-impact-hero {
+  padding: 0.85rem;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.1rem 0.52rem;
+  align-items: center;
+}
+
+.wr-impact-hero svg {
+  grid-row: span 3;
+  color: #047857;
+}
+
+.wr-impact-hero p,
+.wr-impact-hero span,
+.wr-impact-heading p,
+.wr-impact-summary-card span,
+.wr-impact-muted,
+.wr-impact-top-card small {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  font-weight: 800;
+}
+
+.wr-impact-hero strong {
+  display: block;
+  font-size: 1.9rem;
+  line-height: 0.98;
+  font-weight: 980;
+}
+
+.wr-impact-heading {
+  padding: 0.8rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.wr-impact-heading h3,
+.wr-impact-recent h4,
+.wr-impact-top h4,
+.wr-impact-trend h4 {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  font-weight: 950;
+}
+
+.wr-impact-score {
+  flex: 0 0 auto;
+  min-width: 4.15rem;
+  text-align: center;
+  border: 1px solid #bbf7d0;
+  border-radius: 0.45rem;
+  background: #ecfdf5;
+  color: #047857;
+  padding: 0.42rem 0.48rem;
+  font-size: 0.82rem;
+  font-weight: 950;
+}
+
+.wr-impact-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.wr-impact-summary-card {
+  min-height: 4.1rem;
+  border: 1px solid #d8dde3;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.74);
+  padding: 0.68rem;
+  display: grid;
+  align-content: center;
+  gap: 0.1rem;
+}
+
+.wr-impact-summary-card strong {
+  color: #10213f;
+  font-size: 1.16rem;
+  line-height: 1.05;
+  font-weight: 960;
+}
+
+.wr-impact-skeleton {
+  min-height: 4.1rem;
+  border-radius: 0.5rem;
+  background: linear-gradient(90deg, #e2e8f0 0%, #f8fafc 50%, #e2e8f0 100%);
+  background-size: 180% 100%;
+  animation: wrWalletSkeleton 1.1s ease-in-out infinite;
+}
+
+.wr-impact-empty {
+  padding: 0.9rem;
+  display: grid;
+  justify-items: start;
+  gap: 0.35rem;
+}
+
+.wr-impact-empty svg {
+  color: #047857;
+}
+
+.wr-impact-empty strong {
+  font-size: 0.86rem;
+  line-height: 1.25;
+  font-weight: 950;
+}
+
+.wr-impact-empty p {
+  margin: 0;
+  max-width: 17rem;
+  color: #64748b;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  font-weight: 800;
+}
+
+.wr-impact-empty button {
+  margin-top: 0.2rem;
+  border: 1px solid #102a57;
+  border-radius: 0.5rem;
+  background: #102a57;
+  color: #fff;
+  min-height: 2.35rem;
+  padding: 0 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.wr-impact-recent,
+.wr-impact-top,
+.wr-impact-trend {
+  padding: 0.78rem;
+}
+
+.wr-impact-recent div {
+  margin-top: 0.52rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.wr-impact-recent span {
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.wr-impact-recent b {
+  display: block;
+  margin-top: 0.08rem;
+  color: #10213f;
+  font-size: 0.86rem;
+}
+
+.wr-impact-top {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.wr-impact-top-card {
+  width: 100%;
+  border: 1px solid #d8dde3;
+  border-radius: 0.5rem;
+  background: #fff;
+  color: #10213f;
+  padding: 0.62rem;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 4.2rem 4.8rem;
+  gap: 0.5rem;
+  align-items: center;
+  text-align: left;
+}
+
+.wr-impact-top-card strong,
+.wr-impact-top-card b {
+  display: block;
+  color: #10213f;
+  font-size: 0.78rem;
+  line-height: 1.2;
+  font-weight: 940;
+}
+
+.wr-impact-top-card span:not(:first-child) {
+  text-align: right;
+}
+
+.wr-impact-trend-title {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.wr-impact-trend-title svg {
+  color: #047857;
+}
+
+.wr-impact-bars {
+  margin-top: 0.68rem;
+  height: 8.3rem;
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 0.35rem;
+  align-items: end;
+}
+
+.wr-impact-bar-group {
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: #64748b;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-rows: 1fr auto;
+  gap: 0.12rem;
+  align-items: end;
+}
+
+.wr-impact-bar-group span {
+  width: 100%;
+  min-height: 0.25rem;
+  border-radius: 999px 999px 0 0;
+}
+
+.wr-impact-bar-group .is-earned {
+  background: #047857;
+}
+
+.wr-impact-bar-group .is-saves {
+  background: #1f7cf0;
+}
+
+.wr-impact-bar-group .is-recs {
+  background: #a16207;
+}
+
+.wr-impact-bar-group small {
+  grid-column: 1 / -1;
+  font-size: 0.6rem;
+  font-weight: 850;
+}
+
+.wr-impact-legend {
+  margin-top: 0.52rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.65rem;
+}
+
+.wr-impact-legend span {
+  color: #64748b;
+  font-size: 0.62rem;
+  font-weight: 850;
+}
+
+.wr-impact button:focus-visible {
+  outline: 3px solid rgba(31, 124, 240, 0.35);
+  outline-offset: 2px;
+}
+
 .wr-wallet-controls {
   padding: 0 1rem 0.72rem;
   display: grid;
@@ -1178,6 +1476,113 @@
   .wr-login-sheet {
     padding-left: 0.82rem;
     padding-right: 0.82rem;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .wr-wallet-page {
+    color: #eef4ff;
+    background: #111827;
+  }
+
+  .wr-wallet-header p,
+  .wr-wallet-balance p,
+  .wr-wallet-balance small,
+  .wr-impact-hero p,
+  .wr-impact-hero span,
+  .wr-impact-heading p,
+  .wr-impact-summary-card span,
+  .wr-impact-muted,
+  .wr-impact-top-card small,
+  .wr-impact-empty p,
+  .wr-impact-recent span,
+  .wr-impact-legend span,
+  .wr-impact-bar-group,
+  .wr-wallet-pagination span,
+  .wr-wallet-transaction-row p,
+  .wr-wallet-transaction-row small,
+  .wr-wallet-state {
+    color: #aebbd0;
+  }
+
+  .wr-wallet-icon-btn,
+  .wr-wallet-help-btn,
+  .wr-wallet-custom-range button,
+  .wr-wallet-state button,
+  .wr-wallet-pagination button,
+  .wr-impact-top-card,
+  .wr-coin-help-close {
+    background: #1f2937;
+    border-color: #334155;
+    color: #eef4ff;
+  }
+
+  .wr-wallet-balance,
+  .wr-wallet-tabs,
+  .wr-wallet-transaction-row,
+  .wr-wallet-skeleton-row,
+  .wr-impact-hero,
+  .wr-impact-heading,
+  .wr-impact-recent,
+  .wr-impact-top,
+  .wr-impact-trend,
+  .wr-impact-empty,
+  .wr-impact-summary-card {
+    background: #172033;
+    border-color: #334155;
+  }
+
+  .wr-wallet-balance strong,
+  .wr-wallet-balance small b,
+  .wr-impact-hero strong,
+  .wr-impact-heading h3,
+  .wr-impact-recent h4,
+  .wr-impact-top h4,
+  .wr-impact-trend h4,
+  .wr-impact-summary-card strong,
+  .wr-impact-empty strong,
+  .wr-impact-top-card strong,
+  .wr-impact-top-card b,
+  .wr-impact-recent b,
+  .wr-wallet-transaction-row h3 {
+    color: #f8fafc;
+  }
+
+  .wr-wallet-filter-grid select,
+  .wr-wallet-custom-range input {
+    background: #1f2937;
+    border-color: #334155;
+    color: #eef4ff;
+  }
+
+  .wr-impact-score,
+  .wr-wallet-balance-icon,
+  .wr-profile-coin-icon {
+    background: #0f3a2f;
+    border-color: #166534;
+    color: #86efac;
+  }
+
+  .wr-coin-help-sheet {
+    background: #111827;
+    border-color: #334155;
+    color: #eef4ff;
+  }
+
+  .wr-coin-help-list div {
+    background: #172033;
+    border-color: #334155;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wr-impact-skeleton,
+  .wr-wallet-skeleton-row span,
+  .wr-wallet-skeleton-row strong,
+  .wr-profile-skeleton,
+  .wr-profile-loading-section-title,
+  .wr-profile-loading-row {
+    animation: none;
   }
 }
 

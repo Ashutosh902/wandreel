@@ -51,9 +51,11 @@ import {
 import {
   chargeSavedPlaceCoins,
   completeCoinOnboarding,
+  getCoinImpact,
   getCoinLedger,
   getCoinOnboardingState,
   getCoinPricing,
+  invalidateCoinImpactCache,
   type CoinSaveSource,
 } from "./economy/store";
 import { featureFlags } from "./featureFlags";
@@ -2657,6 +2659,10 @@ app.post("/api/analytics/app-event", optionalAuth, async (req, res) => {
       "coin_onboarding_add_place_clicked",
       "coin_onboarding_dismissed",
       "coin_help_opened",
+      "impact_opened",
+      "impact_top_place_clicked",
+      "impact_month_changed",
+      "impact_empty_cta_clicked",
     ]);
     if (!allowedEventTypes.has(eventType)) {
       return res.status(400).json({ ok: false, error: "Invalid event_type" });
@@ -2882,6 +2888,18 @@ app.get("/api/economy/ledger", requireAuth, async (req, res) => {
   }
 });
 
+app.get("/api/economy/impact", requireAuth, async (req, res) => {
+  try {
+    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+    const impact = await getCoinImpact(getPostgresDatabase(), authUser!.userId);
+    res.setHeader("Cache-Control", `private, max-age=${impact.cache.maxAgeSeconds}`);
+    return res.json({ ok: true, ...impact });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not fetch your impact";
+    return res.status(400).json({ ok: false, error: message });
+  }
+});
+
 app.get("/api/economy/pricing", async (_req, res) => {
   return res.json({ ok: true, pricing: getCoinPricing() });
 });
@@ -2951,6 +2969,7 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
         category,
         metadata,
       });
+      invalidateCoinImpactCache(authUser!.userId);
       const ledger = await getCoinLedger(getPostgresDatabase(), authUser!.userId, { limit: 5 });
       return res.status(201).json({ ok: true, alreadySaved: saveResult.alreadySaved, item: saveResult.item, coin: { wallet: ledger.wallet } });
     }

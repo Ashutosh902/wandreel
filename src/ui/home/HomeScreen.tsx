@@ -715,6 +715,21 @@ export function HomeScreen() {
     setActiveTab("Login");
     setIsWalletRoute(false);
   }, []);
+  const openAddFromWallet = useCallback(() => {
+    if (typeof window !== "undefined" && window.location.pathname === "/wallet") {
+      window.history.pushState({}, "", "/");
+    }
+    setHeroNavigationContext({
+      filteredPlaceIds: null,
+      filteredCity: null,
+      mapPlaces: null,
+      mapCategories: null,
+    });
+    setTransitionDirection(1);
+    setActiveCategory(null);
+    setIsWalletRoute(false);
+    setActiveTab("Add");
+  }, []);
 
   useEffect(() => {
     const handlePopState = () => {
@@ -1237,7 +1252,7 @@ export function HomeScreen() {
 
   const page = useMemo(() => {
     if (isWalletRoute) {
-      return <WalletScreen onBack={closeWalletRoute} />;
+      return <WalletScreen onBack={closeWalletRoute} onRecommendPlace={openAddFromWallet} />;
     }
 
     if (plannerRoute === "food-trail") {
@@ -1644,6 +1659,7 @@ export function HomeScreen() {
     setPlannerPath,
     archivingStrollId,
     closeWalletRoute,
+    openAddFromWallet,
     isWalletRoute,
     openWalletRoute,
   ]);

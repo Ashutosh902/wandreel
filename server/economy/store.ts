@@ -140,6 +140,82 @@ export type CoinLedgerDto = {
   };
 };
 
+export type CoinImpactTopRecommendationDto = {
+  placeId: string;
+  title: string;
+  communitySaves: number;
+  coinsEarnedMillis: number;
+  coinsEarnedCoins: number;
+  addedAt: string | null;
+};
+
+export type CoinImpactMonthlyTrendDto = {
+  month: string;
+  label: string;
+  coinsEarnedMillis: number;
+  coinsEarnedCoins: number;
+  communitySaves: number;
+  recommendations: number;
+};
+
+export type CoinImpactDto = {
+  wallet: CoinWalletDto;
+  month: {
+    earnedMillis: number;
+    earnedCoins: number;
+    spentMillis: number;
+    spentCoins: number;
+    netMillis: number;
+    netCoins: number;
+  };
+  impact: {
+    travelersHelped: number;
+    placesAdded: number;
+    communitySaves: number;
+    placesRecommended: number;
+    coinsEarnedMillis: number;
+    coinsEarnedCoins: number;
+    coinsSavedMillis: number;
+    coinsSavedCoins: number;
+  };
+  contributionScore: {
+    score: number;
+    level: string;
+    formula: {
+      recommendationsWeight: number;
+      communitySavesWeight: number;
+      recommendationQualityWeight: number;
+      recentActivityWeight: number;
+      recommendationTarget: number;
+      communitySaveTarget: number;
+      qualitySavesPerRecommendationTarget: number;
+      recentActivityTarget: number;
+    };
+    components: {
+      recommendations: number;
+      communitySaves: number;
+      recommendationQuality: number;
+      recentActivity: number;
+    };
+    thresholds: Array<{ level: string; minScore: number }>;
+  };
+  summary30Days: {
+    recommendations: number;
+    communitySaves: number;
+    coinsEarnedMillis: number;
+    coinsEarnedCoins: number;
+    coinsSavedMillis: number;
+    coinsSavedCoins: number;
+  };
+  monthlyTrend: CoinImpactMonthlyTrendDto[];
+  topRecommendations: CoinImpactTopRecommendationDto[];
+  cache: {
+    maxAgeSeconds: number;
+    generatedAt: string;
+  };
+  queryPlan: string[];
+};
+
 export type CoinChargeResult = {
   saveEvent: {
     id: string;
@@ -174,6 +250,27 @@ const DISCOVER_SAVE_CHARGE_MILLIS = 1 * COIN_MILLIS_PER_COIN;
 const DISCOVER_REWARD_POOL_MILLIS = 500;
 const DISCOVER_REWARD_POOL_KEY = "discover_recommenders";
 const ROUNDING_POLICY = "largest_remainder_user_id_asc";
+const IMPACT_CACHE_TTL_MS = 60_000;
+const CONTRIBUTION_FORMULA = {
+  recommendationsWeight: 30,
+  communitySavesWeight: 30,
+  recommendationQualityWeight: 20,
+  recentActivityWeight: 20,
+  recommendationTarget: 50,
+  communitySaveTarget: 100,
+  qualitySavesPerRecommendationTarget: 5,
+  recentActivityTarget: 20,
+} as const;
+const CONTRIBUTION_LEVEL_THRESHOLDS = [
+  { level: "Explorer", minScore: 0 },
+  { level: "Trailblazer", minScore: 20 },
+  { level: "Guide", minScore: 40 },
+  { level: "Local Expert", minScore: 60 },
+  { level: "City Curator", minScore: 80 },
+  { level: "Master Explorer", minScore: 95 },
+] as const;
+
+const impactCache = new Map<string, { expiresAt: number; value: CoinImpactDto }>();
 
 export const economyConstants = {
   coinMillisPerCoin: COIN_MILLIS_PER_COIN,
@@ -293,6 +390,28 @@ function toMillis(value: string | number | bigint | null | undefined) {
   return Number.isSafeInteger(parsed) ? parsed : 0;
 }
 
+function toCount(value: unknown) {
+  const parsed = Number(value ?? 0);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function readJsonArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
 function normalizePlaceId(value: string) {
   return String(value || "").trim();
 }
@@ -408,6 +527,44 @@ export function getEconomyLimits(): EconomyLimits {
     maxRewardsPerUserDay: readLimitEnv("COIN_MAX_REWARDS_PER_USER_DAY"),
     maxRewardedRecommendationsCreatedPerDay: readLimitEnv("COIN_MAX_REWARDED_RECOMMENDATIONS_CREATED_PER_DAY"),
   };
+}
+
+export function computeContributionScore(input: {
+  placesRecommended: number;
+  communitySaves: number;
+  recentRecommendations: number;
+  recentCommunitySaves: number;
+}) {
+  const recommendationsRatio = Math.min(Math.max(input.placesRecommended, 0) / CONTRIBUTION_FORMULA.recommendationTarget, 1);
+  const communitySavesRatio = Math.min(Math.max(input.communitySaves, 0) / CONTRIBUTION_FORMULA.communitySaveTarget, 1);
+  const qualityRatio = input.placesRecommended > 0
+    ? Math.min(Math.max(input.communitySaves, 0) / input.placesRecommended / CONTRIBUTION_FORMULA.qualitySavesPerRecommendationTarget, 1)
+    : 0;
+  const recentRatio = Math.min(
+    Math.max(input.recentRecommendations, 0) + Math.max(input.recentCommunitySaves, 0),
+    CONTRIBUTION_FORMULA.recentActivityTarget,
+  ) / CONTRIBUTION_FORMULA.recentActivityTarget;
+  const components = {
+    recommendations: Math.round(recommendationsRatio * CONTRIBUTION_FORMULA.recommendationsWeight),
+    communitySaves: Math.round(communitySavesRatio * CONTRIBUTION_FORMULA.communitySavesWeight),
+    recommendationQuality: Math.round(qualityRatio * CONTRIBUTION_FORMULA.recommendationQualityWeight),
+    recentActivity: Math.round(recentRatio * CONTRIBUTION_FORMULA.recentActivityWeight),
+  };
+  const score = Math.min(100, components.recommendations + components.communitySaves + components.recommendationQuality + components.recentActivity);
+  const level = [...CONTRIBUTION_LEVEL_THRESHOLDS]
+    .reverse()
+    .find((threshold) => score >= threshold.minScore)?.level ?? CONTRIBUTION_LEVEL_THRESHOLDS[0].level;
+  return {
+    score,
+    level,
+    components,
+    formula: CONTRIBUTION_FORMULA,
+    thresholds: CONTRIBUTION_LEVEL_THRESHOLDS.map((threshold) => ({ ...threshold })),
+  };
+}
+
+export function invalidateCoinImpactCache(userId: string) {
+  impactCache.delete(userId);
 }
 
 export function allocateRewardMillis(totalMillis: number, recommenderUserIds: string[]): RewardDistribution[] {
@@ -532,6 +689,7 @@ export async function grantFirstLoginCoins(database: ConnectableDatabase, userId
       );
     }
     await client.query("commit");
+    invalidateCoinImpactCache(userId);
     return wallet;
   } catch (error) {
     await client.query("rollback").catch(() => undefined);
@@ -771,6 +929,315 @@ export async function getCoinLedger(
   }
 }
 
+type CoinImpactRow = {
+  places_added: string | number | bigint;
+  places_recommended: string | number | bigint;
+  community_saves: string | number | bigint;
+  coins_earned_millis: string | number | bigint;
+  discover_saves: string | number | bigint;
+  month_earned_millis: string | number | bigint;
+  month_spent_millis: string | number | bigint;
+  recent_recommendations: string | number | bigint;
+  recent_community_saves: string | number | bigint;
+  recent_coins_earned_millis: string | number | bigint;
+  recent_discover_saves: string | number | bigint;
+  top_recommendations_json: unknown;
+  monthly_trend_json: unknown;
+};
+
+function normalizeImpactTopRecommendations(value: unknown): CoinImpactTopRecommendationDto[] {
+  return readJsonArray(value).map((item) => {
+    const record = asRecord(item);
+    const coinsEarnedMillis = toMillis(record.coinsEarnedMillis as string | number | bigint | null | undefined);
+    return {
+      placeId: String(record.placeId || ""),
+      title: String(record.title || "Recommended place"),
+      communitySaves: toCount(record.communitySaves),
+      coinsEarnedMillis,
+      coinsEarnedCoins: millisToCoins(coinsEarnedMillis),
+      addedAt: record.addedAt ? String(record.addedAt) : null,
+    };
+  }).filter((item) => item.placeId);
+}
+
+function normalizeImpactMonthlyTrend(value: unknown): CoinImpactMonthlyTrendDto[] {
+  return readJsonArray(value).map((item) => {
+    const record = asRecord(item);
+    const coinsEarnedMillis = toMillis(record.coinsEarnedMillis as string | number | bigint | null | undefined);
+    return {
+      month: String(record.month || ""),
+      label: String(record.label || record.month || ""),
+      coinsEarnedMillis,
+      coinsEarnedCoins: millisToCoins(coinsEarnedMillis),
+      communitySaves: toCount(record.communitySaves),
+      recommendations: toCount(record.recommendations),
+    };
+  }).filter((item) => item.month);
+}
+
+export async function getCoinImpact(database: ConnectableDatabase, userId: string): Promise<CoinImpactDto> {
+  const cached = impactCache.get(userId);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const client = await database.connect();
+  try {
+    await client.query("begin");
+    const wallet = await ensureWallet(client, userId);
+    const result = await client.query<CoinImpactRow>(
+      `
+        with
+          params as (
+            select
+              $1::uuid as user_id,
+              $2::bigint as discover_savings_millis,
+              date_trunc('month', now()) as current_month_start,
+              now() - interval '30 days' as recent_start,
+              date_trunc('month', now()) - interval '5 months' as trend_start
+          ),
+          recommended_places as (
+            select distinct on (usp.place_id)
+              usp.place_id,
+              usp.title,
+              usp.created_at
+            from user_saved_places usp, params p
+            where usp.user_id = p.user_id
+              and (
+                usp.metadata_json->>'sharedVisibility' = 'global'
+                or coalesce((usp.metadata_json->>'isGlobal')::boolean, false) = true
+              )
+            order by usp.place_id, usp.created_at asc
+          ),
+          places_added as (
+            select count(distinct usp.place_id)::bigint as value
+            from user_saved_places usp, params p
+            where usp.user_id = p.user_id
+          ),
+          community_saves as (
+            select count(*)::bigint as value
+            from coin_save_events cse
+            join recommended_places rp on rp.place_id = cse.place_id
+            where cse.source = 'discover'
+              and cse.recommender_snapshot_json ? $1::text
+          ),
+          discover_saves as (
+            select count(*)::bigint as value
+            from coin_save_events cse, params p
+            where cse.user_id = p.user_id
+              and cse.source = 'discover'
+          ),
+          rewards as (
+            select coalesce(sum(ct.amount_millis), 0)::bigint as value
+            from coin_transactions ct, params p
+            where ct.wallet_user_id = p.user_id
+              and ct.type = 'recommender_reward'
+              and ct.direction = 'credit'
+          ),
+          month_wallet as (
+            select
+              coalesce(sum(ct.amount_millis) filter (
+                where ct.direction = 'credit'
+                  and ct.type = 'recommender_reward'
+              ), 0)::bigint as earned_millis,
+              coalesce(sum(ct.amount_millis) filter (
+                where ct.direction = 'debit'
+                  and ct.type in ('external_save_charge', 'discover_save_charge')
+              ), 0)::bigint as spent_millis
+            from coin_transactions ct, params p
+            where ct.wallet_user_id = p.user_id
+              and ct.created_at >= p.current_month_start
+          ),
+          recent as (
+            select
+              (select count(*)::bigint from recommended_places rp, params p where rp.created_at >= p.recent_start) as recommendations,
+              (select count(*)::bigint
+               from coin_save_events cse
+               join recommended_places rp on rp.place_id = cse.place_id
+               join params p on true
+               where cse.source = 'discover'
+                 and cse.created_at >= p.recent_start
+                 and cse.recommender_snapshot_json ? $1::text) as community_saves,
+              (select coalesce(sum(ct.amount_millis), 0)::bigint
+               from coin_transactions ct, params p
+               where ct.wallet_user_id = p.user_id
+                 and ct.type = 'recommender_reward'
+                 and ct.direction = 'credit'
+                 and ct.created_at >= p.recent_start) as coins_earned_millis,
+              (select count(*)::bigint
+               from coin_save_events cse, params p
+               where cse.user_id = p.user_id
+                 and cse.source = 'discover'
+                 and cse.created_at >= p.recent_start) as discover_saves
+          ),
+          top_recommendations as (
+            select
+              rp.place_id,
+              rp.title,
+              rp.created_at,
+              count(cse.id)::bigint as community_saves,
+              coalesce(sum(ct.amount_millis), 0)::bigint as coins_earned_millis
+            from recommended_places rp
+            left join coin_save_events cse
+              on cse.place_id = rp.place_id
+             and cse.source = 'discover'
+             and cse.recommender_snapshot_json ? $1::text
+            left join coin_transactions ct
+              on ct.save_event_id = cse.id
+             and ct.wallet_user_id = $1
+             and ct.type = 'recommender_reward'
+             and ct.direction = 'credit'
+            group by rp.place_id, rp.title, rp.created_at
+            order by community_saves desc, coins_earned_millis desc, rp.created_at asc
+            limit 5
+          ),
+          top_json as (
+            select coalesce(
+              jsonb_agg(
+                jsonb_build_object(
+                  'placeId', place_id,
+                  'title', title,
+                  'communitySaves', community_saves,
+                  'coinsEarnedMillis', coins_earned_millis,
+                  'addedAt', created_at
+                )
+                order by community_saves desc, coins_earned_millis desc, created_at asc
+              ),
+              '[]'::jsonb
+            ) as value
+            from top_recommendations
+          ),
+          months as (
+            select generate_series(
+              (select trend_start from params),
+              date_trunc('month', now()),
+              interval '1 month'
+            ) as month_start
+          ),
+          trend as (
+            select
+              m.month_start,
+              coalesce((select sum(ct.amount_millis)
+                from coin_transactions ct, params p
+                where ct.wallet_user_id = p.user_id
+                  and ct.type = 'recommender_reward'
+                  and ct.direction = 'credit'
+                  and ct.created_at >= m.month_start
+                  and ct.created_at < m.month_start + interval '1 month'), 0)::bigint as coins_earned_millis,
+              coalesce((select count(*)
+                from coin_save_events cse
+                join recommended_places rp on rp.place_id = cse.place_id
+                where cse.source = 'discover'
+                  and cse.created_at >= m.month_start
+                  and cse.created_at < m.month_start + interval '1 month'
+                  and cse.recommender_snapshot_json ? $1::text), 0)::bigint as community_saves,
+              coalesce((select count(*)
+                from recommended_places rp
+                where rp.created_at >= m.month_start
+                  and rp.created_at < m.month_start + interval '1 month'), 0)::bigint as recommendations
+            from months m
+          ),
+          trend_json as (
+            select coalesce(
+              jsonb_agg(
+                jsonb_build_object(
+                  'month', to_char(month_start, 'YYYY-MM'),
+                  'label', to_char(month_start, 'Mon YYYY'),
+                  'coinsEarnedMillis', coins_earned_millis,
+                  'communitySaves', community_saves,
+                  'recommendations', recommendations
+                )
+                order by month_start asc
+              ),
+              '[]'::jsonb
+            ) as value
+            from trend
+          )
+        select
+          (select value from places_added) as places_added,
+          (select count(*)::bigint from recommended_places) as places_recommended,
+          (select value from community_saves) as community_saves,
+          (select value from rewards) as coins_earned_millis,
+          (select value from discover_saves) as discover_saves,
+          (select earned_millis from month_wallet) as month_earned_millis,
+          (select spent_millis from month_wallet) as month_spent_millis,
+          (select recommendations from recent) as recent_recommendations,
+          (select community_saves from recent) as recent_community_saves,
+          (select coins_earned_millis from recent) as recent_coins_earned_millis,
+          (select discover_saves from recent) as recent_discover_saves,
+          (select value from top_json) as top_recommendations_json,
+          (select value from trend_json) as monthly_trend_json
+      `,
+      [userId, EXTERNAL_IMPORT_CHARGE_MILLIS - DISCOVER_SAVE_CHARGE_MILLIS],
+    );
+    await client.query("commit");
+    const row = result.rows[0];
+    const placesRecommended = toCount(row?.places_recommended);
+    const communitySaves = toCount(row?.community_saves);
+    const discoverSaves = toCount(row?.discover_saves);
+    const coinsEarnedMillis = toMillis(row?.coins_earned_millis);
+    const coinsSavedMillis = discoverSaves * (EXTERNAL_IMPORT_CHARGE_MILLIS - DISCOVER_SAVE_CHARGE_MILLIS);
+    const monthEarnedMillis = toMillis(row?.month_earned_millis);
+    const monthSpentMillis = toMillis(row?.month_spent_millis);
+    const recentRecommendations = toCount(row?.recent_recommendations);
+    const recentCommunitySaves = toCount(row?.recent_community_saves);
+    const recentDiscoverSaves = toCount(row?.recent_discover_saves);
+    const recentCoinsSavedMillis = recentDiscoverSaves * (EXTERNAL_IMPORT_CHARGE_MILLIS - DISCOVER_SAVE_CHARGE_MILLIS);
+    const generatedAt = new Date().toISOString();
+    const impact: CoinImpactDto = {
+      wallet,
+      month: {
+        earnedMillis: monthEarnedMillis,
+        earnedCoins: millisToCoins(monthEarnedMillis),
+        spentMillis: monthSpentMillis,
+        spentCoins: millisToCoins(monthSpentMillis),
+        netMillis: monthEarnedMillis - monthSpentMillis,
+        netCoins: millisToCoins(monthEarnedMillis - monthSpentMillis),
+      },
+      impact: {
+        travelersHelped: communitySaves,
+        placesAdded: toCount(row?.places_added),
+        communitySaves,
+        placesRecommended,
+        coinsEarnedMillis,
+        coinsEarnedCoins: millisToCoins(coinsEarnedMillis),
+        coinsSavedMillis,
+        coinsSavedCoins: millisToCoins(coinsSavedMillis),
+      },
+      contributionScore: computeContributionScore({
+        placesRecommended,
+        communitySaves,
+        recentRecommendations,
+        recentCommunitySaves,
+      }),
+      summary30Days: {
+        recommendations: recentRecommendations,
+        communitySaves: recentCommunitySaves,
+        coinsEarnedMillis: toMillis(row?.recent_coins_earned_millis),
+        coinsEarnedCoins: millisToCoins(toMillis(row?.recent_coins_earned_millis)),
+        coinsSavedMillis: recentCoinsSavedMillis,
+        coinsSavedCoins: millisToCoins(recentCoinsSavedMillis),
+      },
+      monthlyTrend: normalizeImpactMonthlyTrend(row?.monthly_trend_json),
+      topRecommendations: normalizeImpactTopRecommendations(row?.top_recommendations_json),
+      cache: {
+        maxAgeSeconds: Math.floor(IMPACT_CACHE_TTL_MS / 1000),
+        generatedAt,
+      },
+      queryPlan: [
+        "Ensure the wallet row, then aggregate from user_saved_places, coin_save_events, and coin_transactions in one CTE query.",
+        "Use distinct recommended places, save-time recommender snapshots, filtered wallet transaction indexes, and grouped monthly CTEs.",
+        "Cache each user result for 60 seconds and invalidate on wallet, recommendation, and save-event mutations.",
+      ],
+    };
+    impactCache.set(userId, { expiresAt: Date.now() + IMPACT_CACHE_TTL_MS, value: impact });
+    return impact;
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 export async function chargeSavedPlaceCoins(input: {
   database: ConnectableDatabase;
   userId: string;
@@ -996,6 +1463,10 @@ export async function chargeSavedPlaceCoins(input: {
     }
 
     await client.query("commit");
+    invalidateCoinImpactCache(input.userId);
+    for (const reward of rewardDistribution) {
+      invalidateCoinImpactCache(reward.userId);
+    }
     return {
       saveEvent: toSaveEventDto(event),
       wallet: nextWallet,

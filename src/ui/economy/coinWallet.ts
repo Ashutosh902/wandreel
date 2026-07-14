@@ -44,6 +44,64 @@ export type CoinLedger = {
   };
 };
 
+export type CoinImpact = {
+  wallet: CoinWallet;
+  month: {
+    earnedMillis: number;
+    earnedCoins: number;
+    spentMillis: number;
+    spentCoins: number;
+    netMillis: number;
+    netCoins: number;
+  };
+  impact: {
+    travelersHelped: number;
+    placesAdded: number;
+    communitySaves: number;
+    placesRecommended: number;
+    coinsEarnedMillis: number;
+    coinsEarnedCoins: number;
+    coinsSavedMillis: number;
+    coinsSavedCoins: number;
+  };
+  contributionScore: {
+    score: number;
+    level: string;
+    formula: Record<string, number>;
+    components: Record<string, number>;
+    thresholds: Array<{ level: string; minScore: number }>;
+  };
+  summary30Days: {
+    recommendations: number;
+    communitySaves: number;
+    coinsEarnedMillis: number;
+    coinsEarnedCoins: number;
+    coinsSavedMillis: number;
+    coinsSavedCoins: number;
+  };
+  monthlyTrend: Array<{
+    month: string;
+    label: string;
+    coinsEarnedMillis: number;
+    coinsEarnedCoins: number;
+    communitySaves: number;
+    recommendations: number;
+  }>;
+  topRecommendations: Array<{
+    placeId: string;
+    title: string;
+    communitySaves: number;
+    coinsEarnedMillis: number;
+    coinsEarnedCoins: number;
+    addedAt: string | null;
+  }>;
+  cache?: {
+    maxAgeSeconds: number;
+    generatedAt: string;
+  };
+  queryPlan?: string[];
+};
+
 export type CoinLedgerTypeFilter = "all" | "credit" | "debit";
 export type CoinLedgerDatePreset = "7d" | "6m" | "custom";
 export type CoinLedgerSort = "newest" | "oldest" | "amount_desc" | "amount_asc";
@@ -114,6 +172,27 @@ export async function fetchCoinLedger(options: FetchCoinLedgerOptions = {}): Pro
       to: options.to ?? null,
       sort: options.sort ?? "newest",
     },
+  };
+}
+
+export async function fetchCoinImpact(): Promise<CoinImpact> {
+  const response = await fetch(`${API_BASE_URL}/api/economy/impact`, {
+    credentials: "include",
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok || !payload?.ok) {
+    throw new Error(payload?.error || "Could not fetch your impact.");
+  }
+  return {
+    wallet: payload.wallet,
+    month: payload.month,
+    impact: payload.impact,
+    contributionScore: payload.contributionScore,
+    summary30Days: payload.summary30Days,
+    monthlyTrend: Array.isArray(payload.monthlyTrend) ? payload.monthlyTrend : [],
+    topRecommendations: Array.isArray(payload.topRecommendations) ? payload.topRecommendations : [],
+    cache: payload.cache,
+    queryPlan: Array.isArray(payload.queryPlan) ? payload.queryPlan : [],
   };
 }
 

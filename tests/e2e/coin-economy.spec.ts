@@ -19,6 +19,7 @@ type CoinState = {
   balanceMillis: number;
   transactions: LedgerTransaction[];
   savedPlaces: Array<Record<string, unknown>>;
+  impact?: ReturnType<typeof createImpactPayload>;
   authUser?: typeof user;
   ledgerRequests?: string[];
   ledgerFailuresRemaining?: number;
@@ -56,6 +57,109 @@ function coinTransaction(input: Partial<LedgerTransaction> & Pick<LedgerTransact
     relatedPlaceId: input.relatedPlaceId ?? null,
     metadata: input.metadata ?? {},
     createdAt: input.createdAt || new Date().toISOString(),
+  };
+}
+
+function createImpactPayload(input: Partial<{
+  balanceMillis: number;
+  travelersHelped: number;
+  placesAdded: number;
+  communitySaves: number;
+  placesRecommended: number;
+  coinsEarnedMillis: number;
+  coinsSavedMillis: number;
+  topRecommendations: Array<Record<string, unknown>>;
+  monthlyTrend: Array<Record<string, unknown>>;
+}> = {}) {
+  const balanceMillis = input.balanceMillis ?? 500_000;
+  const travelersHelped = input.travelersHelped ?? 482;
+  const placesRecommended = input.placesRecommended ?? 63;
+  const communitySaves = input.communitySaves ?? travelersHelped;
+  const coinsEarnedMillis = input.coinsEarnedMillis ?? 38_000;
+  const coinsSavedMillis = input.coinsSavedMillis ?? 24_000;
+  return {
+    ok: true,
+    wallet: {
+      userId: user.userId,
+      balanceCoins: balanceMillis / 1000,
+      balanceMillis,
+      createdAt: "2026-07-14T00:00:00.000Z",
+      updatedAt: "2026-07-14T12:00:00.000Z",
+    },
+    month: {
+      earnedMillis: 86_000,
+      earnedCoins: 86,
+      spentMillis: 41_000,
+      spentCoins: 41,
+      netMillis: 45_000,
+      netCoins: 45,
+    },
+    impact: {
+      travelersHelped,
+      placesAdded: input.placesAdded ?? 127,
+      communitySaves,
+      placesRecommended,
+      coinsEarnedMillis,
+      coinsEarnedCoins: coinsEarnedMillis / 1000,
+      coinsSavedMillis,
+      coinsSavedCoins: coinsSavedMillis / 1000,
+    },
+    contributionScore: {
+      score: 84,
+      level: "City Curator",
+      formula: {
+        recommendationsWeight: 30,
+        communitySavesWeight: 30,
+        recommendationQualityWeight: 20,
+        recentActivityWeight: 20,
+        recommendationTarget: 50,
+        communitySaveTarget: 100,
+        qualitySavesPerRecommendationTarget: 5,
+        recentActivityTarget: 20,
+      },
+      components: {
+        recommendations: 30,
+        communitySaves: 30,
+        recommendationQuality: 14,
+        recentActivity: 10,
+      },
+      thresholds: [
+        { level: "Explorer", minScore: 0 },
+        { level: "Trailblazer", minScore: 20 },
+        { level: "Guide", minScore: 40 },
+        { level: "Local Expert", minScore: 60 },
+        { level: "City Curator", minScore: 80 },
+        { level: "Master Explorer", minScore: 95 },
+      ],
+    },
+    summary30Days: {
+      recommendations: 12,
+      communitySaves: 37,
+      coinsEarnedMillis: 14_000,
+      coinsEarnedCoins: 14,
+      coinsSavedMillis: 8_000,
+      coinsSavedCoins: 8,
+    },
+    monthlyTrend: input.monthlyTrend ?? Array.from({ length: 6 }, (_unused, index) => ({
+      month: `2026-${String(index + 2).padStart(2, "0")}`,
+      label: new Date(Date.UTC(2026, index + 1, 1)).toLocaleDateString("en", { month: "short", year: "numeric" }),
+      coinsEarnedMillis: (index + 1) * 3_000,
+      coinsEarnedCoins: (index + 1) * 3,
+      communitySaves: (index + 1) * 4,
+      recommendations: index + 2,
+    })),
+    topRecommendations: input.topRecommendations ?? [
+      {
+        placeId: "blue-tokai",
+        title: "Blue Tokai Coffee",
+        communitySaves: 143,
+        coinsEarnedMillis: 6_700,
+        coinsEarnedCoins: 6.7,
+        addedAt: "2026-03-04T00:00:00.000Z",
+      },
+    ],
+    cache: { maxAgeSeconds: 60, generatedAt: "2026-07-14T12:00:00.000Z" },
+    queryPlan: ["fixture"],
   };
 }
 
@@ -123,6 +227,22 @@ async function installCoinApi(page: Page, state: CoinState) {
         user: {
           ...activeUser(),
           coinBalance: state.balanceMillis / 1000,
+        },
+      }),
+    });
+  });
+
+  await page.route("**/api/economy/impact", async (route) => {
+    const payload = state.impact ?? createImpactPayload({ balanceMillis: state.balanceMillis });
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...payload,
+        wallet: {
+          ...payload.wallet,
+          userId: activeUser().userId,
+          balanceCoins: state.balanceMillis / 1000,
+          balanceMillis: state.balanceMillis,
         },
       }),
     });
@@ -548,6 +668,86 @@ test("wallet filters, custom range, and second page render from ledger API", asy
   expect(finalRequest).toContain("page=1");
 });
 
+test("wallet Your Impact dashboard renders summary, top recommendations, trend, mobile, dark, and empty CTA", async ({ page }, testInfo) => {
+  const state: CoinState = {
+    balanceMillis: 497_000,
+    transactions: [
+      coinTransaction({
+        id: "impact-ledger-reward",
+        type: "recommender_reward",
+        direction: "credit",
+        amountMillis: 6_700,
+        balanceAfterMillis: 497_000,
+        metadata: { title: "Blue Tokai Coffee" },
+      }),
+    ],
+    savedPlaces: [],
+    analyticsEvents: [],
+  };
+  await seedAuthenticatedSnapshot(page);
+  await installCoinApi(page, state);
+
+  await page.goto("/wallet");
+  await expect(page.getByRole("heading", { name: "Your Impact" })).toBeVisible();
+  await expect(page.locator(".wr-impact-hero strong")).toHaveText("482");
+  await expect(page.getByText("travelers discover amazing places.")).toBeVisible();
+  await expect(page.getByText("City Curator · Contribution Score 84/100")).toBeVisible();
+  await expect(page.getByRole("article").filter({ hasText: "Places Added" }).getByText("127")).toBeVisible();
+  await expect(page.getByText("Places Added")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Top Recommendations" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Blue Tokai Coffee/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Monthly Trend" })).toBeVisible();
+  await page.screenshot({ path: `artifacts/screenshots/coin-impact-dashboard-${testInfo.project.name}.png`, fullPage: true });
+
+  await page.setViewportSize({ width: 390, height: 760 });
+  await page.screenshot({ path: `artifacts/screenshots/coin-impact-dashboard-mobile-${testInfo.project.name}.png`, fullPage: true });
+  await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+  await page.screenshot({ path: `artifacts/screenshots/coin-impact-dashboard-dark-${testInfo.project.name}.png`, fullPage: true });
+  await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+
+  state.impact = createImpactPayload({
+    balanceMillis: 999_999_000,
+    travelersHelped: 1_250_000,
+    placesAdded: 100_000,
+    communitySaves: 1_250_000,
+    placesRecommended: 100_000,
+    coinsEarnedMillis: 8_888_888,
+    coinsSavedMillis: 321_000,
+    topRecommendations: [
+      {
+        placeId: "large-top-place",
+        title: "A Very Popular Community Coffee House",
+        communitySaves: 987_654,
+        coinsEarnedMillis: 123_456,
+        coinsEarnedCoins: 123.456,
+        addedAt: "2026-01-02T00:00:00.000Z",
+      },
+    ],
+  });
+  await page.reload();
+  await expect(page.locator(".wr-impact-hero strong")).toHaveText("1,250,000");
+  await expect(page.getByRole("article").filter({ hasText: "Places Recommended" }).getByText("100,000")).toBeVisible();
+  await page.screenshot({ path: `artifacts/screenshots/coin-impact-large-account-${testInfo.project.name}.png`, fullPage: true });
+
+  state.impact = createImpactPayload({
+    balanceMillis: 500_000,
+    travelersHelped: 0,
+    placesAdded: 0,
+    communitySaves: 0,
+    placesRecommended: 0,
+    coinsEarnedMillis: 0,
+    coinsSavedMillis: 0,
+    topRecommendations: [],
+    monthlyTrend: [],
+  });
+  await page.reload();
+  await expect(page.getByText("Start recommending amazing places.")).toBeVisible();
+  await page.screenshot({ path: `artifacts/screenshots/coin-impact-empty-${testInfo.project.name}.png`, fullPage: true });
+  await page.getByRole("button", { name: "Recommend a Place" }).click();
+  await expect(page.getByRole("heading", { name: "Add a Wandreel" })).toBeVisible();
+  expect(state.analyticsEvents).toContain("impact_empty_cta_clicked");
+});
+
 test("wallet shows skeleton loading and empty states", async ({ page }) => {
   let releaseLedger: () => void = () => undefined;
   const ledgerGate = new Promise<void>((resolve) => {
@@ -558,6 +758,12 @@ test("wallet shows skeleton loading and empty states", async ({ page }) => {
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({ ok: true, user: { ...user, coinBalance: 500 } }),
+    });
+  });
+  await page.route("**/api/economy/impact", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(createImpactPayload({ balanceMillis: 500_000, travelersHelped: 0, placesAdded: 0, communitySaves: 0, placesRecommended: 0, coinsEarnedMillis: 0, coinsSavedMillis: 0, topRecommendations: [] })),
     });
   });
   await page.route("**/api/economy/ledger**", async (route) => {

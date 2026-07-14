@@ -241,8 +241,12 @@ test("real API profile wallet, saves, recommender reward, and insufficient balan
   await expect(page.getByText("Discover save")).toHaveCount(0);
   await page.getByRole("button", { name: /open wallet activity/i }).click();
   await expect(page).toHaveURL(/\/wallet$/);
+  await expect(page.getByRole("heading", { name: "Your Impact" })).toBeVisible();
+  await expect(page.getByRole("article").filter({ hasText: "Coins Saved" }).getByText("1")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Monthly Trend" })).toBeVisible();
   await expect(page.getByText("Discover save")).toBeVisible();
   await expect(page.getByText("External link import")).toBeVisible();
+  await page.screenshot({ path: `artifacts/screenshots/coin-real-impact-dashboard-${testInfo.project.name}.png`, fullPage: true });
   await page.screenshot({ path: `artifacts/screenshots/coin-real-after-discover-${testInfo.project.name}.png`, fullPage: true });
 
   const ledgerContract = await page.evaluate(async ({ apiBaseUrl: baseUrl }) => {

@@ -8,6 +8,7 @@ import { createSession, __resetPostgresTestConfig, __setPostgresTestConfig } fro
 import {
   chargeSavedPlaceCoins,
   completeCoinOnboarding,
+  getCoinImpact,
   getCoinLedger,
   getCoinOnboardingState,
   grantFirstLoginCoins,
@@ -322,6 +323,71 @@ test("concurrent Discover saves use independent recommender snapshots and conser
   assert.ok(results.every((result) => result.saveEvent.rewardDistribution.reduce((sum, reward) => sum + reward.amountMillis, 0) === 500));
   const reconciliation = await reconcileCoinEconomy(requirePool());
   assert.equal(reconciliation.walletDiscrepancyMillis, 0);
+});
+
+test("impact dashboard aggregates from real snapshots and ledger rows", { skip: !shouldRun }, async () => {
+  const owner = randomUUID();
+  const otherRecommender = randomUUID();
+  const saverOne = randomUUID();
+  const saverTwo = randomUUID();
+  await createUser(owner);
+  await createUser(otherRecommender);
+  await createUser(saverOne);
+  await createUser(saverTwo);
+  await setWallet(owner, 5_000);
+  await setWallet(saverOne, 2_000);
+  await setWallet(saverTwo, 2_000);
+  await savePlace(owner, "impact-top-one", true);
+  await savePlace(owner, "impact-top-two", true);
+  await savePlace(otherRecommender, "impact-other-place", true);
+
+  await chargeSave({
+    userId: saverOne,
+    placeId: "impact-top-one",
+    source: "discover",
+    idempotencyKey: "impact-saver-one",
+  });
+  await chargeSave({
+    userId: saverTwo,
+    placeId: "impact-top-one",
+    source: "discover",
+    idempotencyKey: "impact-saver-two",
+  });
+  await chargeSave({
+    userId: owner,
+    placeId: "impact-external-own",
+    source: "external_import",
+    idempotencyKey: "impact-owner-external",
+  });
+  await chargeSave({
+    userId: owner,
+    placeId: "impact-other-place",
+    source: "discover",
+    idempotencyKey: "impact-owner-discover",
+  });
+
+  const impact = await getCoinImpact(requirePool(), owner);
+
+  assert.equal(impact.wallet.balanceMillis, 3_000);
+  assert.equal(impact.month.earnedMillis, 1_000);
+  assert.equal(impact.month.spentMillis, 3_000);
+  assert.equal(impact.month.netMillis, -2_000);
+  assert.equal(impact.impact.travelersHelped, 2);
+  assert.equal(impact.impact.communitySaves, 2);
+  assert.equal(impact.impact.placesRecommended, 2);
+  assert.equal(impact.impact.placesAdded, 4);
+  assert.equal(impact.impact.coinsEarnedMillis, 1_000);
+  assert.equal(impact.impact.coinsSavedMillis, 1_000);
+  assert.equal(impact.summary30Days.recommendations, 2);
+  assert.equal(impact.summary30Days.communitySaves, 2);
+  assert.equal(impact.summary30Days.coinsEarnedMillis, 1_000);
+  assert.equal(impact.summary30Days.coinsSavedMillis, 1_000);
+  assert.equal(impact.topRecommendations[0]?.placeId, "impact-top-one");
+  assert.equal(impact.topRecommendations[0]?.communitySaves, 2);
+  assert.equal(impact.topRecommendations[0]?.coinsEarnedMillis, 1_000);
+  assert.equal(impact.monthlyTrend.length, 6);
+  assert.ok(impact.contributionScore.score > 0);
+  assert.equal(impact.cache.maxAgeSeconds, 60);
 });
 
 test("recommendations added during a save do not alter the captured snapshot", { skip: !shouldRun }, async () => {
