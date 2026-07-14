@@ -182,6 +182,12 @@ test("real API profile wallet, saves, recommender reward, and insufficient balan
   const userId = loginPayload.user.userId as string;
 
   await page.reload();
+  await expect(page.getByRole("dialog", { name: /you received 500 coins/i })).toBeVisible();
+  await page.screenshot({ path: `artifacts/screenshots/coin-real-onboarding-welcome-${testInfo.project.name}.png`, fullPage: true });
+  await page.getByRole("button", { name: "Got it" }).click();
+  await expect(page.getByRole("dialog", { name: /you received 500 coins/i })).toBeHidden();
+  await page.reload();
+  await expect(page.getByRole("dialog", { name: /you received 500 coins/i })).toHaveCount(0);
   await page.getByRole("button", { name: /login/i }).click();
   await expect(page.locator(".wr-profile-coin-balance strong")).toHaveText("500");
   await page.screenshot({ path: `artifacts/screenshots/coin-real-profile-signup-${testInfo.project.name}.png`, fullPage: true });
@@ -232,9 +238,27 @@ test("real API profile wallet, saves, recommender reward, and insufficient balan
   }, { apiBaseUrl, placeId: discoverPlaceId });
   expect(discoverSave.coin.wallet.balanceMillis).toBe(497_000);
   await expect(page.locator(".wr-profile-coin-balance strong")).toHaveText("497");
-  await page.getByRole("button", { name: /refresh/i }).click();
+  await expect(page.getByText("Discover save")).toHaveCount(0);
+  await page.getByRole("button", { name: /open wallet activity/i }).click();
+  await expect(page).toHaveURL(/\/wallet$/);
   await expect(page.getByText("Discover save")).toBeVisible();
+  await expect(page.getByText("External link import")).toBeVisible();
   await page.screenshot({ path: `artifacts/screenshots/coin-real-after-discover-${testInfo.project.name}.png`, fullPage: true });
+
+  const ledgerContract = await page.evaluate(async ({ apiBaseUrl: baseUrl }) => {
+    const invalid = await fetch(`${baseUrl}/api/economy/ledger?type=sideways`, { credentials: "include" });
+    const largePage = await fetch(`${baseUrl}/api/economy/ledger?pageSize=999`, { credentials: "include" });
+    return {
+      invalidStatus: invalid.status,
+      invalidPayload: await invalid.json(),
+      largePagePayload: await largePage.json(),
+    };
+  }, { apiBaseUrl });
+  expect(ledgerContract.invalidStatus).toBe(400);
+  expect(ledgerContract.invalidPayload.error).toMatch(/Invalid type/);
+  expect(ledgerContract.largePagePayload.balanceMillis).toBe(497_000);
+  expect(ledgerContract.largePagePayload.pagination.pageSize).toBe(25);
+  expect(ledgerContract.largePagePayload.pagination.totalItems).toBe(3);
 
   if (!db) throw new Error("db not ready");
   const recommenderWallet = await db.query<{ balance_millis: string }>(
@@ -264,6 +288,6 @@ test("real API profile wallet, saves, recommender reward, and insufficient balan
   expect(insufficient.status).toBe(402);
   const afterFailedSaveEvents = await db.query<{ count: string }>("select count(*)::text as count from coin_save_events where place_id = 'real-too-expensive'");
   expect(afterFailedSaveEvents.rows[0]?.count).toBe(beforeFailedSaveEvents.rows[0]?.count);
-  await page.getByRole("button", { name: /refresh/i }).click();
+  await expect(page.getByText("Too Expensive")).toHaveCount(0);
   await page.screenshot({ path: `artifacts/screenshots/coin-real-insufficient-${testInfo.project.name}.png`, fullPage: true });
 });

@@ -48,7 +48,14 @@ import {
   updateDisplayName,
   verifyEmailOtp,
 } from "./auth/postgresAuth";
-import { chargeSavedPlaceCoins, getCoinLedger, type CoinSaveSource } from "./economy/store";
+import {
+  chargeSavedPlaceCoins,
+  completeCoinOnboarding,
+  getCoinLedger,
+  getCoinOnboardingState,
+  getCoinPricing,
+  type CoinSaveSource,
+} from "./economy/store";
 import { featureFlags } from "./featureFlags";
 import { saveAttemptHypothesisSummary } from "./attemptHypothesisStore";
 import { buildAttemptHypothesisSummary } from "./intelligence/hypothesisSummary";
@@ -2642,14 +2649,23 @@ app.post("/api/analytics/app-event", optionalAuth, async (req, res) => {
       return res.status(204).end();
     }
     const eventType = String(req.body?.eventType || "").trim();
-    if (eventType !== "app_opened" && eventType !== "login_seen") {
+    const allowedEventTypes = new Set([
+      "app_opened",
+      "login_seen",
+      "coin_onboarding_viewed",
+      "coin_onboarding_explore_discover_clicked",
+      "coin_onboarding_add_place_clicked",
+      "coin_onboarding_dismissed",
+      "coin_help_opened",
+    ]);
+    if (!allowedEventTypes.has(eventType)) {
       return res.status(400).json({ ok: false, error: "Invalid event_type" });
     }
     const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
     const anonymousId = req.body?.anonymousId ? String(req.body.anonymousId).trim() : null;
     try {
       await recordAppUsageEvent({
-        eventType,
+        eventType: eventType as Parameters<typeof recordAppUsageEvent>[0]["eventType"],
         userId: authUser?.userId ?? null,
         anonymousId,
         metadataJson: null,
@@ -2820,11 +2836,74 @@ app.get("/api/saved-places", requireAuth, async (req, res) => {
 app.get("/api/economy/ledger", requireAuth, async (req, res) => {
   try {
     const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
-    const limit = Number(req.query?.limit) || 25;
-    const ledger = await getCoinLedger(getPostgresDatabase(), authUser!.userId, { limit });
-    return res.json({ ok: true, ...ledger });
+    const readQueryParam = (name: string) => {
+      const value = req.query?.[name];
+      return typeof value === "string" ? value : undefined;
+    };
+    const parseEnum = <T extends string>(name: string, fallback: T, allowed: readonly T[]) => {
+      const value = readQueryParam(name);
+      if (!value) return fallback;
+      if ((allowed as readonly string[]).includes(value)) return value as T;
+      throw new Error(`Invalid ${name}.`);
+    };
+    const pageRaw = readQueryParam("page");
+    const page = pageRaw === undefined ? 1 : Number(pageRaw);
+    if (!Number.isSafeInteger(page) || page < 1) {
+      throw new Error("Invalid page.");
+    }
+    const timezoneOffsetRaw = readQueryParam("timezoneOffsetMinutes");
+    const timezoneOffsetMinutes = timezoneOffsetRaw === undefined ? 0 : Number(timezoneOffsetRaw);
+    if (!Number.isFinite(timezoneOffsetMinutes)) {
+      throw new Error("Invalid timezoneOffsetMinutes.");
+    }
+    const ledger = await getCoinLedger(getPostgresDatabase(), authUser!.userId, {
+      type: parseEnum("type", "all", ["all", "credit", "debit"] as const),
+      datePreset: parseEnum("datePreset", "6m", ["7d", "6m", "custom"] as const),
+      from: readQueryParam("from") ?? null,
+      to: readQueryParam("to") ?? null,
+      sort: parseEnum("sort", "newest", ["newest", "oldest", "amount_desc", "amount_asc"] as const),
+      page,
+      pageSize: 25,
+      timezoneOffsetMinutes,
+    });
+    return res.json({
+      ok: true,
+      balanceMillis: ledger.wallet.balanceMillis,
+      balanceCoins: ledger.wallet.balanceCoins,
+      ...ledger,
+      pagination: {
+        ...ledger.pagination,
+        totalItems: ledger.pagination.totalCount,
+      },
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not fetch coin ledger";
+    return res.status(400).json({ ok: false, error: message });
+  }
+});
+
+app.get("/api/economy/pricing", async (_req, res) => {
+  return res.json({ ok: true, pricing: getCoinPricing() });
+});
+
+app.get("/api/economy/onboarding", requireAuth, async (req, res) => {
+  try {
+    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+    const state = await getCoinOnboardingState(getPostgresDatabase(), authUser!.userId);
+    return res.json({ ok: true, ...state });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not fetch coin onboarding";
+    return res.status(400).json({ ok: false, error: message });
+  }
+});
+
+app.post("/api/economy/onboarding/complete", requireAuth, async (req, res) => {
+  try {
+    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+    const state = await completeCoinOnboarding(getPostgresDatabase(), authUser!.userId);
+    return res.json({ ok: true, ...state });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not complete coin onboarding";
     return res.status(400).json({ ok: false, error: message });
   }
 });
@@ -2909,7 +2988,10 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
     });
   } catch (error) {
     if (error instanceof Error && error.message === "INSUFFICIENT_COINS") {
-      return res.status(402).json({ ok: false, error: "Not enough coins for this save." });
+      return res.status(402).json({
+        ok: false,
+        error: "Not enough coins. Recommend useful places to earn community rewards.",
+      });
     }
     const message = error instanceof Error ? error.message : "Could not save place";
     return res.status(400).json({ ok: false, error: message });

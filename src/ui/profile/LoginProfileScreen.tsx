@@ -8,8 +8,8 @@ import { useAuth } from "../auth/AuthProvider";
 import {
   COIN_WALLET_UPDATED_EVENT,
   fetchCoinLedger,
+  formatCoinMillis,
   formatCoinAmount,
-  getCoinTransactionLabel,
   type CoinLedger,
   type CoinWallet,
 } from "../economy/coinWallet";
@@ -27,6 +27,7 @@ runProfileDataChecks();
 
 type LoginProfileScreenProps = {
   openSheetOnMount?: boolean;
+  onOpenWallet?: () => void;
 };
 
 type SheetMode = "join" | "phone" | "collectName";
@@ -246,7 +247,7 @@ async function apiFetch(path: string, init?: RequestInit) {
   return payload;
 }
 
-export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScreenProps) {
+export function LoginProfileScreen({ openSheetOnMount = true, onOpenWallet }: LoginProfileScreenProps) {
   const { isOffline, showToast } = useUx();
   const { authStatus, sessionUser, isAuthenticated, hasSessionHint, refreshSession, setAuthenticatedUser, logout: logoutSession } = useAuth();
   const screenRef = useRef<HTMLElement | null>(null);
@@ -271,7 +272,6 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
   const [notificationsEnabled, setNotificationsEnabled] = useState(true);
   const [activeLegalDoc, setActiveLegalDoc] = useState<LegalDocKey | null>(null);
   const [coinLedger, setCoinLedger] = useState<CoinLedger | null>(null);
-  const [isCoinLedgerLoading, setIsCoinLedgerLoading] = useState(false);
   const [coinLedgerError, setCoinLedgerError] = useState("");
   const sheetTouchStartYRef = useRef<number | null>(null);
   const isLoggedIn = isAuthenticated;
@@ -465,18 +465,25 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
       setCoinLedgerError("");
       return;
     }
-    setIsCoinLedgerLoading(true);
     setCoinLedgerError("");
     try {
-      const ledger = await fetchCoinLedger(8);
+      const ledger = await fetchCoinLedger({ page: 1 });
       setCoinLedger(ledger);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Could not load coin history.";
       setCoinLedgerError(message);
-    } finally {
-      setIsCoinLedgerLoading(false);
     }
   }, [isLoggedIn]);
+
+  const handleOpenWallet = useCallback(() => {
+    if (onOpenWallet) {
+      onOpenWallet();
+      return;
+    }
+    if (typeof window !== "undefined") {
+      window.location.assign("/wallet");
+    }
+  }, [onOpenWallet]);
 
   useEffect(() => {
     void refreshCoinLedger();
@@ -1054,43 +1061,29 @@ export function LoginProfileScreen({ openSheetOnMount = true }: LoginProfileScre
           {isLoggedIn === true ? (
             <section className="wr-profile-section wr-profile-coin-section" aria-label="Coin wallet">
               <h3 className="wr-profile-section-title">Wallet</h3>
-              <div className="wr-profile-coin-card">
+              <button
+                type="button"
+                className="wr-profile-coin-card"
+                onClick={handleOpenWallet}
+                aria-label="Open wallet activity"
+              >
                 <div className="wr-profile-coin-balance">
                   <span className="wr-profile-coin-icon" aria-hidden="true">
                     <Coins size={18} />
                   </span>
                   <div>
                     <p>Coin balance</p>
-                    <strong>{formatCoinAmount(visibleCoinBalance)}</strong>
+                    <strong>{coinLedger?.wallet.balanceMillis !== undefined ? formatCoinMillis(coinLedger.wallet.balanceMillis) : formatCoinAmount(visibleCoinBalance)}</strong>
                   </div>
                 </div>
-                <button type="button" className="wr-profile-mini-btn" onClick={() => void refreshCoinLedger()} disabled={isCoinLedgerLoading}>
-                  {isCoinLedgerLoading ? "Updating..." : "Refresh"}
-                </button>
-              </div>
+                <span className="wr-profile-coin-card-action">
+                  View activity
+                  <ChevronRight size={16} aria-hidden="true" />
+                </span>
+              </button>
               {coinLedgerError ? (
                 <p className="wr-profile-coin-error">{coinLedgerError}</p>
               ) : null}
-              <div className="wr-profile-coin-history" aria-label="Recent coin transactions">
-                {coinLedger?.transactions.length ? coinLedger.transactions.map((transaction) => {
-                  const sign = transaction.direction === "debit" ? "-" : "+";
-                  return (
-                    <div className="wr-profile-coin-row" key={transaction.id}>
-                      <span>
-                        {getCoinTransactionLabel(transaction.type)}
-                        <small>{new Date(transaction.createdAt).toLocaleDateString()}</small>
-                      </span>
-                      <strong className={transaction.direction === "debit" ? "is-debit" : "is-credit"}>
-                        {sign}{formatCoinAmount(transaction.amountCoins)}
-                      </strong>
-                    </div>
-                  );
-                }) : (
-                  <p className="wr-profile-coin-empty">
-                    {isCoinLedgerLoading ? "Loading coin history..." : "No coin activity yet."}
-                  </p>
-                )}
-              </div>
             </section>
           ) : null}
 

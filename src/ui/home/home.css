@@ -627,6 +627,14 @@
   opacity: 0.72;
   cursor: wait;
 }
+
+.wr-discover-coin-cost-hint {
+  margin: 0.5rem 1rem 0;
+  color: #047857;
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
 .wr-food-trail-page {
   position: relative;
   z-index: 1;
@@ -2496,6 +2504,167 @@
   background: rgba(255, 253, 248, 0.94);
   display: grid;
   gap: 0.42rem;
+}
+
+.wr-coin-onboarding-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 85;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.wr-coin-onboarding-backdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: rgba(15, 23, 42, 0.34);
+  backdrop-filter: blur(2px);
+}
+
+.wr-coin-onboarding-sheet {
+  position: relative;
+  width: 100%;
+  max-height: calc(100% - 1rem);
+  overflow: auto;
+  border-radius: 1.1rem 1.1rem 0 0;
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  background: #fff;
+  color: #10213f;
+  padding: 1rem;
+  box-shadow: 0 -20px 40px rgba(15, 23, 42, 0.22);
+}
+
+.wr-coin-onboarding-sheet:focus-visible {
+  outline: 3px solid rgba(31, 124, 240, 0.36);
+  outline-offset: -3px;
+}
+
+.wr-coin-onboarding-close {
+  position: absolute;
+  right: 0.8rem;
+  top: 0.8rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.7rem;
+  border: 1px solid #d8dde3;
+  background: #fff;
+  color: #10213f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wr-coin-onboarding-icon {
+  width: 2.65rem;
+  height: 2.65rem;
+  border-radius: 0.78rem;
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #bbf7d0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wr-coin-onboarding-kicker {
+  margin: 0.65rem 0 0;
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.wr-coin-onboarding-sheet h3 {
+  margin: 0.24rem 2.2rem 0 0;
+  font-size: 1.35rem;
+  line-height: 1.08;
+  font-weight: 950;
+}
+
+.wr-coin-onboarding-sheet p {
+  margin: 0.45rem 0 0;
+  color: #64748b;
+  font-size: 0.76rem;
+  line-height: 1.42;
+  font-weight: 750;
+}
+
+.wr-coin-onboarding-rules {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.wr-coin-onboarding-rules div {
+  min-height: 3.2rem;
+  border: 1px solid #d8dde3;
+  border-radius: 0.55rem;
+  background: #f8fafc;
+  padding: 0.62rem 0.7rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.7rem;
+}
+
+.wr-coin-onboarding-rules span {
+  color: #10213f;
+  font-size: 0.75rem;
+  line-height: 1.25;
+  font-weight: 850;
+}
+
+.wr-coin-onboarding-rules strong {
+  flex: 0 0 auto;
+  max-width: 8.2rem;
+  color: #047857;
+  font-size: 0.74rem;
+  line-height: 1.2;
+  font-weight: 950;
+  text-align: right;
+}
+
+.wr-coin-onboarding-note {
+  color: #6b7280;
+}
+
+.wr-coin-onboarding-error {
+  color: #b91c1c !important;
+}
+
+.wr-coin-onboarding-actions {
+  margin-top: 0.9rem;
+  display: grid;
+  gap: 0.48rem;
+}
+
+.wr-coin-onboarding-actions button {
+  min-height: 2.55rem;
+  border-radius: 0.62rem;
+  border: 1px solid #d8dde3;
+  background: #fff;
+  color: #10213f;
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.wr-coin-onboarding-actions button.is-primary {
+  background: #102a57;
+  color: #fff;
+  border-color: #102a57;
+}
+
+.wr-coin-onboarding-actions button.is-plain {
+  border-color: transparent;
+  background: transparent;
+  color: #64748b;
+}
+
+.wr-coin-onboarding-actions button:disabled {
+  opacity: 0.58;
 }
 
 .wr-stroll-card.is-activatable {
@@ -5772,6 +5941,13 @@
 @keyframes wrAddSkeleton {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
+}
+
+.wr-add-coin-cost-hint {
+  margin: 0.42rem 0 0;
+  color: #047857;
+  font-size: 0.68rem;
+  font-weight: 900;
 }
 
 @keyframes wrStrollProgressSpin {

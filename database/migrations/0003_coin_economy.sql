@@ -61,7 +61,15 @@ create table if not exists coin_transactions (
 );
 
 create index if not exists idx_coin_transactions_wallet_created
-  on coin_transactions(wallet_user_id, created_at desc)
+  on coin_transactions(wallet_user_id, created_at desc, id desc)
+  where wallet_user_id is not null;
+
+create index if not exists idx_coin_transactions_wallet_direction_created
+  on coin_transactions(wallet_user_id, direction, created_at desc, id desc)
+  where wallet_user_id is not null;
+
+create index if not exists idx_coin_transactions_wallet_amount_created
+  on coin_transactions(wallet_user_id, amount_millis desc, created_at desc, id desc)
   where wallet_user_id is not null;
 
 create index if not exists idx_coin_transactions_save_event

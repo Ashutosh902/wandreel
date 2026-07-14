@@ -323,7 +323,7 @@ export async function persistSavedPlace(place: SavedPlaceRecord, options: Persis
     }
     if (response.status === 402) {
       const payload = await response.json().catch(() => null);
-      throw new Error(payload?.error || "Not enough coins for this save.");
+      throw new Error(payload?.error || "Not enough coins. Recommend useful places to earn community rewards.");
     }
     const payload = await response.json().catch(() => null);
     throw new Error(payload?.error || "Could not save place.");

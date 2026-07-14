@@ -474,7 +474,14 @@ export type AttemptPromotedFieldsInput = {
 };
 
 export type AppUsageEventInput = {
-  eventType: "app_opened" | "login_seen";
+  eventType:
+    | "app_opened"
+    | "login_seen"
+    | "coin_onboarding_viewed"
+    | "coin_onboarding_explore_discover_clicked"
+    | "coin_onboarding_add_place_clicked"
+    | "coin_onboarding_dismissed"
+    | "coin_help_opened";
   userId?: string | null;
   anonymousId?: string | null;
   metadataJson?: Record<string, unknown> | null;

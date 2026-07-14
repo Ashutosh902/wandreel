@@ -34,6 +34,7 @@ import {
 import { useAuth } from "../auth/AuthProvider";
 import { getSharedIntentPlan, shouldResetAddFlowForAuthStatus } from "./sharedIntentState";
 import { notifyCoinWalletUpdated, type CoinWallet } from "../economy/coinWallet";
+import { fetchCoinPricing, formatCoinRule, getDefaultCoinPricing, type CoinPricing } from "../economy/coinEducation";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
@@ -257,6 +258,7 @@ export function AddScreen() {
   const [detectedPlaces, setDetectedPlaces] = useState<DetectedPlace[]>([]);
   const [activePreviewKey, setActivePreviewKey] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState("");
+  const [coinPricing, setCoinPricing] = useState<CoinPricing>(getDefaultCoinPricing);
   const [savedPlaceIds, setSavedPlaceIds] = useState<Set<string>>(new Set());
   const [isEditing, setIsEditing] = useState(false);
   const [editingPlaceId, setEditingPlaceId] = useState<string | null>(null);
@@ -517,6 +519,18 @@ export function AddScreen() {
   const syncAnalysisProgressFromEvent = (event: ExtractionStreamEvent) => {
     setAnalysisStageCopy(STREAM_STAGE_COPY[event.stage] || "Analyzing link...");
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCoinPricing()
+      .then((pricing) => {
+        if (!cancelled) setCoinPricing(pricing);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     detectedPlacesRef.current = detectedPlaces;
@@ -1997,7 +2011,7 @@ export function AddScreen() {
         }
         if (response.status === 402) {
           const payload = await response.json().catch(() => null);
-          showToast({ message: payload?.error || "Not enough coins for this save.", variant: "error" });
+          showToast({ message: payload?.error || "Not enough coins. Recommend useful places to earn community rewards.", variant: "error" });
           return;
         }
         throw new Error("save_failed");
@@ -2346,6 +2360,7 @@ export function AddScreen() {
                             Save
                           </button>
                         </div>
+                        <p className="wr-add-coin-cost-hint">Costs {formatCoinRule(coinPricing.externalSaveCoins)} coins</p>
                       </div>
                     </article>
                       );

@@ -40,6 +40,14 @@ type SaveEventRow = {
   created_at: string;
 };
 
+type CoinOnboardingRow = {
+  user_id: string;
+  eligible: boolean;
+  coin_onboarding_completed_at: string | Date | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type CoinSaveSource = "external_import" | "discover";
 export type CoinTransactionType =
   | "signup_grant"
@@ -60,6 +68,22 @@ export type CoinWalletDto = {
   updatedAt: string;
 };
 
+export type CoinOnboardingDto = {
+  completed: boolean;
+  completedAt: string | null;
+  eligible: boolean;
+};
+
+export type CoinPricingDto = {
+  coinMillisPerCoin: number;
+  welcomeGrantCoins: number;
+  welcomeGrantMillis: number;
+  externalSaveCoins: number;
+  externalSaveMillis: number;
+  discoverSaveCoins: number;
+  discoverSaveMillis: number;
+};
+
 export type CoinTransactionDto = {
   id: string;
   type: CoinTransactionType;
@@ -73,6 +97,22 @@ export type CoinTransactionDto = {
   createdAt: string;
 };
 
+export type CoinLedgerTypeFilter = "all" | "credit" | "debit";
+export type CoinLedgerDatePreset = "7d" | "6m" | "custom";
+export type CoinLedgerSort = "newest" | "oldest" | "amount_desc" | "amount_asc";
+
+export type CoinLedgerOptions = {
+  type?: CoinLedgerTypeFilter;
+  datePreset?: CoinLedgerDatePreset;
+  from?: string | null;
+  to?: string | null;
+  sort?: CoinLedgerSort;
+  page?: number;
+  pageSize?: number;
+  timezoneOffsetMinutes?: number;
+  limit?: number;
+};
+
 export type RewardDistribution = {
   userId: string;
   amountMillis: number;
@@ -83,6 +123,21 @@ export type RewardDistribution = {
 export type CoinLedgerDto = {
   wallet: CoinWalletDto;
   transactions: CoinTransactionDto[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    totalCount: number;
+    totalPages: number;
+    hasPreviousPage: boolean;
+    hasNextPage: boolean;
+  };
+  filters: {
+    type: CoinLedgerTypeFilter;
+    datePreset: CoinLedgerDatePreset;
+    from: string | null;
+    to: string | null;
+    sort: CoinLedgerSort;
+  };
 };
 
 export type CoinChargeResult = {
@@ -129,8 +184,107 @@ export const economyConstants = {
   roundingPolicy: ROUNDING_POLICY,
 } as const;
 
+export function getCoinPricing(): CoinPricingDto {
+  return {
+    coinMillisPerCoin: COIN_MILLIS_PER_COIN,
+    welcomeGrantCoins: millisToCoins(INITIAL_LOGIN_GRANT_MILLIS),
+    welcomeGrantMillis: INITIAL_LOGIN_GRANT_MILLIS,
+    externalSaveCoins: millisToCoins(EXTERNAL_IMPORT_CHARGE_MILLIS),
+    externalSaveMillis: EXTERNAL_IMPORT_CHARGE_MILLIS,
+    discoverSaveCoins: millisToCoins(DISCOVER_SAVE_CHARGE_MILLIS),
+    discoverSaveMillis: DISCOVER_SAVE_CHARGE_MILLIS,
+  };
+}
+
 function millisToCoins(value: number) {
   return value / COIN_MILLIS_PER_COIN;
+}
+
+function normalizeLedgerType(value: unknown): CoinLedgerTypeFilter {
+  return value === "credit" || value === "debit" || value === "all" ? value : "all";
+}
+
+function normalizeLedgerDatePreset(value: unknown): CoinLedgerDatePreset {
+  return value === "7d" || value === "custom" || value === "6m" ? value : "6m";
+}
+
+function normalizeLedgerSort(value: unknown): CoinLedgerSort {
+  return value === "oldest" || value === "amount_desc" || value === "amount_asc" || value === "newest" ? value : "newest";
+}
+
+type ParsedDateOnly = {
+  year: number;
+  month: number;
+  day: number;
+  value: string;
+};
+
+function formatDateOnly(date: Date) {
+  return [
+    String(date.getUTCFullYear()).padStart(4, "0"),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function parseDateOnly(value: string | null | undefined): ParsedDateOnly | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) throw new Error("Invalid date. Use YYYY-MM-DD.");
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) {
+    throw new Error("Invalid date. Use YYYY-MM-DD.");
+  }
+  return { year, month, day, value };
+}
+
+function shiftDate(value: ParsedDateOnly | null, days: number): ParsedDateOnly | null {
+  if (!value) return null;
+  return parseDateOnly(formatDateOnly(new Date(Date.UTC(value.year, value.month - 1, value.day + days))));
+}
+
+function getLocalToday(timezoneOffsetMinutes: number) {
+  return parseDateOnly(formatDateOnly(new Date(Date.now() - timezoneOffsetMinutes * 60_000)))!;
+}
+
+function toUtcBoundary(date: ParsedDateOnly | null, timezoneOffsetMinutes: number) {
+  if (!date) return null;
+  return new Date(Date.UTC(date.year, date.month - 1, date.day) + timezoneOffsetMinutes * 60_000).toISOString();
+}
+
+function resolveLedgerDateRange(options: CoinLedgerOptions, datePreset: CoinLedgerDatePreset) {
+  const timezoneOffsetMinutes = Number.isFinite(Number(options.timezoneOffsetMinutes))
+    ? Number(options.timezoneOffsetMinutes)
+    : 0;
+  if (datePreset === "custom") {
+    const from = parseDateOnly(options.from ?? null);
+    const to = parseDateOnly(options.to ?? null);
+    const fromIso = toUtcBoundary(from, timezoneOffsetMinutes);
+    const toExclusiveIso = toUtcBoundary(shiftDate(to, 1), timezoneOffsetMinutes);
+    if (fromIso && toExclusiveIso && fromIso >= toExclusiveIso) {
+      throw new Error("End date must be on or after start date.");
+    }
+    return {
+      fromLabel: from?.value ?? null,
+      toLabel: to?.value ?? null,
+      fromIso,
+      toExclusiveIso,
+    };
+  }
+
+  const today = getLocalToday(timezoneOffsetMinutes);
+  const from = datePreset === "7d"
+    ? shiftDate(today, -6)
+    : parseDateOnly(formatDateOnly(new Date(Date.UTC(today.year, today.month - 7, today.day))));
+  return {
+    fromLabel: from?.value ?? null,
+    toLabel: today.value,
+    fromIso: toUtcBoundary(from, timezoneOffsetMinutes),
+    toExclusiveIso: toUtcBoundary(shiftDate(today, 1), timezoneOffsetMinutes),
+  };
 }
 
 function toMillis(value: string | number | bigint | null | undefined) {
@@ -220,6 +374,27 @@ function toSaveEventDto(row: SaveEventRow) {
   };
 }
 
+function toOnboardingDto(row: CoinOnboardingRow | null | undefined): CoinOnboardingDto {
+  if (!row) {
+    return {
+      completed: true,
+      completedAt: null,
+      eligible: false,
+    };
+  }
+  const rawCompletedAt = row.coin_onboarding_completed_at ?? null;
+  const completedAt = rawCompletedAt instanceof Date
+    ? rawCompletedAt.toISOString()
+    : rawCompletedAt === null
+      ? null
+      : String(rawCompletedAt);
+  return {
+    completed: Boolean(completedAt) || !row.eligible,
+    completedAt,
+    eligible: Boolean(row.eligible),
+  };
+}
+
 function readLimitEnv(name: string): number | null {
   const raw = String(process.env[name] || "").trim();
   if (!raw || raw.toLowerCase() === "disabled") return null;
@@ -277,6 +452,7 @@ async function creditWallet(input: {
   relatedPlaceId?: string | null;
   metadata?: Record<string, unknown>;
   saveEventId?: string | null;
+  onInsertedTransaction?: (transactionId: string) => Promise<void>;
 }) {
   const transactionId = randomUUID();
   const insertedTransaction = await input.client.query<{ id: string }>(
@@ -301,6 +477,7 @@ async function creditWallet(input: {
     ],
   );
   if (!insertedTransaction.rows[0]) return ensureWallet(input.client, input.userId);
+  await input.onInsertedTransaction?.(insertedTransaction.rows[0].id);
 
   const wallet = await input.client.query<CoinWalletRow>(
     `
@@ -330,6 +507,7 @@ export async function grantFirstLoginCoins(database: ConnectableDatabase, userId
   const client = await database.connect();
   try {
     await client.query("begin");
+    let grantedNow = false;
     const wallet = await creditWallet({
       client,
       userId,
@@ -337,7 +515,22 @@ export async function grantFirstLoginCoins(database: ConnectableDatabase, userId
       idempotencyKey: `signup-grant:${userId}`,
       type: "signup_grant",
       metadata: { reason: "first_login" },
+      onInsertedTransaction: async () => {
+        grantedNow = true;
+      },
     });
+    if (grantedNow) {
+      await client.query(
+        `
+          insert into coin_onboarding_preferences (
+            user_id, eligible, coin_onboarding_completed_at, created_at, updated_at, metadata_json
+          )
+          values ($1, true, null, now(), now(), $2::jsonb)
+          on conflict (user_id) do nothing
+        `,
+        [userId, JSON.stringify({ source: "signup_grant" })],
+      );
+    }
     await client.query("commit");
     return wallet;
   } catch (error) {
@@ -346,6 +539,43 @@ export async function grantFirstLoginCoins(database: ConnectableDatabase, userId
   } finally {
     client.release();
   }
+}
+
+export async function getCoinOnboardingState(database: EconomyQueryable, userId: string): Promise<CoinOnboardingDto> {
+  const result = await database.query<CoinOnboardingRow>(
+    `
+      select user_id::text, eligible, coin_onboarding_completed_at, created_at, updated_at
+      from coin_onboarding_preferences
+      where user_id = $1
+      limit 1
+    `,
+    [userId],
+  );
+  return toOnboardingDto(result.rows[0]);
+}
+
+export async function completeCoinOnboarding(database: EconomyQueryable, userId: string): Promise<CoinOnboardingDto> {
+  const result = await database.query<CoinOnboardingRow>(
+    `
+      insert into coin_onboarding_preferences (
+        user_id, eligible, coin_onboarding_completed_at, created_at, updated_at, metadata_json
+      )
+      values ($1, false, now(), now(), now(), $2::jsonb)
+      on conflict (user_id)
+      do update set
+        coin_onboarding_completed_at = coalesce(
+          coin_onboarding_preferences.coin_onboarding_completed_at,
+          excluded.coin_onboarding_completed_at
+        ),
+        updated_at = case
+          when coin_onboarding_preferences.coin_onboarding_completed_at is null then now()
+          else coin_onboarding_preferences.updated_at
+        end
+      returning user_id::text, eligible, coin_onboarding_completed_at, created_at, updated_at
+    `,
+    [userId, JSON.stringify({ source: "manual_complete" })],
+  );
+  return toOnboardingDto(result.rows[0]);
 }
 
 async function assertRewardedRecommendationCreationLimit(input: {
@@ -456,27 +686,82 @@ async function listDiscoverRecommendersAtSaveTime(input: {
 export async function getCoinLedger(
   database: ConnectableDatabase,
   userId: string,
-  options: { limit?: number } = {},
+  options: CoinLedgerOptions = {},
 ): Promise<CoinLedgerDto> {
   const client = await database.connect();
   try {
     await client.query("begin");
     const wallet = await ensureWallet(client, userId);
-    const limit = Number.isFinite(Number(options.limit)) ? Math.min(Math.max(Number(options.limit), 1), 100) : 25;
+    const type = normalizeLedgerType(options.type);
+    const datePreset = normalizeLedgerDatePreset(options.datePreset);
+    const sort = normalizeLedgerSort(options.sort);
+    const page = Number.isSafeInteger(Number(options.page)) && Number(options.page) > 0 ? Number(options.page) : 1;
+    const pageSize = options.limit
+      ? Math.min(Math.max(Number(options.limit), 1), 100)
+      : 25;
+    const effectivePageSize = options.limit ? pageSize : 25;
+    const dateRange = resolveLedgerDateRange(options, datePreset);
+    const where = ["wallet_user_id = $1"];
+    const params: unknown[] = [userId];
+    if (type === "credit" || type === "debit") {
+      params.push(type);
+      where.push(`direction = $${params.length}`);
+    }
+    if (dateRange.fromIso) {
+      params.push(dateRange.fromIso);
+      where.push(`created_at >= $${params.length}::timestamptz`);
+    }
+    if (dateRange.toExclusiveIso) {
+      params.push(dateRange.toExclusiveIso);
+      where.push(`created_at < $${params.length}::timestamptz`);
+    }
+    const whereSql = where.join(" and ");
+    const orderSql =
+      sort === "oldest"
+        ? "created_at asc, id asc"
+        : sort === "amount_desc"
+          ? "amount_millis desc, created_at desc, id desc"
+          : sort === "amount_asc"
+            ? "amount_millis asc, created_at desc, id desc"
+            : "created_at desc, id desc";
+    const totalResult = await client.query<{ total_count: string | number | bigint }>(
+      `select count(*)::bigint as total_count from coin_transactions where ${whereSql}`,
+      params,
+    );
+    const totalCount = toMillis(totalResult.rows[0]?.total_count);
+    const totalPages = Math.max(1, Math.ceil(totalCount / effectivePageSize));
+    const offset = (page - 1) * effectivePageSize;
+    const queryParams = [...params, effectivePageSize, offset];
     const transactions = await client.query<CoinTransactionRow>(
       `
         select id::text, type, direction, amount_millis, balance_after_millis, related_place_id, metadata_json, created_at
         from coin_transactions
-        where wallet_user_id = $1
-        order by created_at desc
-        limit $2
+        where ${whereSql}
+        order by ${orderSql}
+        limit $${queryParams.length - 1}
+        offset $${queryParams.length}
       `,
-      [userId, limit],
+      queryParams,
     );
     await client.query("commit");
     return {
       wallet,
       transactions: transactions.rows.map(toTransactionDto),
+      pagination: {
+        page,
+        pageSize: effectivePageSize,
+        totalCount,
+        totalPages,
+        hasPreviousPage: page > 1,
+        hasNextPage: page < totalPages,
+      },
+      filters: {
+        type,
+        datePreset,
+        from: dateRange.fromLabel,
+        to: dateRange.toLabel,
+        sort,
+      },
     };
   } catch (error) {
     await client.query("rollback").catch(() => undefined);

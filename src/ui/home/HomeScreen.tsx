@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Bell } from "lucide-react";
+import { ArrowLeft, Bell, Coins, X } from "lucide-react";
 import { motion, useReducedMotion } from "framer-motion";
 import { BottomNav } from "./BottomNav";
 import { BucketlistSummary } from "./BucketlistSummary";
@@ -30,6 +30,7 @@ import { StrollLibrarySection } from "./StrollLibrarySection";
 import type { CategoryLabel, NavLabel } from "./home.data";
 import { runHomeDataChecks } from "./home.data";
 import { LoginProfileScreen } from "../profile/LoginProfileScreen";
+import { WalletScreen } from "../profile/WalletScreen";
 import { useUx } from "../layout/UxProvider";
 import { useAuth } from "../auth/AuthProvider";
 import {
@@ -90,6 +91,15 @@ import { useHomeNavigation } from "./useHomeNavigation";
 import { useReadyNotifications } from "./useReadyNotifications";
 import { useStrollLibrary } from "./useStrollLibrary";
 import { fetchStrollDetail } from "./strollLibrary";
+import {
+  completeCoinOnboarding,
+  fetchCoinOnboarding,
+  fetchCoinPricing,
+  formatCoinRule,
+  getDefaultCoinPricing,
+  trackCoinEducationEvent,
+  type CoinPricing,
+} from "../economy/coinEducation";
 import "./home.css";
 
 runHomeDataChecks();
@@ -148,6 +158,7 @@ function DiscoverPage({
   onOpenStroll,
   onStartStroll,
   currentLocationLabel,
+  coinPricing,
 }: {
   activeCategory: CategoryLabel | null;
   onSelectCategory: (category: CategoryLabel) => void;
@@ -175,6 +186,7 @@ function DiscoverPage({
   onOpenStroll: (stroll: PersistentStrollSummary) => void;
   onStartStroll: (stroll: PersistentStrollSummary) => void;
   currentLocationLabel: string;
+  coinPricing: CoinPricing;
 }) {
   const heroCardRef = useRef<HTMLElement | null>(null);
   const counts = getSavedPlaceCounts(savedPlacesByCategory);
@@ -240,6 +252,11 @@ function DiscoverPage({
               containerRef={heroCardRef}
             />
           ) : null}
+          {displayHeroCard ? (
+            <p className="wr-discover-coin-cost-hint">
+              Costs {formatCoinRule(coinPricing.discoverSaveCoins)} coin · Community saves cost less
+            </p>
+          ) : null}
           {showStrollLibrary ? (
             <StrollLibrarySection
               strolls={strolls}
@@ -293,6 +310,90 @@ function StrollOnboardingPrompt({
           </button>
           <button type="button" className="wr-stroll-prompt-primary" disabled={isBusy} onClick={onAccept}>
             {isBusy ? "Saving..." : "Create a Stroll"}
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function CoinWelcomeSheet({
+  pricing,
+  isBusy,
+  error,
+  onExploreDiscover,
+  onAddPlace,
+  onDismiss,
+}: {
+  pricing: CoinPricing;
+  isBusy: boolean;
+  error: string;
+  onExploreDiscover: () => void;
+  onAddPlace: () => void;
+  onDismiss: () => void;
+}) {
+  const dialogRef = useDialogFocus<HTMLElement>(true, isBusy ? undefined : onDismiss);
+  return (
+    <div className="wr-coin-onboarding-layer" role="presentation">
+      <button
+        type="button"
+        className="wr-coin-onboarding-backdrop"
+        aria-label="Close coin welcome"
+        onClick={isBusy ? undefined : onDismiss}
+      />
+      <section
+        ref={dialogRef}
+        className="wr-coin-onboarding-sheet"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="wr-coin-onboarding-title"
+        aria-describedby="wr-coin-onboarding-description"
+        tabIndex={-1}
+      >
+        <button
+          type="button"
+          className="wr-coin-onboarding-close"
+          aria-label="Close coin welcome"
+          onClick={onDismiss}
+          disabled={isBusy}
+        >
+          <X size={16} aria-hidden="true" />
+        </button>
+        <span className="wr-coin-onboarding-icon" aria-hidden="true">
+          <Coins size={22} />
+        </span>
+        <p className="wr-coin-onboarding-kicker">Welcome to Wandreel</p>
+        <h3 id="wr-coin-onboarding-title">You received {formatCoinRule(pricing.welcomeGrantCoins)} coins</h3>
+        <p id="wr-coin-onboarding-description">
+          Use coins to save places and build your travel bucket list.
+        </p>
+        <div className="wr-coin-onboarding-rules" aria-label="Coin rules">
+          <div>
+            <span>Save from Instagram or another link</span>
+            <strong>{formatCoinRule(pricing.externalSaveCoins)} coins</strong>
+          </div>
+          <div>
+            <span>Save from Discover</span>
+            <strong>{formatCoinRule(pricing.discoverSaveCoins)} coin</strong>
+          </div>
+          <div>
+            <span>Recommend great places</span>
+            <strong>Earn coins when the community saves them</strong>
+          </div>
+        </div>
+        <p className="wr-coin-onboarding-note">
+          Coins are virtual in-app credits and currently have no cash value.
+        </p>
+        {error ? <p className="wr-coin-onboarding-error">{error}</p> : null}
+        <div className="wr-coin-onboarding-actions">
+          <button type="button" className="is-primary" onClick={onExploreDiscover} disabled={isBusy}>
+            Explore Discover
+          </button>
+          <button type="button" onClick={onAddPlace} disabled={isBusy}>
+            Add your first place
+          </button>
+          <button type="button" className="is-plain" onClick={onDismiss} disabled={isBusy}>
+            Got it
           </button>
         </div>
       </section>
@@ -400,7 +501,12 @@ export function HomeScreen() {
   const prefersReducedMotion = useReducedMotion();
   const { currentLocationLabel, isLocating, requestCurrentLocation, searchLocations, showToast } = useUx();
   const { isAuthenticated, sessionUser } = useAuth();
-  const [activeTab, setActiveTab] = useState<NavLabel>("Discover");
+  const [activeTab, setActiveTab] = useState<NavLabel>(() => (
+    typeof window !== "undefined" && window.location.pathname === "/wallet" ? "Login" : "Discover"
+  ));
+  const [isWalletRoute, setIsWalletRoute] = useState(() => (
+    typeof window !== "undefined" && window.location.pathname === "/wallet"
+  ));
   const [activeCategory, setActiveCategory] = useState<CategoryLabel | null>(null);
   const [mapEntryMode, setMapEntryMode] = useState<"global" | "category">("global");
   const [mapSourceCategory, setMapSourceCategory] = useState<CategoryLabel | null>(null);
@@ -456,6 +562,8 @@ export function HomeScreen() {
   const isFoodTrailRoute = plannerRoute === "food-trail";
   const pageKey = isFoodTrailRoute
     ? "trail-food"
+    : isWalletRoute
+      ? "wallet"
     : plannerRoute === "stroll-create"
       ? "stroll-create"
     : plannerRoute.startsWith("stroll-edit:")
@@ -498,6 +606,128 @@ export function HomeScreen() {
     userId: sessionUser?.userId ?? null,
     visibleSavedPlaces,
   });
+  const [coinPricing, setCoinPricing] = useState<CoinPricing>(getDefaultCoinPricing);
+  const [isCoinWelcomeOpen, setIsCoinWelcomeOpen] = useState(false);
+  const [coinWelcomeError, setCoinWelcomeError] = useState("");
+  const [isCoinWelcomeCompleting, setIsCoinWelcomeCompleting] = useState(false);
+  const coinWelcomeShownUserRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchCoinPricing()
+      .then((pricing) => {
+        if (!cancelled) setCoinPricing(pricing);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated || !sessionUser?.userId) {
+      setIsCoinWelcomeOpen(false);
+      setCoinWelcomeError("");
+      return;
+    }
+    let cancelled = false;
+    fetchCoinOnboarding()
+      .then((state) => {
+        if (cancelled) return;
+        if (state.eligible && !state.completed && coinWelcomeShownUserRef.current !== sessionUser.userId) {
+          coinWelcomeShownUserRef.current = sessionUser.userId;
+          setCoinWelcomeError("");
+          setIsCoinWelcomeOpen(true);
+          void trackCoinEducationEvent("coin_onboarding_viewed");
+        }
+      })
+      .catch(() => {
+        // Onboarding status is non-blocking; the app can retry on the next auth/session refresh.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAuthenticated, sessionUser?.userId]);
+
+  const completeCoinWelcome = useCallback(async (eventType: Parameters<typeof trackCoinEducationEvent>[0], afterComplete: () => void) => {
+    if (isCoinWelcomeCompleting) return;
+    setIsCoinWelcomeCompleting(true);
+    setCoinWelcomeError("");
+    void trackCoinEducationEvent(eventType);
+    try {
+      await completeCoinOnboarding();
+      setIsCoinWelcomeOpen(false);
+      afterComplete();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Could not save this preference. Please try again.";
+      setCoinWelcomeError(message);
+    } finally {
+      setIsCoinWelcomeCompleting(false);
+    }
+  }, [isCoinWelcomeCompleting]);
+
+  const handleCoinWelcomeExplore = useCallback(() => {
+    void completeCoinWelcome("coin_onboarding_explore_discover_clicked", () => {
+      setHeroNavigationContext({
+        filteredPlaceIds: null,
+        filteredCity: null,
+        mapPlaces: null,
+        mapCategories: null,
+      });
+      setTransitionDirection(-1);
+      setActiveCategory(null);
+      setActiveTab("Discover");
+    });
+  }, [completeCoinWelcome]);
+
+  const handleCoinWelcomeAdd = useCallback(() => {
+    void completeCoinWelcome("coin_onboarding_add_place_clicked", () => {
+      setHeroNavigationContext({
+        filteredPlaceIds: null,
+        filteredCity: null,
+        mapPlaces: null,
+        mapCategories: null,
+      });
+      setTransitionDirection(1);
+      setActiveCategory(null);
+      setActiveTab("Add");
+    });
+  }, [completeCoinWelcome]);
+
+  const handleCoinWelcomeDismiss = useCallback(() => {
+    void completeCoinWelcome("coin_onboarding_dismissed", () => undefined);
+  }, [completeCoinWelcome]);
+
+  const openWalletRoute = useCallback(() => {
+    if (typeof window !== "undefined" && window.location.pathname !== "/wallet") {
+      window.history.pushState({}, "", "/wallet");
+    }
+    setTransitionDirection(1);
+    setActiveTab("Login");
+    setActiveCategory(null);
+    setIsWalletRoute(true);
+  }, []);
+  const closeWalletRoute = useCallback(() => {
+    if (typeof window !== "undefined" && window.location.pathname === "/wallet") {
+      window.history.pushState({}, "", "/");
+    }
+    setTransitionDirection(-1);
+    setActiveTab("Login");
+    setIsWalletRoute(false);
+  }, []);
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const isWalletPath = window.location.pathname === "/wallet";
+      setIsWalletRoute(isWalletPath);
+      if (isWalletPath) {
+        setActiveTab("Login");
+        setActiveCategory(null);
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
   const {
     heroBookmarkKeys,
     pendingHeroBookmarkCardKey,
@@ -1006,6 +1236,10 @@ export function HomeScreen() {
   }, [currentLocationLabel, isWeekendPlannerDemoPreview, visibleSavedPlaces, weekendPlannerContext.cityName, weekendPlannerContext.matchingPlaceIds]);
 
   const page = useMemo(() => {
+    if (isWalletRoute) {
+      return <WalletScreen onBack={closeWalletRoute} />;
+    }
+
     if (plannerRoute === "food-trail") {
       return (
         <FoodTrailScreen
@@ -1143,6 +1377,7 @@ export function HomeScreen() {
           recentSavedPlaces={recentSavedPlaces}
           heroCard={heroCard}
           currentLocationLabel={currentLocationLabel}
+          coinPricing={coinPricing}
           heroBookmarkKeys={heroBookmarkKeys}
           pendingHeroBookmarkCardKey={pendingHeroBookmarkCardKey}
           onHeroBookmarkToggle={handleHeroBookmarkToggle}
@@ -1358,7 +1593,7 @@ export function HomeScreen() {
       );
     }
 
-    return <LoginProfileScreen />;
+    return <LoginProfileScreen onOpenWallet={openWalletRoute} />;
   }, [
     foodTrailPlannerPlaces,
     weekendPlannerPlaces,
@@ -1399,7 +1634,8 @@ export function HomeScreen() {
     strollLibraryState,
       strolls,
       retryingStrollId,
-      currentLocationLabel,
+    currentLocationLabel,
+    coinPricing,
       searchLocations,
       prefersReducedMotion,
     visibleSavedPlaces,
@@ -1407,6 +1643,9 @@ export function HomeScreen() {
     plannerRoute,
     setPlannerPath,
     archivingStrollId,
+    closeWalletRoute,
+    isWalletRoute,
+    openWalletRoute,
   ]);
 
   return (
@@ -1459,6 +1698,16 @@ export function HomeScreen() {
               onDismissNotification={dismissNotification}
             />
           ) : null}
+          {isCoinWelcomeOpen ? (
+            <CoinWelcomeSheet
+              pricing={coinPricing}
+              isBusy={isCoinWelcomeCompleting}
+              error={coinWelcomeError}
+              onExploreDiscover={handleCoinWelcomeExplore}
+              onAddPlace={handleCoinWelcomeAdd}
+              onDismiss={handleCoinWelcomeDismiss}
+            />
+          ) : null}
           {isStrollPromptEligible ? (
             <StrollOnboardingPrompt
               isBusy={strollOnboardingAction !== null}
@@ -1470,6 +1719,12 @@ export function HomeScreen() {
         <BottomNav
           activeTab={activeTab}
           onTabChange={(nextTab) => {
+            if (isWalletRoute) {
+              if (typeof window !== "undefined" && window.location.pathname === "/wallet") {
+                window.history.pushState({}, "", "/");
+              }
+              setIsWalletRoute(false);
+            }
             if (plannerRoute !== "home") {
               setPlannerPath("home", true);
             }

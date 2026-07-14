@@ -5,7 +5,13 @@ import assert from "node:assert/strict";
 import { Pool } from "pg";
 import { runDatabaseMigrations } from "../db/migrations";
 import { createSession, __resetPostgresTestConfig, __setPostgresTestConfig } from "../auth/postgresAuth";
-import { chargeSavedPlaceCoins, grantFirstLoginCoins } from "./store";
+import {
+  chargeSavedPlaceCoins,
+  completeCoinOnboarding,
+  getCoinLedger,
+  getCoinOnboardingState,
+  grantFirstLoginCoins,
+} from "./store";
 import { reconcileCoinEconomy } from "./reconciliation";
 
 type PgPool = {
@@ -200,6 +206,62 @@ test("20 simultaneous first-login grants create exactly one signup grant", { ski
   assert.equal(await countRows("coin_transactions", "wallet_user_id = $1 and type = 'signup_grant'", [userId]), 1);
 });
 
+test("coin onboarding is created only by a successful first-login grant and completes idempotently", { skip: !shouldRun }, async () => {
+  const userId = randomUUID();
+  await createUser(userId);
+  assert.deepEqual(await getCoinOnboardingState(requirePool(), userId), {
+    completed: true,
+    completedAt: null,
+    eligible: false,
+  });
+
+  const beforeGrantTransactions = await countRows("coin_transactions", "wallet_user_id = $1", [userId]);
+  await grantFirstLoginCoins(requirePool(), userId);
+  const afterGrantState = await getCoinOnboardingState(requirePool(), userId);
+  assert.equal(afterGrantState.completed, false);
+  assert.equal(afterGrantState.completedAt, null);
+  assert.equal(afterGrantState.eligible, true);
+
+  const walletBeforeComplete = await requirePool().query<{ balance_millis: string }>(
+    "select balance_millis::text from coin_wallets where user_id = $1",
+    [userId],
+  );
+  const txBeforeComplete = await countRows("coin_transactions", "wallet_user_id = $1", [userId]);
+  const firstComplete = await completeCoinOnboarding(requirePool(), userId);
+  const secondComplete = await completeCoinOnboarding(requirePool(), userId);
+  assert.equal(firstComplete.completed, true);
+  assert.equal(secondComplete.completedAt, firstComplete.completedAt);
+  const walletAfterComplete = await requirePool().query<{ balance_millis: string }>(
+    "select balance_millis::text from coin_wallets where user_id = $1",
+    [userId],
+  );
+  assert.equal(walletAfterComplete.rows[0]?.balance_millis, walletBeforeComplete.rows[0]?.balance_millis);
+  assert.equal(await countRows("coin_transactions", "wallet_user_id = $1", [userId]), txBeforeComplete);
+  assert.equal(txBeforeComplete, beforeGrantTransactions + 1);
+});
+
+test("rolled back onboarding preference write does not make a user eligible", { skip: !shouldRun }, async () => {
+  const userId = randomUUID();
+  await createUser(userId);
+  const client = await requirePool().connect();
+  try {
+    await client.query("begin");
+    await client.query(
+      `
+        insert into coin_onboarding_preferences (user_id, eligible, coin_onboarding_completed_at, created_at, updated_at)
+        values ($1, true, null, now(), now())
+      `,
+      [userId],
+    );
+    await client.query("rollback");
+  } finally {
+    client.release();
+  }
+  const state = await getCoinOnboardingState(requirePool(), userId);
+  assert.equal(state.eligible, false);
+  assert.equal(state.completed, true);
+});
+
 test("20 simultaneous saves with same idempotency key produce one charge and one save event", { skip: !shouldRun }, async () => {
   const userId = randomUUID();
   await createUser(userId);
@@ -360,5 +422,112 @@ test("ledger references are internally consistent and reconciliation balances", 
   assert.equal(
     reconciliation.signupGrantsMillis + reconciliation.recommenderRewardsMillis + reconciliation.adjustmentsMillis - reconciliation.userChargesMillis,
     reconciliation.walletLiabilitiesMillis,
+  );
+});
+
+test("real ledger query filters, sorts, and paginates wallet transactions", { skip: !shouldRun }, async () => {
+  const userId = randomUUID();
+  await createUser(userId);
+  await requirePool().query(
+    `
+      insert into coin_wallets (user_id, balance_millis, created_at, updated_at)
+      values ($1, 50000, now(), now())
+    `,
+    [userId],
+  );
+  for (let index = 1; index <= 51; index += 1) {
+    const direction = index % 2 === 0 ? "debit" : "credit";
+    await requirePool().query(
+      `
+        insert into coin_transactions (
+          id, user_id, wallet_user_id, idempotency_key, type, direction,
+          amount_millis, balance_after_millis, metadata_json, created_at
+        )
+        values (
+          gen_random_uuid(), $1, $1, $2, 'adjustment', $3,
+          $4, 50000, $5::jsonb, now() - ($6::text || ' minutes')::interval
+        )
+      `,
+      [userId, `ledger-page:${userId}:${index}`, direction, index, JSON.stringify({ title: `Ledger ${index}` }), 52 - index],
+    );
+  }
+
+  const firstPage = await getCoinLedger(requirePool(), userId, { page: 1, pageSize: 25, sort: "newest", datePreset: "6m" });
+  assert.equal(firstPage.transactions.length, 25);
+  assert.equal(firstPage.pagination.pageSize, 25);
+  assert.equal(firstPage.pagination.totalCount, 51);
+  assert.equal(firstPage.pagination.totalPages, 3);
+  assert.equal(firstPage.transactions[0].amountMillis, 51);
+
+  const thirdPage = await getCoinLedger(requirePool(), userId, { page: 3, pageSize: 25, sort: "newest", datePreset: "6m" });
+  assert.equal(thirdPage.transactions.length, 1);
+  assert.equal(thirdPage.transactions[0].amountMillis, 1);
+
+  const credits = await getCoinLedger(requirePool(), userId, { type: "credit", page: 1, pageSize: 25, datePreset: "6m" });
+  assert.equal(credits.pagination.totalCount, 26);
+  assert.ok(credits.transactions.every((transaction) => transaction.direction === "credit"));
+
+  const debits = await getCoinLedger(requirePool(), userId, { type: "debit", page: 1, pageSize: 25, datePreset: "6m" });
+  assert.equal(debits.pagination.totalCount, 25);
+  assert.ok(debits.transactions.every((transaction) => transaction.direction === "debit"));
+
+  const oldest = await getCoinLedger(requirePool(), userId, { sort: "oldest", page: 1, pageSize: 25, datePreset: "6m" });
+  assert.equal(oldest.transactions[0].amountMillis, 1);
+
+  const amountDescending = await getCoinLedger(requirePool(), userId, { sort: "amount_desc", page: 1, pageSize: 25, datePreset: "6m" });
+  assert.equal(amountDescending.transactions[0].amountMillis, 51);
+  assert.equal(amountDescending.transactions[24].amountMillis, 27);
+
+  const amountAscending = await getCoinLedger(requirePool(), userId, { sort: "amount_asc", page: 1, pageSize: 999, datePreset: "6m" });
+  assert.equal(amountAscending.transactions.length, 25);
+  assert.equal(amountAscending.pagination.pageSize, 25);
+  assert.equal(amountAscending.transactions[0].amountMillis, 1);
+  assert.equal(amountAscending.transactions[24].amountMillis, 25);
+
+  const sevenDays = await getCoinLedger(requirePool(), userId, { datePreset: "7d", page: 1, pageSize: 25 });
+  assert.equal(sevenDays.pagination.totalCount, 51);
+
+  await requirePool().query(
+    `
+      insert into coin_transactions (
+        id, user_id, wallet_user_id, idempotency_key, type, direction,
+        amount_millis, balance_after_millis, metadata_json, created_at
+      )
+      values (
+        gen_random_uuid(), $1, $1, $2, 'adjustment', 'credit',
+        777, 50000, '{}'::jsonb, now() - interval '220 days'
+      )
+    `,
+    [userId, `ledger-old:${userId}`],
+  );
+  const sixMonthsAfterOldInsert = await getCoinLedger(requirePool(), userId, { datePreset: "6m", page: 1 });
+  assert.equal(sixMonthsAfterOldInsert.pagination.totalCount, 51);
+  const customWithOld = await getCoinLedger(requirePool(), userId, {
+    datePreset: "custom",
+    from: new Date(Date.now() - 230 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+    to: new Date().toISOString().slice(0, 10),
+    page: 1,
+  });
+  assert.equal(customWithOld.pagination.totalCount, 52);
+
+  await requirePool().query(
+    `
+      insert into coin_transactions (
+        id, user_id, wallet_user_id, idempotency_key, type, direction,
+        amount_millis, balance_after_millis, metadata_json, created_at
+      )
+      values (
+        gen_random_uuid(), $1, null, $2, 'platform_retention', 'pool_credit',
+        500, null, '{}'::jsonb, now()
+      )
+    `,
+    [userId, `ledger-platform:${userId}`],
+  );
+  const afterInternalRow = await getCoinLedger(requirePool(), userId, { datePreset: "custom", from: customWithOld.filters.from, to: customWithOld.filters.to });
+  assert.equal(afterInternalRow.pagination.totalCount, 52);
+
+  await assert.rejects(
+    () => getCoinLedger(requirePool(), userId, { datePreset: "custom", from: "2026-07-15", to: "2026-07-14" }),
+    /End date must be on or after start date/,
   );
 });

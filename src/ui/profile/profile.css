@@ -362,6 +362,8 @@
 }
 
 .wr-profile-coin-card {
+  width: 100%;
+  border: none;
   background: rgba(255, 255, 255, 0.62);
   border-bottom: 1px solid #d8dde3;
   padding: 0.9rem 1rem;
@@ -369,6 +371,24 @@
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wr-profile-coin-card:focus-visible {
+  outline: 3px solid rgba(31, 124, 240, 0.35);
+  outline-offset: -3px;
+}
+
+.wr-profile-coin-card-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: #64748b;
+  font-size: 0.72rem;
+  font-weight: 900;
+  white-space: nowrap;
 }
 
 .wr-profile-coin-balance {
@@ -415,51 +435,419 @@
   color: #b91c1c;
 }
 
-.wr-profile-coin-history {
-  background: rgba(255, 255, 255, 0.45);
+.wr-profile-coin-empty {
+  padding: 0.85rem 1rem;
 }
 
-.wr-profile-coin-row {
-  min-height: 3.05rem;
-  padding: 0.68rem 1rem;
+.wr-wallet-page {
+  min-height: 100%;
+  color: #10213f;
+  padding-bottom: 1rem;
+}
+
+.wr-wallet-header {
+  padding: 1rem 1rem 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.wr-wallet-header h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.1;
+}
+
+.wr-wallet-header p {
+  margin: 0.18rem 0 0;
+  color: #64748b;
+  font-size: 0.68rem;
+  font-weight: 800;
+}
+
+.wr-wallet-icon-btn {
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.7rem;
+  border: 1px solid #d8dde3;
+  background: #fff;
+  color: #10213f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.wr-wallet-help-btn {
+  margin-left: auto;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: 0.7rem;
+  border: 1px solid #d8dde3;
+  background: #fff;
+  color: #10213f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wr-wallet-icon-btn:focus-visible,
+.wr-wallet-help-btn:focus-visible,
+.wr-coin-help-close:focus-visible,
+.wr-coin-help-sheet:focus-visible {
+  outline: 3px solid rgba(31, 124, 240, 0.35);
+  outline-offset: 2px;
+}
+
+.wr-wallet-balance {
+  margin: 0 1rem 0.8rem;
+  padding: 0.9rem;
+  border: 1px solid #d8dde3;
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.74);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.wr-wallet-balance-icon {
+  width: 2.4rem;
+  height: 2.4rem;
+  border-radius: 0.7rem;
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #bbf7d0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wr-wallet-balance p {
+  margin: 0;
+  color: #64748b;
+  font-size: 0.7rem;
+  font-weight: 850;
+}
+
+.wr-wallet-balance strong {
+  display: block;
+  margin-top: 0.08rem;
+  font-size: 1.45rem;
+  line-height: 1.05;
+  font-weight: 950;
+}
+
+.wr-wallet-controls {
+  padding: 0 1rem 0.72rem;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.wr-wallet-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: 1px solid #d8dde3;
+  border-radius: 0.55rem;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.65);
+}
+
+.wr-wallet-tabs button {
+  border: none;
+  border-right: 1px solid #d8dde3;
+  background: transparent;
+  color: #64748b;
+  min-height: 2.35rem;
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.wr-wallet-tabs button:last-child {
+  border-right: none;
+}
+
+.wr-wallet-tabs button.is-active {
+  background: #102a57;
+  color: #fff;
+}
+
+.wr-wallet-tabs button:disabled,
+.wr-wallet-filter-grid select:disabled,
+.wr-wallet-custom-range input:disabled {
+  opacity: 0.58;
+}
+
+.wr-wallet-filter-grid,
+.wr-wallet-custom-range {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.55rem;
+}
+
+.wr-wallet-filter-grid label,
+.wr-wallet-custom-range label {
+  display: grid;
+  gap: 0.25rem;
+  color: #64748b;
+  font-size: 0.66rem;
+  font-weight: 900;
+}
+
+.wr-wallet-filter-grid select,
+.wr-wallet-custom-range input {
+  width: 100%;
+  min-height: 2.35rem;
+  border: 1px solid #d8dde3;
+  border-radius: 0.5rem;
+  background: #fff;
+  color: #10213f;
+  font: inherit;
+  font-size: 0.74rem;
+  padding: 0 0.55rem;
+}
+
+.wr-wallet-custom-range button,
+.wr-wallet-state button,
+.wr-wallet-pagination button {
+  border: 1px solid #d1d5db;
+  border-radius: 0.5rem;
+  background: #fff;
+  color: #10213f;
+  min-height: 2.35rem;
+  padding: 0 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 900;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+}
+
+.wr-wallet-custom-range button:disabled,
+.wr-wallet-pagination button:disabled {
+  opacity: 0.52;
+}
+
+.wr-wallet-error {
+  margin: 0;
+  color: #b91c1c;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.wr-wallet-list {
+  border-top: 1px solid #d8dde3;
+}
+
+.wr-wallet-skeleton-list {
+  display: grid;
+}
+
+.wr-wallet-skeleton-row {
+  min-height: 4.25rem;
+  padding: 0.78rem 1rem;
   border-bottom: 1px solid #d8dde3;
+  background: rgba(255, 255, 255, 0.5);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.8rem;
 }
 
-.wr-profile-coin-row span {
-  min-width: 0;
-  color: #10213f;
-  font-size: 0.78rem;
-  font-weight: 850;
+.wr-wallet-skeleton-row span,
+.wr-wallet-skeleton-row strong {
+  display: block;
+  border-radius: 0.35rem;
+  background: linear-gradient(90deg, #e2e8f0 0%, #f8fafc 50%, #e2e8f0 100%);
+  background-size: 180% 100%;
+  animation: wrWalletSkeleton 1.1s ease-in-out infinite;
 }
 
-.wr-profile-coin-row small {
+.wr-wallet-skeleton-row span {
+  width: min(12rem, 62%);
+  height: 1.65rem;
+}
+
+.wr-wallet-skeleton-row strong {
+  width: 3.5rem;
+  height: 1rem;
+}
+
+@keyframes wrWalletSkeleton {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: -100% 0;
+  }
+}
+
+.wr-wallet-transaction-row {
+  min-height: 4.25rem;
+  padding: 0.78rem 1rem;
+  border-bottom: 1px solid #d8dde3;
+  background: rgba(255, 255, 255, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.wr-wallet-transaction-row div {
+  min-width: 0;
+}
+
+.wr-wallet-transaction-row h3,
+.wr-wallet-transaction-row p {
+  margin: 0;
+}
+
+.wr-wallet-transaction-row h3 {
+  font-size: 0.8rem;
+  line-height: 1.2;
+  font-weight: 900;
+}
+
+.wr-wallet-transaction-row p,
+.wr-wallet-transaction-row small {
   display: block;
-  margin-top: 0.14rem;
+  margin-top: 0.16rem;
   color: #64748b;
   font-size: 0.68rem;
+  line-height: 1.25;
   font-weight: 750;
 }
 
-.wr-profile-coin-row strong {
+.wr-wallet-transaction-row strong {
   flex: 0 0 auto;
-  font-size: 0.82rem;
+  font-size: 0.86rem;
   font-weight: 950;
+  white-space: nowrap;
 }
 
-.wr-profile-coin-row strong.is-credit {
+.wr-wallet-transaction-row strong.is-credit {
   color: #047857;
 }
 
-.wr-profile-coin-row strong.is-debit {
+.wr-wallet-transaction-row strong.is-debit {
   color: #b91c1c;
 }
 
-.wr-profile-coin-empty {
-  padding: 0.85rem 1rem;
+.wr-wallet-state {
+  margin: 0;
+  padding: 1rem;
+  color: #64748b;
+  font-size: 0.76rem;
+  line-height: 1.4;
+  font-weight: 800;
+  display: grid;
+  gap: 0.65rem;
+}
+
+.wr-wallet-pagination {
+  padding: 0.8rem 1rem 0;
+  display: grid;
+  grid-template-columns: 5.5rem minmax(0, 1fr) 5.5rem;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.wr-wallet-pagination span {
+  color: #64748b;
+  font-size: 0.7rem;
+  font-weight: 850;
+  text-align: center;
+}
+
+.wr-coin-help-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 90;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.wr-coin-help-backdrop {
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: rgba(15, 23, 42, 0.32);
+  backdrop-filter: blur(2px);
+}
+
+.wr-coin-help-sheet {
+  position: relative;
+  width: 100%;
+  max-height: calc(100% - 1rem);
+  overflow: auto;
+  border-radius: 1rem 1rem 0 0;
+  border: 1px solid #d8dde3;
+  background: #fff;
+  color: #10213f;
+  padding: 1rem;
+  box-shadow: 0 -20px 40px rgba(15, 23, 42, 0.22);
+}
+
+.wr-coin-help-close {
+  position: absolute;
+  right: 0.8rem;
+  top: 0.8rem;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 0.7rem;
+  border: 1px solid #d8dde3;
+  background: #fff;
+  color: #10213f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wr-coin-help-sheet h3 {
+  margin: 0 2.3rem 0 0;
+  font-size: 1.2rem;
+  line-height: 1.1;
+  font-weight: 950;
+}
+
+.wr-coin-help-sheet p {
+  margin: 0.45rem 0 0;
+  color: #64748b;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  font-weight: 760;
+}
+
+.wr-coin-help-list {
+  margin-top: 0.8rem;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.wr-coin-help-list div {
+  border: 1px solid #d8dde3;
+  border-radius: 0.55rem;
+  background: #f8fafc;
+  padding: 0.65rem;
+  display: grid;
+  gap: 0.16rem;
+}
+
+.wr-coin-help-list strong {
+  font-size: 0.76rem;
+  font-weight: 930;
+}
+
+.wr-coin-help-list span {
+  color: #64748b;
+  font-size: 0.7rem;
+  line-height: 1.35;
+  font-weight: 760;
+}
+
+.wr-coin-help-note {
+  color: #6b7280;
 }
 
 .wr-profile-logout {
