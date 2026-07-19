@@ -1,6 +1,8 @@
 import { createHash, randomBytes, randomInt, randomUUID } from "node:crypto";
 import { Pool, type PoolClient } from "pg";
 import { grantFirstLoginCoins } from "../economy/store";
+import { recordUserPlaceInteraction } from "../stroll/informationFoundation";
+import { touchSession } from "../observability/store";
 
 export type AuthProvider = "EMAIL" | "GOOGLE" | "PHONE" | "FACEBOOK" | "APPLE";
 
@@ -25,6 +27,12 @@ type SessionRecord = {
   expires_at: string;
   revoked_at: string | null;
   created_at: string;
+  last_seen_at?: string | null;
+  ended_at?: string | null;
+  end_reason?: string | null;
+  client_platform?: string | null;
+  app_version?: string | null;
+  device_metadata_json?: unknown;
 };
 
 type SavedPlaceRecord = {
@@ -1229,6 +1237,112 @@ export async function ensureAuthSchema() {
     create index if not exists idx_reel_jobs_created_at on reel_jobs(created_at desc);
   `);
 
+  await database.query(`
+    alter table if exists auth_sessions add column if not exists last_seen_at timestamptz;
+    alter table if exists auth_sessions add column if not exists ended_at timestamptz;
+    alter table if exists auth_sessions add column if not exists end_reason text;
+    alter table if exists auth_sessions add column if not exists client_platform text;
+    alter table if exists auth_sessions add column if not exists app_version text;
+    alter table if exists auth_sessions add column if not exists device_metadata_json jsonb not null default '{}'::jsonb;
+    create index if not exists idx_auth_sessions_user_last_seen on auth_sessions(user_id, coalesce(last_seen_at, created_at) desc);
+
+    create table if not exists operation_runs (
+      id uuid primary key default gen_random_uuid(),
+      operation_type text not null,
+      user_id uuid references users(id) on delete set null,
+      session_id uuid references auth_sessions(id) on delete set null,
+      request_id text,
+      correlation_id text,
+      entity_type text,
+      entity_id text,
+      status text not null default 'running',
+      started_at timestamptz not null default now(),
+      completed_at timestamptz,
+      duration_ms integer,
+      attempt_count integer not null default 1,
+      idempotency_key text,
+      provider text,
+      model_name text,
+      version text,
+      input_summary_json jsonb not null default '{}'::jsonb,
+      output_summary_json jsonb not null default '{}'::jsonb,
+      created_at timestamptz not null default now()
+    );
+    create unique index if not exists idx_operation_runs_idempotency on operation_runs(operation_type, idempotency_key) where idempotency_key is not null;
+    create index if not exists idx_operation_runs_user_started on operation_runs(user_id, started_at desc) where user_id is not null;
+    create index if not exists idx_operation_runs_session_started on operation_runs(session_id, started_at desc) where session_id is not null;
+    create index if not exists idx_operation_runs_type_status on operation_runs(operation_type, status, started_at desc);
+    create index if not exists idx_operation_runs_request_id on operation_runs(request_id) where request_id is not null;
+    create index if not exists idx_operation_runs_correlation_id on operation_runs(correlation_id) where correlation_id is not null;
+    create index if not exists idx_operation_runs_entity on operation_runs(entity_type, entity_id, started_at desc) where entity_type is not null and entity_id is not null;
+
+    create table if not exists user_location_contexts (
+      id uuid primary key default gen_random_uuid(),
+      user_id uuid references users(id) on delete set null,
+      session_id uuid references auth_sessions(id) on delete set null,
+      source text not null,
+      latitude double precision,
+      longitude double precision,
+      accuracy_meters integer,
+      city text,
+      locality text,
+      permission_status text,
+      consent_source text,
+      captured_at timestamptz not null default now(),
+      expires_at timestamptz
+    );
+    create index if not exists idx_user_location_contexts_user_captured on user_location_contexts(user_id, captured_at desc) where user_id is not null;
+    create index if not exists idx_user_location_contexts_session_captured on user_location_contexts(session_id, captured_at desc) where session_id is not null;
+    create index if not exists idx_user_location_contexts_expires on user_location_contexts(expires_at) where expires_at is not null;
+
+    alter table if exists app_usage_events add column if not exists session_id uuid references auth_sessions(id) on delete set null;
+    alter table if exists app_usage_events add column if not exists request_id text;
+    alter table if exists app_usage_events add column if not exists operation_run_id uuid references operation_runs(id) on delete set null;
+    alter table if exists app_usage_events add column if not exists entity_type text;
+    alter table if exists app_usage_events add column if not exists entity_id text;
+    alter table if exists app_usage_events add column if not exists route_name text;
+    alter table if exists app_usage_events add column if not exists source_surface text;
+    alter table if exists app_usage_events add column if not exists outcome text;
+    alter table if exists app_usage_events add column if not exists duration_ms integer;
+    alter table if exists app_usage_events add column if not exists location_context_id uuid references user_location_contexts(id) on delete set null;
+    alter table if exists app_usage_events add column if not exists schema_version integer not null default 1;
+    create index if not exists idx_app_usage_events_session_created on app_usage_events(session_id, created_at desc) where session_id is not null;
+    create index if not exists idx_app_usage_events_request_id on app_usage_events(request_id) where request_id is not null;
+    create index if not exists idx_app_usage_events_operation_created on app_usage_events(operation_run_id, created_at desc) where operation_run_id is not null;
+    create index if not exists idx_app_usage_events_entity_created on app_usage_events(entity_type, entity_id, created_at desc) where entity_type is not null and entity_id is not null;
+    create index if not exists idx_app_usage_events_type_created on app_usage_events(event_type, created_at desc);
+
+    create table if not exists failure_events (
+      id uuid primary key default gen_random_uuid(),
+      scope text not null,
+      severity text not null,
+      error_code text not null,
+      error_category text,
+      user_id uuid references users(id) on delete set null,
+      session_id uuid references auth_sessions(id) on delete set null,
+      request_id text,
+      correlation_id text,
+      operation_run_id uuid references operation_runs(id) on delete set null,
+      entity_type text,
+      entity_id text,
+      provider text,
+      http_status integer,
+      public_message text,
+      internal_message text,
+      retryable boolean,
+      attempt_number integer,
+      resolved_at timestamptz,
+      metadata_json jsonb not null default '{}'::jsonb,
+      occurred_at timestamptz not null default now()
+    );
+    create index if not exists idx_failure_events_user_occurred on failure_events(user_id, occurred_at desc) where user_id is not null;
+    create index if not exists idx_failure_events_session_occurred on failure_events(session_id, occurred_at desc) where session_id is not null;
+    create index if not exists idx_failure_events_unresolved on failure_events(severity, occurred_at desc) where resolved_at is null;
+    create index if not exists idx_failure_events_request_id on failure_events(request_id) where request_id is not null;
+    create index if not exists idx_failure_events_correlation_id on failure_events(correlation_id) where correlation_id is not null;
+    create index if not exists idx_failure_events_entity on failure_events(entity_type, entity_id, occurred_at desc) where entity_type is not null and entity_id is not null;
+  `);
+
   schemaReady = true;
 }
 
@@ -1245,10 +1359,11 @@ function sanitizeDisplayName(name: string | null | undefined) {
   return normalized || null;
 }
 
-function toUserDTO(row: UserRecord) {
+function toUserDTO(row: UserRecord & { current_session_id?: string | null }) {
   return {
     userId: row.id,
     customerId: row.id,
+    sessionId: row.current_session_id ?? null,
     email: row.email,
     emailVerified: row.email_verified,
     phoneNumber: row.phone_number,
@@ -1380,7 +1495,11 @@ export async function updateDisplayName(userId: string, displayName: string) {
   return toUserDTO(updated.rows[0]);
 }
 
-export async function createSession(userId: string) {
+export async function createSession(userId: string, options: {
+  clientPlatform?: string | null;
+  appVersion?: string | null;
+  deviceMetadata?: Record<string, unknown> | null;
+} = {}) {
   const rawToken = randomBytes(32).toString("hex");
   const tokenHash = hashValue(rawToken);
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
@@ -1388,21 +1507,32 @@ export async function createSession(userId: string) {
 
   await database.query<SessionRecord>(
     `
-      insert into auth_sessions (id, user_id, token_hash, expires_at, revoked_at, created_at)
-      values ($1, $2, $3, $4, null, now())
+      insert into auth_sessions (
+        id, user_id, token_hash, expires_at, revoked_at, created_at,
+        last_seen_at, client_platform, app_version, device_metadata_json
+      )
+      values ($1, $2, $3, $4, null, now(), now(), $5, $6, $7::jsonb)
     `,
-    [sessionId, userId, tokenHash, expiresAt],
+    [
+      sessionId,
+      userId,
+      tokenHash,
+      expiresAt,
+      options.clientPlatform ?? null,
+      options.appVersion ?? null,
+      JSON.stringify(options.deviceMetadata ?? {}),
+    ],
   );
   await grantFirstLoginCoins(database, userId);
 
-  return { rawToken, expiresAt };
+  return { rawToken, expiresAt, sessionId };
 }
 
 export async function findSessionUser(rawToken: string) {
   const tokenHash = hashValue(rawToken);
-  const result = await database.query<UserRecord>(
+  const result = await database.query<UserRecord & { current_session_id: string | null }>(
     `
-      select u.*
+      select u.*, s.id::text as current_session_id
       from auth_sessions s
       join users u on u.id = s.user_id
       where s.token_hash = $1
@@ -1413,12 +1543,23 @@ export async function findSessionUser(rawToken: string) {
     [tokenHash],
   );
   const user = result.rows[0];
+  if (user?.current_session_id) {
+    await touchSession(database, { sessionId: user.current_session_id }).catch(() => undefined);
+  }
   return user ? toUserDTO(user) : null;
 }
 
 export async function revokeSession(rawToken: string) {
   const tokenHash = hashValue(rawToken);
-  await database.query("update auth_sessions set revoked_at = now() where token_hash = $1 and revoked_at is null", [tokenHash]);
+  await database.query(
+    `update auth_sessions
+     set revoked_at = now(),
+         ended_at = coalesce(ended_at, now()),
+         end_reason = coalesce(end_reason, 'logout'),
+         last_seen_at = coalesce(last_seen_at, now())
+     where token_hash = $1 and revoked_at is null`,
+    [tokenHash],
+  );
 }
 
 export async function issueEmailOtp(emailInput: string) {
@@ -1572,6 +1713,17 @@ export async function upsertSavedPlace(userId: string, input: { placeId: string;
     `,
     [randomUUID(), userId, placeId, title, category, JSON.stringify(metadata)],
   );
+  await recordUserPlaceInteraction(database, {
+    userId,
+    canonicalPlaceId: null,
+    savedPlaceId: result.rows[0].id,
+    legacyPlaceId: placeId,
+    interactionType: "saved",
+    interactionSource: "saved_places_api",
+    metadata: { title, category },
+  }).catch((error) => {
+    console.warn("user_place_interaction_saved_failed", error instanceof Error ? error.message : String(error));
+  });
   return {
     item: toSavedPlaceDTO(result.rows[0]),
     alreadySaved: false,
@@ -1581,10 +1733,23 @@ export async function upsertSavedPlace(userId: string, input: { placeId: string;
 export async function deleteSavedPlace(userId: string, placeIdRaw: string) {
   const placeId = String(placeIdRaw || "").trim();
   if (!placeId) throw new Error("placeId is required");
-  const result = await database.query(
-    "delete from user_saved_places where user_id = $1 and place_id = $2 returning id",
+  const result = await database.query<{ id: string; canonical_place_id: string | null; place_id: string }>(
+    "delete from user_saved_places where user_id = $1 and place_id = $2 returning id, canonical_place_id, place_id",
     [userId, placeId],
   );
+  const deletedRow = result.rows[0];
+  if (deletedRow) {
+    await recordUserPlaceInteraction(database, {
+      userId,
+      canonicalPlaceId: deletedRow.canonical_place_id,
+      savedPlaceId: deletedRow.id,
+      legacyPlaceId: deletedRow.place_id,
+      interactionType: "unsaved",
+      interactionSource: "saved_places_api",
+    }).catch((error) => {
+      console.warn("user_place_interaction_unsaved_failed", error instanceof Error ? error.message : String(error));
+    });
+  }
   return { deleted: Number(result.rowCount || 0) > 0 };
 }
 

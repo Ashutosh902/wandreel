@@ -15,6 +15,8 @@ import {
   linkRunToSubmittedLink,
   updateAttemptPromotedFields,
   updateRunFinalOutcome,
+  deleteSavedPlace,
+  upsertSavedPlace,
   upsertAttemptEvidence,
   upsertAttemptStageRuns,
   upsertSubmittedLink,
@@ -64,6 +66,11 @@ test("ensureAuthSchema adds observability tables and promoted columns", async ()
   assert.match(sqlText, /create table if not exists attempt_evidence/i);
   assert.match(sqlText, /create table if not exists entity_field_edits/i);
   assert.match(sqlText, /create table if not exists app_usage_events/i);
+  assert.match(sqlText, /add column if not exists last_seen_at/i);
+  assert.match(sqlText, /create table if not exists operation_runs/i);
+  assert.match(sqlText, /create table if not exists failure_events/i);
+  assert.match(sqlText, /create table if not exists user_location_contexts/i);
+  assert.match(sqlText, /add column if not exists operation_run_id/i);
   assert.match(sqlText, /alter table if exists reel_analytics_runs add column if not exists submitted_link_id/i);
   assert.match(sqlText, /alter table if exists reel_analytics_runs add column if not exists canonical_url/i);
   assert.match(sqlText, /alter table if exists reel_analytics_attempts add column if not exists accepted_after/i);
@@ -296,6 +303,49 @@ test("findSavedPlaceByUserAndPlaceId returns existing saved place when present",
   assert.equal(result?.id, "saved-1");
   assert.equal(result?.placeId, "place-1");
   assert.deepEqual(mock.calls[0]?.params, ["user-1", "place-1"]);
+});
+
+test("saved place mutations write durable customer memory events", async () => {
+  const mock = createDatabaseMock([
+    [],
+    [{
+      id: "saved-1",
+      user_id: "user-1",
+      place_id: "place-1",
+      title: "Eva Cafe",
+      category: "Taste",
+      metadata_json: { locality: "Anjuna" },
+      created_at: "2026-01-01T00:00:00.000Z",
+      updated_at: "2026-01-01T00:00:00.000Z",
+    }],
+    [],
+    [{
+      id: "saved-1",
+      canonical_place_id: "canonical-1",
+      place_id: "place-1",
+    }],
+    [],
+  ]);
+  __setPostgresTestConfig({
+    databaseOverride: mock.db,
+    databaseUrlOverride: "postgres://unit-test",
+  });
+
+  const saved = await upsertSavedPlace("user-1", {
+    placeId: "place-1",
+    title: "Eva Cafe",
+    category: "Taste",
+    metadata: { locality: "Anjuna" },
+  });
+  const deleted = await deleteSavedPlace("user-1", "place-1");
+
+  assert.equal(saved.alreadySaved, false);
+  assert.equal(deleted.deleted, true);
+  const interactionCalls = mock.calls.filter((call) => /insert into user_place_interactions/i.test(call.sql));
+  assert.equal(interactionCalls.length, 2);
+  assert.equal(interactionCalls[0]?.params?.[5], "saved");
+  assert.equal(interactionCalls[1]?.params?.[5], "unsaved");
+  assert.equal(interactionCalls[1]?.params?.[1], "canonical-1");
 });
 
 test("getAdminObservabilityOverview returns aggregated overview metrics", async () => {

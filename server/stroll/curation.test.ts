@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { generateDeterministicStrollPlan, StrollCurationPipelineError, type SavedPlaceForStrollCuration } from "./curation";
+import {
+  analyzeDeterministicStrollCandidates,
+  generateDeterministicStrollPlan,
+  StrollCurationPipelineError,
+  type SavedPlaceForStrollCuration,
+} from "./curation";
 import type { StrollSummary } from "./types";
 
 function stroll(overrides: Partial<StrollSummary> = {}): StrollSummary {
@@ -84,6 +89,33 @@ test("candidate selection filters out mixed-city and coordinate-less saved place
   ]);
 
   assert.deepEqual(plan.stops.map((stop) => stop.placeId).sort(), ["patna-food", "patna-heritage"]);
+});
+
+test("candidate analysis separates hard exclusions from ranking factors", () => {
+  const savedPlaces = [
+    place("patna-food", "Patna Cafe", "Taste", 25.5945, 85.1379),
+    place("patna-food", "Patna Cafe Duplicate", "Taste", 25.5946, 85.138),
+    place("delhi-food", "Delhi Cafe", "Taste", 28.61, 77.2, { city: "Delhi", locality: "Delhi" }),
+    { ...place("missing-location", "No Location", "Explore", 25.6, 85.1), metadata: { city: "Patna" } },
+  ];
+
+  const analysis = analyzeDeterministicStrollCandidates(stroll(), savedPlaces, ["patna-food"]);
+  const byPlaceId = new Map(analysis.decisions.map((decision) => [decision.legacyPlaceId || decision.title, decision]));
+  const selectedPatnaFood = analysis.decisions.find((decision) => decision.legacyPlaceId === "patna-food" && decision.eligible);
+
+  assert.equal(selectedPatnaFood?.eligible, true);
+  assert.equal(selectedPatnaFood?.selected, true);
+  assert.ok((selectedPatnaFood?.deterministicScore ?? 0) > 0);
+  assert.deepEqual(Object.keys(selectedPatnaFood?.scoringFactors ?? {}).sort(), [
+    "category",
+    "confidence",
+    "geography",
+    "interest",
+    "quality",
+  ]);
+  assert.equal(analysis.decisions.find((decision) => decision.title === "Patna Cafe Duplicate")?.exclusionReason, "DUPLICATE_PLACE");
+  assert.equal(byPlaceId.get("delhi-food")?.exclusionReason, "WRONG_CITY");
+  assert.equal(byPlaceId.get("missing-location")?.exclusionReason, "MISSING_COORDINATES");
 });
 
 test("ranking prefers interest and metadata quality over weaker saved places", () => {

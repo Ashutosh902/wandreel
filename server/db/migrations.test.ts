@@ -122,7 +122,36 @@ test("loadDatabaseMigrations verifies the production migration manifest order", 
   const migrations = await loadDatabaseMigrations();
   const versions = migrations.map((migration) => migration.version);
 
-  assert.deepEqual(versions, ["0000", "0001", "0002", "0003", "0004", "0005"]);
+  assert.deepEqual(versions, ["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007"]);
   assert.deepEqual(new Set(versions).size, versions.length);
   assert.ok(migrations.every((migration) => migration.sql.trim().length > 0));
+});
+
+test("customer observability migration extends sessions and adds correlation tables", async () => {
+  const migrations = await loadDatabaseMigrations();
+  const migration = migrations.find((item) => item.version === "0007");
+  assert.ok(migration);
+
+  assert.match(migration.sql, /alter table if exists auth_sessions\s+add column if not exists last_seen_at/i);
+  assert.match(migration.sql, /create table if not exists operation_runs/i);
+  assert.match(migration.sql, /create table if not exists failure_events/i);
+  assert.match(migration.sql, /create table if not exists user_location_contexts/i);
+  assert.match(migration.sql, /alter table if exists app_usage_events\s+add column if not exists session_id/i);
+  assert.match(migration.sql, /idx_operation_runs_correlation_id/i);
+  assert.match(migration.sql, /idx_failure_events_unresolved/i);
+  assert.match(migration.sql, /idx_user_location_contexts_expires/i);
+});
+
+test("stroll information foundation migration creates required audit tables", async () => {
+  const migrations = await loadDatabaseMigrations();
+  const migration = migrations.find((item) => item.version === "0006");
+  assert.ok(migration);
+
+  assert.match(migration.sql, /create table if not exists places/i);
+  assert.match(migration.sql, /create table if not exists place_source_evidence/i);
+  assert.match(migration.sql, /create table if not exists user_place_interactions/i);
+  assert.match(migration.sql, /create table if not exists stroll_generation_snapshots/i);
+  assert.match(migration.sql, /create table if not exists stroll_candidate_snapshots/i);
+  assert.match(migration.sql, /add column if not exists canonical_place_id uuid references places\(id\)/i);
+  assert.match(migration.sql, /prevent_stroll_snapshot_mutation/i);
 });

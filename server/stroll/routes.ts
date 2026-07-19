@@ -37,10 +37,24 @@ import {
   updateStrollOnboarding,
   upsertHeroBookmark,
 } from "./store";
+import { getPostgresDatabase, isPostgresConfigured } from "../auth/postgresAuth";
+import {
+  bestEffortObservability,
+  createOperationRun,
+  recordFailureEvent,
+  recordLocationContext,
+  recordProductEvent,
+} from "../observability/store";
 
 type AuthenticatedRequest = express.Request & {
   authUser?: {
     userId: string;
+    sessionId?: string | null;
+  };
+  observability?: {
+    requestId: string;
+    correlationId: string;
+    startedAt: number;
   };
 };
 
@@ -62,6 +76,14 @@ type RegisterStrollRoutesOptions = {
 
 function getUserId(req: express.Request) {
   return (req as AuthenticatedRequest).authUser?.userId;
+}
+
+function getSessionId(req: express.Request) {
+  return (req as AuthenticatedRequest).authUser?.sessionId ?? null;
+}
+
+function getRequestIds(req: express.Request) {
+  return (req as AuthenticatedRequest).observability ?? null;
 }
 
 function sendValidationError(res: express.Response, error: unknown) {
@@ -175,7 +197,72 @@ export function registerStrollRoutes(app: express.Express, options: RegisterStro
     try {
       const userId = getUserId(req);
       if (!userId) return res.status(401).json({ ok: false, error: "Unauthorized" });
+      const requestIds = getRequestIds(req);
+      let locationContextId: string | null = null;
+      if (
+        isPostgresConfigured() &&
+        typeof parsed.data.latitude === "number" &&
+        typeof parsed.data.longitude === "number"
+      ) {
+        locationContextId = await recordLocationContext(getPostgresDatabase(), {
+          userId,
+          sessionId: getSessionId(req),
+          source: "stroll_start",
+          latitude: parsed.data.latitude,
+          longitude: parsed.data.longitude,
+          city: parsed.data.city,
+          permissionStatus: "granted",
+          consentSource: "stroll_create_form",
+        }).catch(() => null);
+      }
+      const operationRunId = isPostgresConfigured()
+        ? await createOperationRun(getPostgresDatabase(), {
+          operationType: "stroll_creation",
+          userId,
+          sessionId: getSessionId(req),
+          requestId: requestIds?.requestId ?? null,
+          correlationId: requestIds?.correlationId ?? null,
+          entityType: "stroll",
+          idempotencyKey: parsed.data.clientRequestId,
+          inputSummary: {
+            city: parsed.data.city,
+            source: parsed.data.source,
+            travellerCount: parsed.data.travellerCount,
+            interestCount: parsed.data.interests.length,
+            hasStartCoordinates: parsed.data.latitude != null && parsed.data.longitude != null,
+          },
+        }).catch(() => null)
+        : null;
+      await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+        eventType: "stroll_creation_started",
+        userId,
+        sessionId: getSessionId(req),
+        requestId: requestIds?.requestId ?? null,
+        operationRunId,
+        routeName: "stroll_create",
+        sourceSurface: parsed.data.source,
+        outcome: "started",
+        locationContextId,
+        metadata: {
+          city: parsed.data.city,
+          source: parsed.data.source,
+          interestCount: parsed.data.interests.length,
+        },
+      }));
       const result = await createDraftStroll(userId, parsed.data);
+      await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+        eventType: "stroll_generation_started",
+        userId,
+        sessionId: getSessionId(req),
+        requestId: requestIds?.requestId ?? null,
+        operationRunId,
+        entityType: "stroll",
+        entityId: result.stroll.id,
+        routeName: "stroll_create",
+        sourceSurface: parsed.data.source,
+        outcome: "started",
+        locationContextId,
+      }));
       return res.status(result.created ? 201 : 200).json({
         ok: true,
         created: result.created,
@@ -185,6 +272,19 @@ export function registerStrollRoutes(app: express.Express, options: RegisterStro
       if (error instanceof StrollDraftValidationError) {
         return res.status(error.statusCode).json({ ok: false, error: error.message, code: error.code });
       }
+      await bestEffortObservability(() => recordFailureEvent(getPostgresDatabase(), {
+        scope: "customer",
+        severity: "error",
+        errorCode: "stroll_creation_failed",
+        errorCategory: "stroll",
+        userId: getUserId(req),
+        sessionId: getSessionId(req),
+        requestId: getRequestIds(req)?.requestId ?? null,
+        correlationId: getRequestIds(req)?.correlationId ?? null,
+        publicMessage: "Failed to create draft Stroll",
+        internalMessage: error instanceof Error ? error.message : String(error),
+        httpStatus: 500,
+      }));
       console.error("draft stroll create failed", error);
       return res.status(500).json({ ok: false, error: "Failed to create draft Stroll" });
     }
@@ -264,6 +364,17 @@ export function registerStrollRoutes(app: express.Express, options: RegisterStro
       if (!userId) return res.status(401).json({ ok: false, error: "Unauthorized" });
       const stroll = await getStrollDetail(userId, String(req.params.strollId || ""));
       if (!stroll) return res.status(404).json({ ok: false, error: "Stroll not found" });
+      await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+        eventType: "stroll_opened",
+        userId,
+        sessionId: getSessionId(req),
+        requestId: getRequestIds(req)?.requestId ?? null,
+        entityType: "stroll",
+        entityId: stroll.id,
+        routeName: "stroll_detail",
+        sourceSurface: "stroll",
+        outcome: "viewed",
+      }));
       return res.json({ ok: true, stroll });
     } catch (error) {
       console.error("stroll detail failed", error);
@@ -334,6 +445,18 @@ export function registerStrollRoutes(app: express.Express, options: RegisterStro
       if (!userId) return res.status(401).json({ ok: false, error: "Unauthorized" });
       const stroll = await acceptStrollStopOrder(userId, String(req.params.strollId || ""), parsed.data.stopIds);
       if (!stroll) return res.status(404).json({ ok: false, error: "Stroll not found" });
+      await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+        eventType: "stroll_stop_swapped",
+        userId,
+        sessionId: getSessionId(req),
+        requestId: getRequestIds(req)?.requestId ?? null,
+        entityType: "stroll",
+        entityId: stroll.id,
+        routeName: "stroll_reorder",
+        sourceSurface: "stroll",
+        outcome: "succeeded",
+        metadata: { stopCount: parsed.data.stopIds.length },
+      }));
       return res.json({ ok: true, stroll });
     } catch (error) {
       if (error instanceof StrollReorderValidationError) {

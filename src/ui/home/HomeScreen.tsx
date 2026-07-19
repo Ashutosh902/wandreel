@@ -107,6 +107,7 @@ const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Login"];
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
 const ADD_INTELLIGENCE_TIMEOUT_MS = 120000;
 const IS_DEV = import.meta.env.DEV;
+const SCREEN_ANALYTICS_ANONYMOUS_ID_KEY = "wr_add_analytics_anonymous_id_v1";
 
 const LazyMapScreen = lazy(() => import("../map/MapScreen").then((module) => ({ default: module.MapScreen })));
 const LazyStrollCreateScreen = lazy(() => import("./StrollCreateScreen").then((module) => ({ default: module.StrollCreateScreen })));
@@ -315,6 +316,14 @@ function StrollOnboardingPrompt({
       </section>
     </div>
   );
+}
+
+function getScreenAnalyticsAnonymousId() {
+  let existing = window.localStorage.getItem(SCREEN_ANALYTICS_ANONYMOUS_ID_KEY);
+  if (existing) return existing;
+  existing = `anon-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  window.localStorage.setItem(SCREEN_ANALYTICS_ANONYMOUS_ID_KEY, existing);
+  return existing;
 }
 
 function CoinWelcomeSheet({
@@ -573,6 +582,23 @@ export function HomeScreen() {
     : activeTab === "Discover" && activeCategory
       ? `Discover-${activeCategory}`
       : activeTab;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const routeName = pageKey.toLowerCase().replace(/[^a-z0-9:_-]+/g, "_");
+    void fetch(`${API_BASE_URL}/api/analytics/app-event`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        eventType: "screen_viewed",
+        anonymousId: getScreenAnalyticsAnonymousId(),
+        routeName,
+        sourceSurface: "home",
+        outcome: "viewed",
+      }),
+    }).catch(() => undefined);
+  }, [pageKey]);
   const getTabOrderIndex = (tab: NavLabel) => NAV_ORDER.indexOf(tab);
   const effectiveSavedPlacesByCategory = useMemo(
     () => (isAuthenticated ? savedPlacesByCategory : createEmptySavedPlacesByCategory()),

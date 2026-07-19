@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { completeOperationRun, createOperationRun } from "../observability/store";
 
 export type EconomyQueryable = {
   query: <T = any>(sql: string, params?: unknown[]) => Promise<{ rows: T[]; rowCount?: number | null }>;
@@ -1276,6 +1277,19 @@ export async function chargeSavedPlaceCoins(input: {
     const chargeMillis = input.source === "discover" ? DISCOVER_SAVE_CHARGE_MILLIS : EXTERNAL_IMPORT_CHARGE_MILLIS;
     const rewardPoolMillis = input.source === "discover" ? DISCOVER_REWARD_POOL_MILLIS : 0;
     const platformRetentionMillis = chargeMillis - rewardPoolMillis;
+    const walletOperationRunId = await createOperationRun(client, {
+      operationType: "wallet_debit_reward",
+      userId: input.userId,
+      entityType: "place",
+      entityId: placeId,
+      idempotencyKey: `wallet:${idempotencyKey}`,
+      inputSummary: {
+        source: input.source,
+        chargeMillis,
+        rewardPoolMillis,
+        platformRetentionMillis,
+      },
+    });
     const limits = getEconomyLimits();
     const recommenders =
       input.source === "discover"
@@ -1460,6 +1474,19 @@ export async function chargeSavedPlaceCoins(input: {
           JSON.stringify({ recommenderCount: recommenders.length, roundingPolicy: ROUNDING_POLICY }),
         ],
       );
+    }
+
+    if (walletOperationRunId) {
+      await completeOperationRun(client, {
+        operationRunId: walletOperationRunId,
+        status: "succeeded",
+        outputSummary: {
+          saveEventId: event.id,
+          walletBalanceMillis: nextWallet.balanceMillis,
+          distributedMillis: totalDistributedMillis,
+          recommenderCount: recommenders.length,
+        },
+      });
     }
 
     await client.query("commit");

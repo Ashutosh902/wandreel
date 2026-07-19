@@ -11,6 +11,7 @@ import {
   StrollCurationPipelineError,
   type SavedPlaceForStrollCuration,
 } from "./curation";
+import { runStrollContextShadow } from "./informationFoundation";
 import {
   enrichStopDescriptionIfNeeded,
   type PersistedStrollStopEnrichment,
@@ -966,6 +967,16 @@ export async function generatePersistedStrollStopsFromSavedPlaces(userId: string
     throw error;
   } finally {
     client.release();
+  }
+
+  if (process.env.STROLL_CONTEXT_SHADOW_ENABLED !== "false") {
+    await runStrollContextShadow({
+      database: database(),
+      userId,
+      stroll,
+      savedPlaces,
+      plan,
+    });
   }
 }
 

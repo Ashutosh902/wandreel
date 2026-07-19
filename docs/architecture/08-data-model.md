@@ -20,6 +20,7 @@ Important current entities already exist in code and schema, including:
 - extraction outputs
 - intelligence outputs
 - analytics attempts and runs
+- Stroll information foundation entities, documented in [stroll-information-foundation.md](./stroll-information-foundation.md)
 
 # Current Responsibilities
 

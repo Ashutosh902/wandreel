@@ -301,6 +301,35 @@ export function AddScreen() {
     return existing;
   };
 
+  const postProductEvent = async (input: {
+    eventType: "add_flow_started" | "link_submitted";
+    requestId?: string | null;
+    entityId?: string | null;
+    outcome?: "started" | "succeeded" | "failed" | "cancelled" | "viewed";
+    metadata?: Record<string, unknown>;
+  }) => {
+    try {
+      await fetch(`${API_BASE_URL}/api/analytics/app-event`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          eventType: input.eventType,
+          anonymousId: getAnalyticsAnonymousId(),
+          requestId: input.requestId,
+          entityType: input.entityId ? "submitted_link" : undefined,
+          entityId: input.entityId,
+          routeName: "add",
+          sourceSurface: "add",
+          outcome: input.outcome ?? "started",
+          metadata: input.metadata,
+        }),
+      });
+    } catch {
+      // Product-event analytics should never block Add.
+    }
+  };
+
   const postReelAnalyticsEvent = async (input: {
     clientRunId: string;
     attemptNumber?: number | null;
@@ -1385,6 +1414,19 @@ export function AddScreen() {
       urlHash: buildClientUrlHash(normalizedSourceUrl),
       attemptNumber,
       triggerType,
+    });
+    void postProductEvent({
+      eventType: "add_flow_started",
+      requestId: String(runId),
+      outcome: "started",
+      metadata: { attemptNumber, triggerType },
+    });
+    void postProductEvent({
+      eventType: "link_submitted",
+      requestId: String(runId),
+      entityId: buildClientUrlHash(normalizedSourceUrl),
+      outcome: "started",
+      metadata: { attemptNumber, triggerType },
     });
     logAddFlowEvent("add_analyze_start", {
       clientRunId: String(runId),

@@ -33,7 +33,6 @@ import {
   listSavedPlaces,
   markReelAnalyticsEntityOutcome,
   recordReelAnalyticsEvent,
-  recordAppUsageEvent,
   linkRunToSubmittedLink,
   persistReelAnalyticsAttemptArtifacts,
   revokeSession,
@@ -68,6 +67,20 @@ import { runDatabaseMigrations } from "./db/migrations";
 import { registerStrollRoutes } from "./stroll/routes";
 import { strollCurationJobStore } from "./stroll/jobStore";
 import { listReadyHeroStrollCandidates, type ReadyHeroStrollCandidate } from "./stroll/store";
+import { recordUserPlaceInteraction } from "./stroll/informationFoundation";
+import {
+  bestEffortObservability,
+  buildRequestId,
+  completeOperationRun,
+  createOperationRun,
+  isAllowedProductEventType,
+  recordFailureEvent,
+  recordLocationContext,
+  recordProductEvent,
+  type LocationContextSource,
+  type LocationPermissionStatus,
+  type ProductEventOutcome,
+} from "./observability/store";
 
 const app = express();
 const googleIdTokenClient = new OAuth2Client();
@@ -234,7 +247,7 @@ app.use((req, res, next) => {
       ? requestOrigin
       : allowedOrigins[0] || clientOrigin;
   res.header("Access-Control-Allow-Origin", resolvedOrigin);
-  res.header("Access-Control-Allow-Headers", "Content-Type");
+  res.header("Access-Control-Allow-Headers", "Content-Type, X-Request-ID, X-Correlation-ID, X-Client-Platform, X-App-Version");
   res.header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS");
   res.header("Access-Control-Allow-Credentials", "true");
   res.header("Vary", "Origin");
@@ -244,6 +257,17 @@ app.use((req, res, next) => {
   next();
 });
 app.use(express.json({ limit: "1mb" }));
+app.use((req, res, next) => {
+  const requestId = String(req.headers["x-request-id"] || "").trim() || buildRequestId("api");
+  const correlationId = String(req.headers["x-correlation-id"] || "").trim() || requestId;
+  (req as express.Request & { observability?: { requestId: string; correlationId: string; startedAt: number } }).observability = {
+    requestId,
+    correlationId,
+    startedAt: Date.now(),
+  };
+  res.header("X-Request-ID", requestId);
+  next();
+});
 
 type MetadataExtractionRouteName = "stream" | "non_stream" | "stream_test";
 type TrustedEntityEditField = "title" | "category" | "subtitle" | "placeId" | "finalPlaceId" | "lat" | "lng";
@@ -1294,6 +1318,73 @@ if (isPostgresConfigured() && process.env.NODE_ENV !== "test") {
     });
 }
 
+function getRequestObservability(req: express.Request) {
+  return (req as express.Request & { observability?: { requestId: string; correlationId: string; startedAt: number } }).observability;
+}
+
+function getAuthSessionId(req: express.Request) {
+  const user = (req as express.Request & { authUser?: { sessionId?: string | null } }).authUser;
+  return user?.sessionId ?? null;
+}
+
+function getAuthUserId(req: express.Request) {
+  const user = (req as express.Request & { authUser?: { userId?: string | null } }).authUser;
+  return user?.userId ?? null;
+}
+
+function getClientSessionHints(req: express.Request) {
+  return {
+    clientPlatform: String(req.headers["x-client-platform"] || "").trim() || null,
+    appVersion: String(req.headers["x-app-version"] || "").trim() || null,
+    deviceMetadata: {
+      userAgentFamily: String(req.headers["user-agent"] || "").slice(0, 80),
+    },
+  };
+}
+
+function elapsedFromRequest(req: express.Request) {
+  const startedAt = getRequestObservability(req)?.startedAt ?? Date.now();
+  return getElapsedMs(startedAt);
+}
+
+async function recordRequestFailure(req: express.Request, input: {
+  scope: "customer" | "system" | "provider" | "background_job" | "financial";
+  severity?: "info" | "warning" | "error" | "critical";
+  errorCode: string;
+  errorCategory?: string | null;
+  publicMessage?: string | null;
+  internalMessage?: string | null;
+  httpStatus?: number | null;
+  operationRunId?: string | null;
+  entityType?: string | null;
+  entityId?: string | null;
+  retryable?: boolean | null;
+  attemptNumber?: number | null;
+  metadata?: Record<string, unknown> | null;
+}) {
+  if (!isPostgresConfigured()) return;
+  const obs = getRequestObservability(req);
+  await recordFailureEvent(getPostgresDatabase(), {
+    scope: input.scope,
+    severity: input.severity ?? "error",
+    errorCode: input.errorCode,
+    errorCategory: input.errorCategory,
+    userId: getAuthUserId(req),
+    sessionId: getAuthSessionId(req),
+    requestId: obs?.requestId ?? null,
+    correlationId: obs?.correlationId ?? null,
+    operationRunId: input.operationRunId,
+    entityType: input.entityType,
+    entityId: input.entityId,
+    httpStatus: input.httpStatus,
+    publicMessage: input.publicMessage,
+    internalMessage: input.internalMessage,
+    retryable: input.retryable,
+    attemptNumber: input.attemptNumber,
+    metadata: input.metadata,
+  });
+}
+
 registerStrollRoutes(app, { requireAuth });
 
 app.get("/health", (_req, res) => {
@@ -1475,12 +1566,43 @@ app.get("/api/location/resolve-place", async (req, res) => {
 
 app.post("/api/metadata/extract", optionalAuth, async (req, res) => {
   const { url, mode, debug, attemptNumber, triggerType, clientRunId } = parseExtractionRequest(req);
+  const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+  const requestObs = getRequestObservability(req);
+  let operationRunId: string | null = null;
   try {
     if (!url) {
       return res.status(400).json({ ok: false, error: "url is required" });
     }
-    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
     const canonicalUrl = canonicalizeUrl(url);
+    operationRunId = await createOperationRun(getPostgresDatabase(), {
+      operationType: "add_extraction",
+      userId: authUser?.userId ?? null,
+      sessionId: getAuthSessionId(req),
+      requestId: requestObs?.requestId ?? null,
+      correlationId: clientRunId ?? requestObs?.correlationId ?? null,
+      entityType: "submitted_link",
+      entityId: buildMetadataUrlHash(canonicalUrl),
+      attemptCount: attemptNumber,
+      inputSummary: {
+        route: "non_stream",
+        mode,
+        triggerType,
+        urlHash: buildMetadataUrlHash(canonicalUrl),
+      },
+    }).catch(() => null);
+    await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+      eventType: "extraction_started",
+      userId: authUser?.userId ?? null,
+      sessionId: getAuthSessionId(req),
+      anonymousId: req.body?.analytics?.anonymousId ? String(req.body.analytics.anonymousId).trim() : null,
+      requestId: requestObs?.requestId ?? null,
+      operationRunId,
+      entityType: "submitted_link",
+      entityId: buildMetadataUrlHash(canonicalUrl),
+      sourceSurface: "add",
+      outcome: "started",
+      metadata: { route: "non_stream", mode, attemptNumber, triggerType },
+    }));
     const duplicateReuse = await resolveMetadataDuplicateReuse({
       canonicalUrl,
       userId: authUser?.userId ?? null,
@@ -1494,6 +1616,28 @@ app.post("/api/metadata/extract", optionalAuth, async (req, res) => {
         duplicate: duplicateReuse.duplicate,
       });
       await persistMetadataExtractionArtifacts(req, duplicateReuse.result);
+      const completedOperationRunId = operationRunId;
+      if (completedOperationRunId) {
+        await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
+          operationRunId: completedOperationRunId,
+          status: "succeeded",
+          outputSummary: { reused: true, duplicateKind: duplicateReuse.duplicate.kind },
+        }));
+      }
+      await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+        eventType: "extraction_succeeded",
+        userId: authUser?.userId ?? null,
+        sessionId: getAuthSessionId(req),
+        anonymousId: req.body?.analytics?.anonymousId ? String(req.body.analytics.anonymousId).trim() : null,
+        requestId: requestObs?.requestId ?? null,
+        operationRunId,
+        entityType: "submitted_link",
+        entityId: buildMetadataUrlHash(canonicalUrl),
+        sourceSurface: "add",
+        outcome: "succeeded",
+        durationMs: elapsedFromRequest(req),
+        metadata: { reused: true },
+      }));
       if (featureFlags.extractionV2) {
         return res.json(withMetadataDuplicate({ ok: true, ...duplicateReuse.result }, duplicateReuse.duplicate));
       }
@@ -1521,6 +1665,31 @@ app.post("/api/metadata/extract", optionalAuth, async (req, res) => {
     if (execution.isPrimary) {
       await persistMetadataExtractionArtifacts(req, result);
     }
+    const completedOperationRunId = operationRunId;
+    if (completedOperationRunId) {
+      await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
+        operationRunId: completedOperationRunId,
+        status: "succeeded",
+        outputSummary: {
+          reused: false,
+          totalMs: result.perf?.totalMs ?? result.sla?.totalMs ?? null,
+        },
+      }));
+    }
+    await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+      eventType: "extraction_succeeded",
+      userId: authUser?.userId ?? null,
+      sessionId: getAuthSessionId(req),
+      anonymousId: req.body?.analytics?.anonymousId ? String(req.body.analytics.anonymousId).trim() : null,
+      requestId: requestObs?.requestId ?? null,
+      operationRunId,
+      entityType: "submitted_link",
+      entityId: buildMetadataUrlHash(canonicalUrl),
+      sourceSurface: "add",
+      outcome: "succeeded",
+      durationMs: elapsedFromRequest(req),
+      metadata: { reused: false, attemptNumber, triggerType },
+    }));
     if (featureFlags.extractionV2) {
       return res.json({ ok: true, ...result });
     }
@@ -1546,6 +1715,38 @@ app.post("/api/metadata/extract", optionalAuth, async (req, res) => {
       debug,
     };
     console.error("[metadata-extract-error]", diagnostics);
+    const failedOperationRunId = operationRunId;
+    if (failedOperationRunId) {
+      await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
+        operationRunId: failedOperationRunId,
+        status: "failed",
+        outputSummary: { errorName, errorCode: "extraction_failed" },
+      }));
+    }
+    await bestEffortObservability(() => recordRequestFailure(req, {
+      scope: "customer",
+      errorCode: "extraction_failed",
+      errorCategory: "add_extraction",
+      publicMessage: "extraction failed",
+      internalMessage: message,
+      httpStatus: 500,
+      operationRunId,
+      retryable: true,
+      attemptNumber,
+      metadata: { route: "non_stream", mode, triggerType, urlHash: url ? buildMetadataUrlHash(url) : null },
+    }));
+    await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+      eventType: "extraction_failed",
+      userId: authUser?.userId ?? null,
+      sessionId: getAuthSessionId(req),
+      anonymousId: req.body?.analytics?.anonymousId ? String(req.body.analytics.anonymousId).trim() : null,
+      requestId: requestObs?.requestId ?? null,
+      operationRunId,
+      sourceSurface: "add",
+      outcome: "failed",
+      durationMs: elapsedFromRequest(req),
+      metadata: { errorCode: "extraction_failed", attemptNumber, triggerType },
+    }));
     return res.status(500).json({
       ok: false,
       ...diagnostics,
@@ -1712,6 +1913,34 @@ app.post("/api/metadata/extract/stream", optionalAuth, async (req, res) => {
   }
 
   const startedAt = Date.now();
+  const requestObs = getRequestObservability(req);
+  const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+  const canonicalUrl = canonicalizeUrl(url);
+  const urlHash = buildMetadataUrlHash(canonicalUrl);
+  let operationRunId: string | null = await createOperationRun(getPostgresDatabase(), {
+    operationType: "add_extraction",
+    userId: authUser?.userId ?? null,
+    sessionId: getAuthSessionId(req),
+    requestId: requestObs?.requestId ?? null,
+    correlationId: clientRunId ?? requestObs?.correlationId ?? null,
+    entityType: "submitted_link",
+    entityId: urlHash,
+    attemptCount: attemptNumber,
+    inputSummary: { route: "stream", mode, triggerType, urlHash },
+  }).catch(() => null);
+  await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+    eventType: "extraction_started",
+    userId: authUser?.userId ?? null,
+    sessionId: getAuthSessionId(req),
+    anonymousId: req.body?.analytics?.anonymousId ? String(req.body.analytics.anonymousId).trim() : null,
+    requestId: requestObs?.requestId ?? null,
+    operationRunId,
+    entityType: "submitted_link",
+    entityId: urlHash,
+    sourceSurface: "add",
+    outcome: "started",
+    metadata: { route: "stream", mode, attemptNumber, triggerType },
+  }));
   const sse = setupSse(res, req, "metadata_extract_stream");
   console.info("[sse] client connected", { label: "metadata_extract_stream", url, mode, attemptNumber, triggerType });
   const seenStages = new Set<string>();
@@ -1751,14 +1980,33 @@ app.post("/api/metadata/extract/stream", optionalAuth, async (req, res) => {
   }, 12000);
 
   try {
-    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
-    const canonicalUrl = canonicalizeUrl(url);
     const duplicateReuse = await resolveMetadataDuplicateReuse({
       canonicalUrl,
       userId: authUser?.userId ?? null,
       anonymousId: req.body?.analytics?.anonymousId ? String(req.body.analytics.anonymousId).trim() : null,
     });
     if (duplicateReuse) {
+      if (operationRunId) {
+        await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
+          operationRunId,
+          status: "succeeded",
+          outputSummary: { reused: true, duplicateKind: duplicateReuse.duplicate.kind },
+        }));
+      }
+      await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+        eventType: "extraction_succeeded",
+        userId: authUser?.userId ?? null,
+        sessionId: getAuthSessionId(req),
+        anonymousId: req.body?.analytics?.anonymousId ? String(req.body.analytics.anonymousId).trim() : null,
+        requestId: requestObs?.requestId ?? null,
+        operationRunId,
+        entityType: "submitted_link",
+        entityId: urlHash,
+        sourceSurface: "add",
+        outcome: "succeeded",
+        durationMs: getElapsedMs(startedAt),
+        metadata: { reused: true, route: "stream" },
+      }));
       writeProgressEvent("completed", {
         stage: "completed",
         message: "Extraction reused from cached analysis.",
@@ -1830,6 +2078,31 @@ app.post("/api/metadata/extract/stream", optionalAuth, async (req, res) => {
       attemptNumber,
       result: { ok: true, ...result },
     });
+    const completedStreamOperationRunId = operationRunId;
+    if (completedStreamOperationRunId) {
+      await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
+        operationRunId: completedStreamOperationRunId,
+        status: "succeeded",
+        outputSummary: {
+          reused: false,
+          totalMs: result.perf?.totalMs ?? result.sla?.totalMs ?? null,
+        },
+      }));
+    }
+    await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+      eventType: "extraction_succeeded",
+      userId: authUser?.userId ?? null,
+      sessionId: getAuthSessionId(req),
+      anonymousId: req.body?.analytics?.anonymousId ? String(req.body.analytics.anonymousId).trim() : null,
+      requestId: requestObs?.requestId ?? null,
+      operationRunId,
+      entityType: "submitted_link",
+      entityId: urlHash,
+      sourceSurface: "add",
+      outcome: "succeeded",
+      durationMs: getElapsedMs(startedAt),
+      metadata: { reused: false, route: "stream", attemptNumber, triggerType },
+    }));
     sse.end();
     if (execution.isPrimary) {
       void persistMetadataExtractionArtifacts(req, result);
@@ -1856,6 +2129,40 @@ app.post("/api/metadata/extract/stream", optionalAuth, async (req, res) => {
     };
     console.error("[sse] error", { label: "metadata_extract_stream", diagnostics });
     console.error("[metadata-extract-error]", diagnostics);
+    const failedStreamOperationRunId = operationRunId;
+    if (failedStreamOperationRunId) {
+      await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
+        operationRunId: failedStreamOperationRunId,
+        status: "failed",
+        outputSummary: { errorName, errorCode: "extraction_failed" },
+      }));
+    }
+    await bestEffortObservability(() => recordRequestFailure(req, {
+      scope: "customer",
+      errorCode: "extraction_failed",
+      errorCategory: "add_extraction",
+      publicMessage: "extraction failed",
+      internalMessage: message,
+      httpStatus: 500,
+      operationRunId,
+      retryable: true,
+      attemptNumber,
+      metadata: { route: "stream", mode, triggerType, urlHash },
+    }));
+    await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+      eventType: "extraction_failed",
+      userId: authUser?.userId ?? null,
+      sessionId: getAuthSessionId(req),
+      anonymousId: req.body?.analytics?.anonymousId ? String(req.body.analytics.anonymousId).trim() : null,
+      requestId: requestObs?.requestId ?? null,
+      operationRunId,
+      entityType: "submitted_link",
+      entityId: urlHash,
+      sourceSurface: "add",
+      outcome: "failed",
+      durationMs: getElapsedMs(startedAt),
+      metadata: { errorCode: "extraction_failed", route: "stream", attemptNumber, triggerType },
+    }));
     writeProgressEvent("failed", {
       stage: "failed",
       message,
@@ -2651,30 +2958,37 @@ app.post("/api/analytics/app-event", optionalAuth, async (req, res) => {
       return res.status(204).end();
     }
     const eventType = String(req.body?.eventType || "").trim();
-    const allowedEventTypes = new Set([
-      "app_opened",
-      "login_seen",
-      "coin_onboarding_viewed",
-      "coin_onboarding_explore_discover_clicked",
-      "coin_onboarding_add_place_clicked",
-      "coin_onboarding_dismissed",
-      "coin_help_opened",
-      "impact_opened",
-      "impact_top_place_clicked",
-      "impact_month_changed",
-      "impact_empty_cta_clicked",
-    ]);
-    if (!allowedEventTypes.has(eventType)) {
+    if (!isAllowedProductEventType(eventType)) {
       return res.status(400).json({ ok: false, error: "Invalid event_type" });
     }
     const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
     const anonymousId = req.body?.anonymousId ? String(req.body.anonymousId).trim() : null;
+    const outcomeRaw = String(req.body?.outcome || "").trim();
+    const outcome: ProductEventOutcome | null =
+      outcomeRaw === "started" ||
+      outcomeRaw === "succeeded" ||
+      outcomeRaw === "failed" ||
+      outcomeRaw === "cancelled" ||
+      outcomeRaw === "viewed"
+        ? outcomeRaw
+        : null;
+    const obs = getRequestObservability(req);
     try {
-      await recordAppUsageEvent({
-        eventType: eventType as Parameters<typeof recordAppUsageEvent>[0]["eventType"],
+      await recordProductEvent(getPostgresDatabase(), {
+        eventType,
         userId: authUser?.userId ?? null,
+        sessionId: getAuthSessionId(req),
         anonymousId,
-        metadataJson: null,
+        requestId: typeof req.body?.requestId === "string" ? req.body.requestId : obs?.requestId ?? null,
+        operationRunId: typeof req.body?.operationRunId === "string" ? req.body.operationRunId : null,
+        entityType: typeof req.body?.entityType === "string" ? req.body.entityType : null,
+        entityId: typeof req.body?.entityId === "string" ? req.body.entityId : null,
+        routeName: typeof req.body?.routeName === "string" ? req.body.routeName : null,
+        sourceSurface: typeof req.body?.sourceSurface === "string" ? req.body.sourceSurface : null,
+        outcome,
+        durationMs: Number.isSafeInteger(Number(req.body?.durationMs)) ? Number(req.body.durationMs) : null,
+        locationContextId: typeof req.body?.locationContextId === "string" ? req.body.locationContextId : null,
+        metadata: req.body?.metadata && typeof req.body.metadata === "object" ? req.body.metadata : null,
       });
       return res.status(200).json({ ok: true, recorded: true });
     } catch (recordError) {
@@ -2723,6 +3037,14 @@ app.post("/api/auth/profile/upsert", (_req, res) => {
 });
 
 app.post("/api/auth/google/verify", async (req, res) => {
+  const requestObs = getRequestObservability(req);
+  await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+    eventType: "login_started",
+    anonymousId: req.body?.anonymousId ? String(req.body.anonymousId) : null,
+    requestId: requestObs?.requestId ?? null,
+    sourceSurface: "google",
+    outcome: "started",
+  }));
   try {
     if (!isPostgresConfigured()) {
       return res.status(503).json({ ok: false, error: "Auth database is not configured." });
@@ -2745,14 +3067,39 @@ app.post("/api/auth/google/verify", async (req, res) => {
       avatarUrl: googleProfile.avatarUrl,
       providerId: googleProfile.providerId,
     });
-    const session = await createSession(user.userId);
+    const session = await createSession(user.userId, getClientSessionHints(req));
     res.setHeader("Set-Cookie", buildSessionCookie(session.rawToken));
+    await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+      eventType: "login_succeeded",
+      userId: user.userId,
+      sessionId: session.sessionId,
+      requestId: requestObs?.requestId ?? null,
+      sourceSurface: "google",
+      outcome: "succeeded",
+      durationMs: elapsedFromRequest(req),
+    }));
 
     return res.json({
       ok: true,
       user,
     });
   } catch (error) {
+    await bestEffortObservability(() => recordRequestFailure(req, {
+      scope: "customer",
+      errorCode: "login_failed",
+      errorCategory: "auth",
+      publicMessage: error instanceof PublicAuthError ? error.message : "Google authentication failed.",
+      internalMessage: error instanceof Error ? error.message : String(error),
+      httpStatus: error instanceof PublicAuthError ? error.status : 500,
+    }));
+    await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+      eventType: "login_failed",
+      anonymousId: req.body?.anonymousId ? String(req.body.anonymousId) : null,
+      requestId: requestObs?.requestId ?? null,
+      sourceSurface: "google",
+      outcome: "failed",
+      durationMs: elapsedFromRequest(req),
+    }));
     if (error instanceof PublicAuthError) {
       return res.status(error.status).json({ ok: false, error: error.message });
     }
@@ -2777,6 +3124,14 @@ app.post("/api/auth/email/request-otp", async (req, res) => {
 });
 
 app.post("/api/auth/email/verify-otp", async (req, res) => {
+  const requestObs = getRequestObservability(req);
+  await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+    eventType: "login_started",
+    anonymousId: req.body?.anonymousId ? String(req.body.anonymousId) : null,
+    requestId: requestObs?.requestId ?? null,
+    sourceSurface: "email",
+    outcome: "started",
+  }));
   try {
     if (!isPostgresConfigured()) {
       return res.status(503).json({ ok: false, error: "Auth database is not configured." });
@@ -2786,10 +3141,35 @@ app.post("/api/auth/email/verify-otp", async (req, res) => {
     const displayName = req.body?.displayName ? String(req.body.displayName).trim() : null;
     await verifyEmailOtp(email, otp);
     const user = await createOrReuseEmailVerifiedUser({ email, displayName });
-    const session = await createSession(user.userId);
+    const session = await createSession(user.userId, getClientSessionHints(req));
     res.setHeader("Set-Cookie", buildSessionCookie(session.rawToken));
+    await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+      eventType: "login_succeeded",
+      userId: user.userId,
+      sessionId: session.sessionId,
+      requestId: requestObs?.requestId ?? null,
+      sourceSurface: "email",
+      outcome: "succeeded",
+      durationMs: elapsedFromRequest(req),
+    }));
     return res.json({ ok: true, user, requiresDisplayName: !user.displayName });
   } catch (error) {
+    await bestEffortObservability(() => recordRequestFailure(req, {
+      scope: "customer",
+      errorCode: "login_failed",
+      errorCategory: "auth",
+      publicMessage: "Could not verify email OTP",
+      internalMessage: error instanceof Error ? error.message : String(error),
+      httpStatus: 400,
+    }));
+    await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+      eventType: "login_failed",
+      anonymousId: req.body?.anonymousId ? String(req.body.anonymousId) : null,
+      requestId: requestObs?.requestId ?? null,
+      sourceSurface: "email",
+      outcome: "failed",
+      durationMs: elapsedFromRequest(req),
+    }));
     const message = error instanceof Error ? error.message : "Could not verify email OTP";
     return res.status(400).json({ ok: false, error: message });
   }
@@ -2817,9 +3197,18 @@ app.post("/api/auth/logout", async (req, res) => {
   try {
     const cookies = parseCookies(req.headers.cookie);
     const token = cookies[getSessionCookieName()];
+    const user = token ? await findSessionUser(token).catch(() => null) : null;
     if (token) {
       await revokeSession(token);
     }
+    await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+      eventType: "logout",
+      userId: user?.userId ?? null,
+      sessionId: user?.sessionId ?? null,
+      requestId: getRequestObservability(req)?.requestId ?? null,
+      outcome: "succeeded",
+      durationMs: elapsedFromRequest(req),
+    }));
     res.setHeader("Set-Cookie", buildClearSessionCookie());
     return res.json({ ok: true });
   } catch (error) {
@@ -2842,6 +3231,15 @@ app.get("/api/saved-places", requireAuth, async (req, res) => {
 app.get("/api/economy/ledger", requireAuth, async (req, res) => {
   try {
     const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+    await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+      eventType: "wallet_opened",
+      userId: authUser!.userId,
+      sessionId: getAuthSessionId(req),
+      requestId: getRequestObservability(req)?.requestId ?? null,
+      routeName: "wallet",
+      sourceSurface: "profile",
+      outcome: "viewed",
+    }));
     const readQueryParam = (name: string) => {
       const value = req.query?.[name];
       return typeof value === "string" ? value : undefined;
@@ -2884,6 +3282,55 @@ app.get("/api/economy/ledger", requireAuth, async (req, res) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not fetch coin ledger";
+    return res.status(400).json({ ok: false, error: message });
+  }
+});
+
+app.post("/api/observability/location-context", requireAuth, async (req, res) => {
+  try {
+    if (!isPostgresConfigured()) {
+      return res.status(204).end();
+    }
+    const source = String(req.body?.source || "").trim() as LocationContextSource;
+    const supportedSources = new Set<LocationContextSource>(["device", "manual_city", "map_selection", "stroll_start", "ip_approximate"]);
+    if (!supportedSources.has(source)) {
+      return res.status(400).json({ ok: false, error: "Invalid location source" });
+    }
+    const permissionRaw = String(req.body?.permissionStatus || "unknown").trim() as LocationPermissionStatus;
+    const permissionStatus: LocationPermissionStatus =
+      permissionRaw === "granted" ||
+      permissionRaw === "denied" ||
+      permissionRaw === "prompt" ||
+      permissionRaw === "unavailable"
+        ? permissionRaw
+        : "unknown";
+    const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
+    const latitude = Number(req.body?.latitude);
+    const longitude = Number(req.body?.longitude);
+    const hasCoordinates = Number.isFinite(latitude) && Number.isFinite(longitude);
+    const locationContextId = await recordLocationContext(getPostgresDatabase(), {
+      userId: authUser?.userId ?? null,
+      sessionId: getAuthSessionId(req),
+      source,
+      latitude: hasCoordinates ? latitude : null,
+      longitude: hasCoordinates ? longitude : null,
+      accuracyMeters: Number.isSafeInteger(Number(req.body?.accuracyMeters)) ? Number(req.body.accuracyMeters) : null,
+      city: typeof req.body?.city === "string" ? req.body.city : null,
+      locality: typeof req.body?.locality === "string" ? req.body.locality : null,
+      permissionStatus,
+      consentSource: typeof req.body?.consentSource === "string" ? req.body.consentSource : "explicit_feature_action",
+    });
+    return res.status(201).json({ ok: true, locationContextId });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not record location context";
+    await bestEffortObservability(() => recordRequestFailure(req, {
+      scope: "customer",
+      errorCode: "location_context_record_failed",
+      errorCategory: "observability",
+      publicMessage: "Could not record location context",
+      internalMessage: message,
+      httpStatus: 400,
+    }));
     return res.status(400).json({ ok: false, error: message });
   }
 });
@@ -2940,6 +3387,8 @@ app.get("/api/hero-card", requireAuth, async (req, res) => {
 });
 
 app.post("/api/saved-places", requireAuth, async (req, res) => {
+  const requestObs = getRequestObservability(req);
+  let saveOperationRunId: string | null = null;
   try {
     const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
     const placeId = resolveSavedPlaceIdFromRequest(req);
@@ -2950,6 +3399,34 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
     const coinSource: CoinSaveSource | null =
       coinSourceRaw === "external_import" || coinSourceRaw === "discover" ? coinSourceRaw : null;
     const idempotencyKey = String(req.body?.idempotencyKey || "").trim();
+    if (isPostgresConfigured()) {
+      saveOperationRunId = await createOperationRun(getPostgresDatabase(), {
+        operationType: "place_save",
+        userId: authUser!.userId,
+        sessionId: getAuthSessionId(req),
+        requestId: requestObs?.requestId ?? null,
+        correlationId: requestObs?.correlationId ?? null,
+        entityType: "place",
+        entityId: placeId,
+        idempotencyKey: idempotencyKey || `save:${authUser!.userId}:${placeId}`,
+        inputSummary: {
+          source: coinSource ?? "direct",
+          category,
+          hasMetadata: Boolean(metadata && typeof metadata === "object" && Object.keys(metadata).length),
+        },
+      }).catch(() => null);
+      await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+        eventType: "place_save_started",
+        userId: authUser!.userId,
+        sessionId: getAuthSessionId(req),
+        requestId: requestObs?.requestId ?? null,
+        operationRunId: saveOperationRunId,
+        entityType: "place",
+        entityId: placeId,
+        sourceSurface: coinSource ?? "direct",
+        outcome: "started",
+      }));
+    }
     const existing = await findSavedPlaceByUserAndPlaceId(authUser!.userId, placeId);
     if (existing) {
       const duplicate: SavedPlaceDuplicateInfo = {
@@ -2959,6 +3436,14 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
         existingSavedPlaceId: existing.id,
       };
       const ledger = await getCoinLedger(getPostgresDatabase(), authUser!.userId, { limit: 5 });
+      const completedSaveOperationRunId = saveOperationRunId;
+      if (completedSaveOperationRunId) {
+        await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
+          operationRunId: completedSaveOperationRunId,
+          status: "succeeded",
+          outputSummary: { alreadySaved: true },
+        }));
+      }
       return res.json({ ok: true, alreadySaved: true, duplicate, item: existing, coin: { wallet: ledger.wallet } });
     }
 
@@ -2971,6 +3456,26 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
       });
       invalidateCoinImpactCache(authUser!.userId);
       const ledger = await getCoinLedger(getPostgresDatabase(), authUser!.userId, { limit: 5 });
+      const completedSaveOperationRunId = saveOperationRunId;
+      if (completedSaveOperationRunId) {
+        await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
+          operationRunId: completedSaveOperationRunId,
+          status: "succeeded",
+          outputSummary: { alreadySaved: saveResult.alreadySaved, charged: false },
+        }));
+        await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+          eventType: "place_save_succeeded",
+          userId: authUser!.userId,
+          sessionId: getAuthSessionId(req),
+          requestId: requestObs?.requestId ?? null,
+          operationRunId: completedSaveOperationRunId,
+          entityType: "place",
+          entityId: placeId,
+          sourceSurface: "direct",
+          outcome: "succeeded",
+          durationMs: elapsedFromRequest(req),
+        }));
+      }
       return res.status(201).json({ ok: true, alreadySaved: saveResult.alreadySaved, item: saveResult.item, coin: { wallet: ledger.wallet } });
     }
 
@@ -2986,16 +3491,52 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
         source: coinSource,
       },
       commitWithCharge: async (client) => {
-        await client.query(
+        const inserted = await client.query<{ id: string }>(
           `
             insert into user_saved_places (id, user_id, place_id, title, category, metadata_json, created_at, updated_at)
             values (gen_random_uuid(), $1, $2, $3, $4, $5::jsonb, now(), now())
+            returning id
           `,
           [authUser!.userId, placeId, title, category, JSON.stringify(metadata)],
         );
+        await recordUserPlaceInteraction(client, {
+          userId: authUser!.userId,
+          canonicalPlaceId: null,
+          savedPlaceId: inserted.rows[0]?.id ?? null,
+          legacyPlaceId: placeId,
+          interactionType: "saved",
+          interactionSource: coinSource,
+          metadata: { title, category },
+        });
       },
     });
     const saved = await findSavedPlaceByUserAndPlaceId(authUser!.userId, placeId);
+    const completedSaveOperationRunId = saveOperationRunId;
+    if (completedSaveOperationRunId) {
+      await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
+        operationRunId: completedSaveOperationRunId,
+        status: "succeeded",
+        outputSummary: {
+          charged: true,
+          source: coinSource,
+          saveEventId: chargeResult.saveEvent.id,
+          walletBalanceMillis: chargeResult.wallet.balanceMillis,
+        },
+      }));
+      await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+        eventType: "place_save_succeeded",
+        userId: authUser!.userId,
+        sessionId: getAuthSessionId(req),
+        requestId: requestObs?.requestId ?? null,
+        operationRunId: completedSaveOperationRunId,
+        entityType: "place",
+        entityId: placeId,
+        sourceSurface: coinSource,
+        outcome: "succeeded",
+        durationMs: elapsedFromRequest(req),
+        metadata: { saveEventId: chargeResult.saveEvent.id },
+      }));
+    }
     return res.status(201).json({
       ok: true,
       alreadySaved: false,
@@ -3007,12 +3548,67 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
     });
   } catch (error) {
     if (error instanceof Error && error.message === "INSUFFICIENT_COINS") {
+      const failedSaveOperationRunId = saveOperationRunId;
+      if (failedSaveOperationRunId) {
+        await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
+          operationRunId: failedSaveOperationRunId,
+          status: "failed",
+          outputSummary: { errorCode: "insufficient_coins" },
+        }));
+      }
+      await bestEffortObservability(() => recordRequestFailure(req, {
+        scope: "financial",
+        errorCode: "insufficient_coins",
+        errorCategory: "wallet",
+        publicMessage: "Not enough coins. Recommend useful places to earn community rewards.",
+        internalMessage: "INSUFFICIENT_COINS",
+        httpStatus: 402,
+        operationRunId: failedSaveOperationRunId,
+        retryable: false,
+      }));
+      await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+        eventType: "place_save_failed",
+        userId: getAuthUserId(req),
+        sessionId: getAuthSessionId(req),
+        requestId: requestObs?.requestId ?? null,
+        operationRunId: failedSaveOperationRunId,
+        outcome: "failed",
+        durationMs: elapsedFromRequest(req),
+        metadata: { errorCode: "insufficient_coins" },
+      }));
       return res.status(402).json({
         ok: false,
         error: "Not enough coins. Recommend useful places to earn community rewards.",
       });
     }
     const message = error instanceof Error ? error.message : "Could not save place";
+    const failedSaveOperationRunId = saveOperationRunId;
+    if (failedSaveOperationRunId) {
+      await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
+        operationRunId: failedSaveOperationRunId,
+        status: "failed",
+        outputSummary: { errorCode: "place_save_failed" },
+      }));
+    }
+    await bestEffortObservability(() => recordRequestFailure(req, {
+      scope: "customer",
+      errorCode: "place_save_failed",
+      errorCategory: "saved_place",
+      publicMessage: "Could not save place",
+      internalMessage: message,
+      httpStatus: 400,
+      operationRunId: failedSaveOperationRunId,
+    }));
+    await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+      eventType: "place_save_failed",
+      userId: getAuthUserId(req),
+      sessionId: getAuthSessionId(req),
+      requestId: requestObs?.requestId ?? null,
+      operationRunId: failedSaveOperationRunId,
+      outcome: "failed",
+      durationMs: elapsedFromRequest(req),
+      metadata: { errorCode: "place_save_failed" },
+    }));
     return res.status(400).json({ ok: false, error: message });
   }
 });

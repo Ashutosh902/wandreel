@@ -51,6 +51,51 @@ type Candidate = {
   };
 };
 
+export type StrollCandidateExclusionReason =
+  | "MISSING_COORDINATES"
+  | "WRONG_CITY"
+  | "DUPLICATE_PLACE"
+  | "GEOGRAPHIC_OUTLIER"
+  | "INSUFFICIENT_EVIDENCE"
+  | "EXPLICITLY_EXCLUDED"
+  | "ALREADY_SELECTED"
+  | "PLACE_UNAVAILABLE";
+
+export type DeterministicCandidateDecision = {
+  savedPlaceId: string;
+  legacyPlaceId: string;
+  title: string;
+  eligible: boolean;
+  exclusionReason: StrollCandidateExclusionReason | null;
+  deterministicScore: number | null;
+  candidateRank: number | null;
+  selected: boolean;
+  scoringFactors: {
+    interest: number;
+    category: number;
+    geography: number;
+    quality: number;
+    confidence: number;
+  } | null;
+  evidenceSummary: {
+    hasCoordinates: boolean;
+    hasDescription: boolean;
+    hasImage: boolean;
+    hasSource: boolean;
+    confidence: number | null;
+  };
+  sourceFreshness: {
+    savedAt: string | null;
+    updatedAt: string | null;
+    stale: boolean;
+  };
+};
+
+export type DeterministicCandidateAnalysis = {
+  version: string;
+  decisions: DeterministicCandidateDecision[];
+};
+
 export class StrollCurationPipelineError extends Error {
   code: string;
 
@@ -258,6 +303,134 @@ function buildCandidates(stroll: StrollSummary, savedPlaces: SavedPlaceForStroll
   }
 
   return candidates.sort(candidateSort);
+}
+
+function freshnessSummary(place: SavedPlaceForStrollCuration) {
+  const updatedAt = place.updatedAt ? Date.parse(place.updatedAt) : NaN;
+  const ageMs = Number.isFinite(updatedAt) ? Date.now() - updatedAt : null;
+  return {
+    savedAt: place.createdAt,
+    updatedAt: place.updatedAt,
+    stale: ageMs == null ? true : ageMs > 1000 * 60 * 60 * 24 * 180,
+  };
+}
+
+function evidenceSummary(metadata: Record<string, unknown>, place: SavedPlaceForStrollCuration) {
+  const confidence = confidenceScore(metadata);
+  return {
+    hasCoordinates: (metadataNumber(metadata, "lat") ?? metadataNumber(metadata, "latitude")) != null &&
+      (metadataNumber(metadata, "lng") ?? metadataNumber(metadata, "longitude")) != null,
+    hasDescription: Boolean(metadataString(metadata, "description") || metadataString(metadata, "latestDescription") || metadataString(metadata, "metaSecondary")),
+    hasImage: Boolean(metadataString(metadata, "imageUrl")),
+    hasSource: Boolean(metadataString(metadata, "sourceUrl") || metadataString(metadata, "videoUrl") || place.placeId),
+    confidence,
+  };
+}
+
+export function analyzeDeterministicStrollCandidates(
+  stroll: StrollSummary,
+  savedPlaces: SavedPlaceForStrollCuration[],
+  selectedPlaceIds: string[] = [],
+): DeterministicCandidateAnalysis {
+  const selectedSet = new Set(selectedPlaceIds.map((id) => id.trim()).filter(Boolean));
+  const origin = stroll.latitude != null && stroll.longitude != null
+    ? { latitude: stroll.latitude, longitude: stroll.longitude }
+    : null;
+  const seenPlaceIds = new Set<string>();
+  const eligibleCandidates: Candidate[] = [];
+  const decisions: DeterministicCandidateDecision[] = [];
+
+  for (const place of savedPlaces) {
+    const legacyPlaceId = place.placeId.trim();
+    const metadata = toRecord(place.metadata);
+    const baseEvidence = evidenceSummary(metadata, place);
+    const excluded = (reason: StrollCandidateExclusionReason): DeterministicCandidateDecision => ({
+      savedPlaceId: place.id,
+      legacyPlaceId,
+      title: place.title,
+      eligible: false,
+      exclusionReason: reason,
+      deterministicScore: null,
+      candidateRank: null,
+      selected: false,
+      scoringFactors: null,
+      evidenceSummary: baseEvidence,
+      sourceFreshness: freshnessSummary(place),
+    });
+
+    if (!legacyPlaceId || seenPlaceIds.has(legacyPlaceId)) {
+      decisions.push(excluded("DUPLICATE_PLACE"));
+      continue;
+    }
+    seenPlaceIds.add(legacyPlaceId);
+
+    const latitude = metadataNumber(metadata, "lat") ?? metadataNumber(metadata, "latitude");
+    const longitude = metadataNumber(metadata, "lng") ?? metadataNumber(metadata, "longitude");
+    if (latitude == null || longitude == null) {
+      decisions.push(excluded("MISSING_COORDINATES"));
+      continue;
+    }
+    if (!matchesRequestedCity(stroll.city, metadata)) {
+      decisions.push(excluded("WRONG_CITY"));
+      continue;
+    }
+
+    const baseCandidate = {
+      place,
+      metadata,
+      latitude,
+      longitude,
+      categoryKey: categoryKey(place.category, metadata),
+      citySignals: citySignals(metadata),
+    };
+    const scoreParts = {
+      interest: interestScore(stroll, baseCandidate),
+      category: categoryRelevance(baseCandidate),
+      geography: geographyScore(baseCandidate, origin),
+      quality: metadataQuality(metadata, place),
+      confidence: confidenceScore(metadata),
+    };
+    eligibleCandidates.push({
+      ...baseCandidate,
+      scoreParts,
+      score:
+        scoreParts.interest * 0.3 +
+        scoreParts.category * 0.18 +
+        scoreParts.geography * 0.2 +
+        scoreParts.quality * 0.2 +
+        scoreParts.confidence * 0.12,
+    });
+  }
+
+  eligibleCandidates.sort(candidateSort);
+  const ranks = new Map(eligibleCandidates.map((candidate, index) => [candidate.place.id, index + 1]));
+  for (const candidate of eligibleCandidates) {
+    decisions.push({
+      savedPlaceId: candidate.place.id,
+      legacyPlaceId: candidate.place.placeId,
+      title: candidate.place.title,
+      eligible: true,
+      exclusionReason: null,
+      deterministicScore: candidate.score,
+      candidateRank: ranks.get(candidate.place.id) ?? null,
+      selected: selectedSet.has(candidate.place.placeId),
+      scoringFactors: candidate.scoreParts,
+      evidenceSummary: evidenceSummary(candidate.metadata, candidate.place),
+      sourceFreshness: freshnessSummary(candidate.place),
+    });
+  }
+
+  decisions.sort((a, b) => {
+    if (a.candidateRank != null && b.candidateRank != null) return a.candidateRank - b.candidateRank;
+    if (a.candidateRank != null) return -1;
+    if (b.candidateRank != null) return 1;
+    return a.title.localeCompare(b.title) || a.legacyPlaceId.localeCompare(b.legacyPlaceId);
+  });
+
+  return {
+    version: STROLL_CURATION_VERSION,
+    decisions,
+  };
 }
 
 function isSingleTheme(stroll: StrollSummary) {

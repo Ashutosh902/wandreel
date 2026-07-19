@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { getPostgresDatabase, type PostgresDatabase } from "../auth/postgresAuth";
+import { getPostgresDatabase, isPostgresConfigured, type PostgresDatabase } from "../auth/postgresAuth";
 import {
   getStrollSummary,
   generatePersistedStrollStopsFromSavedPlaces,
@@ -11,6 +11,13 @@ import {
   enrichPersistedStrollStopDescriptions,
 } from "./store";
 import type { StrollStatus, StrollSummary } from "./types";
+import {
+  bestEffortObservability,
+  completeOperationRun,
+  createOperationRun,
+  recordFailureEvent,
+  recordProductEvent,
+} from "../observability/store";
 
 export type StrollCurationJobStatus = "queued" | "curating" | "ready" | "failed";
 
@@ -492,6 +499,19 @@ export class DurableStrollCurationJobStore {
     if (!claimed) return null;
 
     const heartbeat = this.startHeartbeat(jobId);
+    const operationRunId = isPostgresConfigured()
+      ? await createOperationRun(getPostgresDatabase(), {
+        operationType: "stroll_generation",
+        userId: claimed.user_id,
+        requestId: claimed.id,
+        correlationId: claimed.stroll_id,
+        entityType: "stroll",
+        entityId: claimed.stroll_id,
+        attemptCount: toNumber(claimed.attempt_count, 0) + 1,
+        idempotencyKey: `stroll-generation:${claimed.id}`,
+        inputSummary: { triggerMode: claimed.trigger_mode },
+      }).catch(() => null)
+      : null;
     try {
       await this.persistence.markCurating(claimed.user_id, claimed.stroll_id);
       const job = mapDurableJobRow({ ...claimed, status: "running" });
@@ -500,11 +520,63 @@ export class DurableStrollCurationJobStore {
       await this.persistence.validateReady(job.userId, job.strollId);
       const ready = await this.persistence.markReady(job.userId, job.strollId);
       await this.markJobSucceeded(jobId);
+      if (operationRunId) {
+        await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
+          operationRunId,
+          status: "succeeded",
+          outputSummary: { status: "ready" },
+        }));
+      }
+      await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+        eventType: "stroll_generation_succeeded",
+        userId: claimed.user_id,
+        requestId: claimed.id,
+        operationRunId,
+        entityType: "stroll",
+        entityId: claimed.stroll_id,
+        sourceSurface: "stroll",
+        outcome: "succeeded",
+      }));
       this.enrichStopsBestEffort(job);
       return ready;
     } catch (error) {
       const failure = failureFromError(error);
       await this.markJobFailed(jobId, failure.code, failure.message);
+      if (operationRunId) {
+        await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
+          operationRunId,
+          status: "failed",
+          outputSummary: { failureCode: failure.code },
+        }));
+      }
+      await bestEffortObservability(() => recordFailureEvent(getPostgresDatabase(), {
+        scope: "background_job",
+        severity: "error",
+        errorCode: failure.code,
+        errorCategory: "stroll_generation",
+        userId: claimed.user_id,
+        requestId: claimed.id,
+        correlationId: claimed.stroll_id,
+        operationRunId,
+        entityType: "stroll",
+        entityId: claimed.stroll_id,
+        publicMessage: "Failed to curate Stroll",
+        internalMessage: failure.message,
+        retryable: true,
+        attemptNumber: toNumber(claimed.attempt_count, 0) + 1,
+        metadata: { triggerMode: claimed.trigger_mode },
+      }));
+      await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
+        eventType: "stroll_generation_failed",
+        userId: claimed.user_id,
+        requestId: claimed.id,
+        operationRunId,
+        entityType: "stroll",
+        entityId: claimed.stroll_id,
+        sourceSurface: "stroll",
+        outcome: "failed",
+        metadata: { failureCode: failure.code },
+      }));
       return this.persistence.markFailed(claimed.user_id, claimed.stroll_id, failure.code, failure.message);
     } finally {
       heartbeat();
