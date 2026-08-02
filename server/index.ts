@@ -64,6 +64,7 @@ import type { IntelligencePipelineResult, StructuredEntity } from "./intelligenc
 import type { ExtractionResult } from "./extraction/types";
 import { canonicalizeUrl } from "./extraction/url";
 import { runDatabaseMigrations } from "./db/migrations";
+import { getDatabaseHealthReport } from "./db/health";
 import { registerStrollRoutes } from "./stroll/routes";
 import { strollCurationJobStore } from "./stroll/jobStore";
 import { listReadyHeroStrollCandidates, type ReadyHeroStrollCandidate } from "./stroll/store";
@@ -3754,6 +3755,19 @@ app.get("/api/admin/usage/overview", requireAdmin, async (req, res) => {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Could not fetch admin usage overview";
+    return res.status(400).json({ ok: false, error: message });
+  }
+});
+
+app.get("/api/internal/database-health", requireAdmin, async (_req, res) => {
+  try {
+    if (!isPostgresConfigured()) {
+      return res.status(503).json({ ok: false, error: "Postgres is not configured" });
+    }
+    const report = await getDatabaseHealthReport(getPostgresDatabase());
+    return res.json({ ok: true, ...report });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Could not fetch database health";
     return res.status(400).json({ ok: false, error: message });
   }
 });

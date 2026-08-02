@@ -122,7 +122,7 @@ test("loadDatabaseMigrations verifies the production migration manifest order", 
   const migrations = await loadDatabaseMigrations();
   const versions = migrations.map((migration) => migration.version);
 
-  assert.deepEqual(versions, ["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007"]);
+  assert.deepEqual(versions, ["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"]);
   assert.deepEqual(new Set(versions).size, versions.length);
   assert.ok(migrations.every((migration) => migration.sql.trim().length > 0));
 });
@@ -154,4 +154,17 @@ test("stroll information foundation migration creates required audit tables", as
   assert.match(migration.sql, /create table if not exists stroll_candidate_snapshots/i);
   assert.match(migration.sql, /add column if not exists canonical_place_id uuid references places\(id\)/i);
   assert.match(migration.sql, /prevent_stroll_snapshot_mutation/i);
+});
+
+test("database operational maturity migration adds retention fields and operational indexes", async () => {
+  const migrations = await loadDatabaseMigrations();
+  const migration = migrations.find((item) => item.version === "0008");
+  assert.ok(migration);
+
+  assert.match(migration.sql, /alter table if exists user_location_contexts\s+add column if not exists anonymized_at/i);
+  assert.match(migration.sql, /alter table if exists user_location_contexts\s+add column if not exists retention_class/i);
+  assert.match(migration.sql, /idx_auth_sessions_expires_created/i);
+  assert.match(migration.sql, /idx_operation_runs_running_started/i);
+  assert.match(migration.sql, /idx_failure_events_operation_run/i);
+  assert.match(migration.sql, /idx_stroll_curation_jobs_status_started/i);
 });

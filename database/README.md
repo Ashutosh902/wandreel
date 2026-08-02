@@ -9,6 +9,7 @@ Postgres schema changes use ordered SQL files in `database/migrations`.
 - Production startup applies migrations through `server/db/migrations.ts`; migrations are the live schema source of truth.
 - `server/auth/postgresAuth.ts#ensureAuthSchema()` remains as a legacy compatibility/test helper, but normal startup no longer uses it to create operational tables.
 - `0000_operational_baseline.sql` captures the previously runtime-owned operational auth, saved-place, observability, and reel job tables.
+- `0008_database_operational_maturity.sql` adds retention metadata, cleanup indexes, and the operational support needed by the health and cleanup tooling.
 - Applied migrations are recorded in `schema_migrations` with SHA-256 checksums.
 - The migration runner uses a Postgres advisory lock so only one process applies migrations at a time.
 - Existing rows without checksums are backfilled on first run; changed SQL for an already-checksummed migration fails fast and should be handled by a new forward-fix migration.
@@ -16,6 +17,12 @@ Postgres schema changes use ordered SQL files in `database/migrations`.
 - `database/schema_v1.sql` is retained as an older planning/reference contract, not the live production source of truth.
 
 Rollback default is code-only: leave already-applied additive tables/columns dormant and ship a forward-fix migration if needed. Destructive rollback, such as dropping tables or deleting `schema_migrations` rows, requires explicit approval.
+
+Operational tooling:
+
+- `npm run db:cleanup -- --dry-run`
+- `npm run db:health`
+- `npm run smoke:db-foundations`
 
 ## File
 
