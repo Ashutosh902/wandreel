@@ -69,6 +69,7 @@ import { registerStrollRoutes } from "./stroll/routes";
 import { strollCurationJobStore } from "./stroll/jobStore";
 import { listReadyHeroStrollCandidates, type ReadyHeroStrollCandidate } from "./stroll/store";
 import { recordUserPlaceInteraction } from "./stroll/informationFoundation";
+import { placeEnrichmentJobStore } from "./placeEnrichment/store";
 import {
   bestEffortObservability,
   buildRequestId,
@@ -1313,7 +1314,13 @@ async function requireAdmin(req: express.Request, res: express.Response, next: e
 
 if (isPostgresConfigured() && process.env.NODE_ENV !== "test") {
   runDatabaseMigrations()
-    .then(() => strollCurationJobStore.recoverStaleJobs())
+    .then(async () => {
+      await strollCurationJobStore.recoverStaleJobs();
+      await placeEnrichmentJobStore.recoverStaleJobs();
+      if (process.env.PLACE_ENRICHMENT_WORKER_DISABLED !== "1") {
+        placeEnrichmentJobStore.start();
+      }
+    })
     .catch((error) => {
       console.error("postgres migration bootstrap failed", error);
     });
@@ -3455,6 +3462,20 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
         category,
         metadata,
       });
+      const enrichmentJob = !saveResult.alreadySaved
+        ? await placeEnrichmentJobStore.triggerFromSavedPlace({
+            userId: authUser!.userId,
+            savedPlace: {
+              id: saveResult.item.id,
+              placeId: saveResult.item.placeId,
+              title: saveResult.item.title,
+              category: saveResult.item.category ?? null,
+              metadata: saveResult.item.metadata ?? {},
+              createdAt: saveResult.item.createdAt ?? null,
+              updatedAt: saveResult.item.updatedAt ?? null,
+            },
+          })
+        : null;
       invalidateCoinImpactCache(authUser!.userId);
       const ledger = await getCoinLedger(getPostgresDatabase(), authUser!.userId, { limit: 5 });
       const completedSaveOperationRunId = saveOperationRunId;
@@ -3477,7 +3498,19 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
           durationMs: elapsedFromRequest(req),
         }));
       }
-      return res.status(201).json({ ok: true, alreadySaved: saveResult.alreadySaved, item: saveResult.item, coin: { wallet: ledger.wallet } });
+      return res.status(201).json({
+        ok: true,
+        alreadySaved: saveResult.alreadySaved,
+        item: saveResult.item,
+        enrichmentJob: enrichmentJob?.job ?? null,
+        enrichmentReuse: enrichmentJob
+          ? {
+              reusedExisting: Boolean(enrichmentJob.reusedExisting),
+              reason: enrichmentJob.reuseReason ?? null,
+            }
+          : null,
+        coin: { wallet: ledger.wallet },
+      });
     }
 
     const chargeResult = await chargeSavedPlaceCoins({
@@ -3512,6 +3545,20 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
       },
     });
     const saved = await findSavedPlaceByUserAndPlaceId(authUser!.userId, placeId);
+    const enrichmentJob = saved
+      ? await placeEnrichmentJobStore.triggerFromSavedPlace({
+          userId: authUser!.userId,
+          savedPlace: {
+            id: saved.id,
+            placeId: saved.placeId,
+            title: saved.title,
+            category: saved.category ?? null,
+            metadata: saved.metadata ?? {},
+            createdAt: saved.createdAt ?? null,
+            updatedAt: saved.updatedAt ?? null,
+          },
+        })
+      : null;
     const completedSaveOperationRunId = saveOperationRunId;
     if (completedSaveOperationRunId) {
       await bestEffortObservability(() => completeOperationRun(getPostgresDatabase(), {
@@ -3542,6 +3589,13 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
       ok: true,
       alreadySaved: false,
       item: saved,
+      enrichmentJob: enrichmentJob?.job ?? null,
+      enrichmentReuse: enrichmentJob
+        ? {
+            reusedExisting: Boolean(enrichmentJob.reusedExisting),
+            reason: enrichmentJob.reuseReason ?? null,
+          }
+        : null,
       coin: {
         wallet: chargeResult.wallet,
         saveEvent: chargeResult.saveEvent,
@@ -3612,6 +3666,69 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
     }));
     return res.status(400).json({ ok: false, error: message });
   }
+});
+
+app.get("/api/debug/place-enrichment/jobs/:jobId", async (req, res) => {
+  if (process.env.NODE_ENV === "production") {
+    return res.status(404).json({ ok: false, error: "not found" });
+  }
+  const jobId = String(req.params.jobId || "").trim();
+  if (!jobId) {
+    return res.status(400).json({ ok: false, error: "jobId is required" });
+  }
+  const job = await placeEnrichmentJobStore.get(jobId);
+  if (!job) {
+    return res.status(404).json({ ok: false, error: "job not found" });
+  }
+  return res.json({ ok: true, job });
+});
+
+app.get("/api/debug/places/:placeId/knowledge", async (req, res) => {
+  if (process.env.NODE_ENV === "production") {
+    return res.status(404).json({ ok: false, error: "not found" });
+  }
+  if (!isPostgresConfigured()) {
+    return res.status(503).json({ ok: false, error: "database not configured" });
+  }
+  const placeId = String(req.params.placeId || "").trim();
+  if (!placeId) {
+    return res.status(400).json({ ok: false, error: "placeId is required" });
+  }
+  const placeRows = await getPostgresDatabase().query<{ id: string; canonical_name: string; city: string | null; locality: string | null }>(
+    "select id, canonical_name, city, locality from places where id = $1 limit 1",
+    [placeId],
+  );
+  const evidenceRows = await getPostgresDatabase().query<{
+    fact_type: string;
+    fact_value_json: unknown;
+    source_type: string;
+    source_url: string | null;
+    confidence: number | null;
+    observed_at: string;
+  }>(
+    `select fact_type, fact_value_json, source_type, source_url, confidence, observed_at
+     from place_source_evidence
+     where place_id = $1
+     order by observed_at desc, fact_type asc`,
+    [placeId],
+  );
+  const grouped = evidenceRows.rows.reduce<Record<string, unknown[]>>((acc, row) => {
+    acc[row.fact_type] = acc[row.fact_type] || [];
+    acc[row.fact_type].push({
+      value: row.fact_value_json,
+      sourceType: row.source_type,
+      sourceUrl: row.source_url,
+      confidence: row.confidence,
+      observedAt: row.observed_at,
+    });
+    return acc;
+  }, {});
+  return res.json({
+    ok: true,
+    place: placeRows.rows[0] ?? null,
+    evidence: grouped,
+    evidenceCount: evidenceRows.rows.length,
+  });
 });
 
 app.get("/api/admin/observability/overview", requireAdmin, async (req, res) => {

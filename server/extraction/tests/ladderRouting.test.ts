@@ -1,6 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { shouldAcceptTranscriptProbe, shouldSkipOcrAfterTranscriptProbe } from "../pipeline";
+import {
+  getAttemptVisualFallbackPolicy,
+  resolveAttemptRoute,
+  shouldAcceptTranscriptProbe,
+  shouldForceBackgroundLongLane,
+  shouldSkipOcrAfterTranscriptProbe,
+} from "../pipeline";
 import type { TranscriptResult } from "../types";
 
 function buildTranscript(overrides?: Partial<TranscriptResult>): TranscriptResult {
@@ -46,5 +52,55 @@ test("meaningful transcript can still skip ocr when accepted", () => {
       { accepted: true, confidence: "medium", status: "ready", entityCount: 1 },
     ),
     true,
+  );
+});
+
+test("accepted description can still force background long lane for post-save enrichment", () => {
+  assert.equal(
+    shouldForceBackgroundLongLane({
+      attemptNumber: 1,
+      forceBackgroundEnrichment: true,
+      descriptionWeak: false,
+      descriptionAccepted: true,
+    }),
+    true,
+  );
+});
+
+test("fast path without background enrichment does not force long lane", () => {
+  assert.equal(
+    shouldForceBackgroundLongLane({
+      attemptNumber: 1,
+      forceBackgroundEnrichment: false,
+      descriptionWeak: false,
+      descriptionAccepted: true,
+    }),
+    false,
+  );
+});
+
+test("attempt 2 still uses long lane when attempt 1 accepted on fast path", () => {
+  assert.equal(
+    resolveAttemptRoute({
+      attemptNumber: 2,
+      priorAttempt1Profile: {
+        usedLongLane: false,
+        acceptedAfter: "description",
+        route: "attempt_1",
+        transcriptAttempted: false,
+        ocrAttempted: false,
+      },
+    }),
+    "retry_1_long",
+  );
+});
+
+test("attempt 3 still keeps visual fallback enabled", () => {
+  assert.deepEqual(
+    getAttemptVisualFallbackPolicy(3),
+    {
+      includeVisual: true,
+      decisionReason: "retry_2_visual_default_final_attempt",
+    },
   );
 });

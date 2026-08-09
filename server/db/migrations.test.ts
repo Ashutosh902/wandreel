@@ -122,7 +122,7 @@ test("loadDatabaseMigrations verifies the production migration manifest order", 
   const migrations = await loadDatabaseMigrations();
   const versions = migrations.map((migration) => migration.version);
 
-  assert.deepEqual(versions, ["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008"]);
+  assert.deepEqual(versions, ["0000", "0001", "0002", "0003", "0004", "0005", "0006", "0007", "0008", "0009"]);
   assert.deepEqual(new Set(versions).size, versions.length);
   assert.ok(migrations.every((migration) => migration.sql.trim().length > 0));
 });
@@ -167,4 +167,16 @@ test("database operational maturity migration adds retention fields and operatio
   assert.match(migration.sql, /idx_operation_runs_running_started/i);
   assert.match(migration.sql, /idx_failure_events_operation_run/i);
   assert.match(migration.sql, /idx_stroll_curation_jobs_status_started/i);
+});
+
+test("place enrichment migration creates durable async job tracking", async () => {
+  const migrations = await loadDatabaseMigrations();
+  const migration = migrations.find((item) => item.version === "0009");
+  assert.ok(migration);
+
+  assert.match(migration.sql, /create table if not exists place_enrichment_jobs/i);
+  assert.match(migration.sql, /status text not null default 'pending'/i);
+  assert.match(migration.sql, /check \(status in \('pending', 'running', 'completed', 'partial', 'failed'\)\)/i);
+  assert.match(migration.sql, /dedupe_key text not null unique/i);
+  assert.match(migration.sql, /idx_place_enrichment_jobs_status_retry/i);
 });

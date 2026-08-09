@@ -203,10 +203,17 @@ function sourceDescriptor(metadata: Record<string, unknown>, place: SavedPlaceFo
   const sourceUrl = metadataString(metadata, "sourceUrl") ||
     metadataString(metadata, "videoUrl") ||
     metadataString(metadata, "canonicalUrl");
+  const stableFallbackSourceRecordId = metadataString(metadata, "externalSourceId") ||
+    metadataString(metadata, "googlePlaceId") ||
+    metadataString(metadata, "google_place_id") ||
+    metadataString(metadata, "googleMapsPlaceId") ||
+    place.placeId ||
+    sourceUrl ||
+    normalizeCanonicalPlaceName(place.title);
   const sourceRecordId = metadataString(metadata, "sourceRecordId") ||
     metadataString(metadata, "sourceEntityId") ||
     metadataString(metadata, "attemptId") ||
-    place.id;
+    stableFallbackSourceRecordId;
   return { sourceType, sourceUrl, sourceRecordId };
 }
 

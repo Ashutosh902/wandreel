@@ -9,6 +9,7 @@ import {
   persistStrollGenerationSnapshot,
   resolveCanonicalPlace,
   runStrollContextShadow,
+  writePlaceEvidence,
 } from "./informationFoundation";
 import type { StrollSummary } from "./types";
 
@@ -110,6 +111,46 @@ test("resolver avoids ambiguous normalized city matches", async () => {
 
   assert.equal(result.status, "ambiguous");
   assert.equal(result.canonicalPlaceId, null);
+});
+
+test("writePlaceEvidence dedupes seed evidence across different saved rows for the same place source", async () => {
+  const insertedFingerprints = new Set<string>();
+  const client: any = {
+    query: async (_sql: string, params?: unknown[]) => {
+      const factType = String(params?.[1] ?? "");
+      const fingerprint = String(params?.[11] ?? "");
+      const key = `${factType}:${fingerprint}`;
+      const inserted = insertedFingerprints.has(key) ? 0 : 1;
+      insertedFingerprints.add(key);
+      return { rows: [], rowCount: inserted };
+    },
+  };
+
+  await writePlaceEvidence(client, "place-1", savedPlace({
+    id: "saved-1",
+    placeId: "legacy-1",
+    metadata: {
+      city: "Patna",
+      locality: "Boring Road",
+      sourcePlatform: "instagram",
+      sourceUrl: "https://instagram.test/reel/1",
+    },
+  }));
+  const afterFirstWrite = insertedFingerprints.size;
+
+  await writePlaceEvidence(client, "place-1", savedPlace({
+    id: "saved-2",
+    placeId: "legacy-1",
+    metadata: {
+      city: "Patna",
+      locality: "Boring Road",
+      sourcePlatform: "instagram",
+      sourceUrl: "https://instagram.test/reel/1",
+    },
+  }));
+
+  assert.equal(afterFirstWrite, 7);
+  assert.equal(insertedFingerprints.size, afterFirstWrite);
 });
 
 test("context builder resolves canonical identities and returns normalized candidate context", async () => {

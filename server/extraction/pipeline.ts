@@ -399,6 +399,20 @@ export function shouldSkipOcrAfterTranscriptProbe(transcript: TranscriptResult |
   return shouldAcceptTranscriptProbe(transcript, probe);
 }
 
+export function shouldForceBackgroundLongLane(input: {
+  attemptNumber: number;
+  forceBackgroundEnrichment?: boolean;
+  descriptionWeak: boolean;
+  descriptionAccepted: boolean;
+}): boolean {
+  return Boolean(
+    input.forceBackgroundEnrichment &&
+    input.attemptNumber === 1 &&
+    !input.descriptionWeak &&
+    input.descriptionAccepted,
+  );
+}
+
 function getBestEntityConfidence(source: {
   output?: {
     structuredEntities?: Array<{ confidence?: string | null }>;
@@ -1635,6 +1649,8 @@ export async function runExtractionPipeline(input: {
   debug?: boolean;
   attemptNumber?: number;
   triggerType?: ExtractionTriggerType;
+  forceBackgroundEnrichment?: boolean;
+  metadataOnlyEnrichment?: boolean;
   clientRunId?: string | null;
   onProgress?: ExtractionProgressReporter;
 }): Promise<ExtractionResult> {
@@ -1914,7 +1930,13 @@ export async function runExtractionPipeline(input: {
             : `tiny_extractor_${descriptionProbe?.confidence || "low"}`);
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "tiny_extractor_done", "Tiny caption extractor finished.");
   }
-  const shouldRunTranscript = attemptNumber >= 2 || descriptionWeak;
+  const forceBackgroundEnrichment = shouldForceBackgroundLongLane({
+    attemptNumber,
+    forceBackgroundEnrichment: input.forceBackgroundEnrichment,
+    descriptionWeak,
+    descriptionAccepted: Boolean(descriptionProbe?.accepted),
+  });
+  const shouldRunTranscript = attemptNumber >= 2 || descriptionWeak || forceBackgroundEnrichment;
   let transcript: TranscriptResult = {
     attempted: false,
     used: false,
@@ -1924,16 +1946,22 @@ export async function runExtractionPipeline(input: {
   };
   let transcriptMs = 0;
 
-  if (attemptNumber === 1 && !descriptionWeak && descriptionProbe?.accepted) {
+  if (
+    attemptNumber === 1 &&
+    !descriptionWeak &&
+    ((descriptionProbe?.accepted && !forceBackgroundEnrichment) || input.metadataOnlyEnrichment)
+  ) {
     pushDecision(
       orchestration,
       "description",
       true,
-      `accepted_description_tiny_${descriptionProbe.confidence}`,
+      input.metadataOnlyEnrichment
+        ? "adaptive_caption_only_selected"
+        : `accepted_description_tiny_${descriptionProbe?.confidence || "low"}`,
     );
-    pushDecision(orchestration, "transcript", false, "description_confidence_sufficient");
-    pushDecision(orchestration, "ocr", false, "description_confidence_sufficient");
-    pushDecision(orchestration, "visualFallback", false, "initial_attempt_only");
+    pushDecision(orchestration, "transcript", false, input.metadataOnlyEnrichment ? "adaptive_action_not_selected" : "description_confidence_sufficient");
+    pushDecision(orchestration, "ocr", false, input.metadataOnlyEnrichment ? "adaptive_action_not_selected" : "description_confidence_sufficient");
+    pushDecision(orchestration, "visualFallback", false, input.metadataOnlyEnrichment ? "adaptive_action_not_selected" : "initial_attempt_only");
     finalizeTrace(orchestration, "description");
     logTrace(orchestration);
 
@@ -1979,13 +2007,13 @@ export async function runExtractionPipeline(input: {
       orchestration,
       fastPathIntelligence: {
         attempted: true,
-        accepted: true,
+        accepted: Boolean(descriptionProbe?.accepted),
         duplicateDescriptionLlmSkipped: true,
         result: descriptionFastResult,
         tinyFastExtractorUsed: true,
         tinyFastExtractorMs: descriptionProbeMs,
-        tinyFastExtractorAccepted: true,
-        tinyFastExtractorRejectedReason: null,
+        tinyFastExtractorAccepted: Boolean(descriptionProbe?.accepted),
+        tinyFastExtractorRejectedReason,
         modelUsedForTinyExtractor: descriptionFastModel,
         fullPromptSkipped: true,
         tinyCaptionPromptInput,
@@ -2024,7 +2052,9 @@ export async function runExtractionPipeline(input: {
     !descriptionProbeFailureReason,
     attemptNumber === 1
       ? descriptionProbeFailureReason ||
-        (descriptionWeak
+        (forceBackgroundEnrichment
+        ? "accepted_description_background_enrichment_continues_long_lane"
+        : descriptionWeak
         ? "missing_or_weak_description"
         : `tiny_caption_${descriptionProbe?.confidence || "low"}`)
       : "retry_forced_reanalysis",
@@ -2255,7 +2285,7 @@ export async function runExtractionPipeline(input: {
       transcriptProbeFailureReason || `transcript_probe_${transcriptProbe?.confidence || "low"}`,
     );
 
-    if (shouldSkipOcrAfterTranscriptProbe(transcript, transcriptProbe)) {
+    if (!forceBackgroundEnrichment && shouldSkipOcrAfterTranscriptProbe(transcript, transcriptProbe)) {
       pushDecision(orchestration, "ocr", false, "transcript_confidence_sufficient");
       pushDecision(orchestration, "visualFallback", false, "initial_attempt_only");
       finalizeTrace(orchestration, "transcript");
@@ -2328,11 +2358,15 @@ export async function runExtractionPipeline(input: {
 
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "frame_extraction_started", "Checking video frames.");
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "ocr_started", "Reading on-screen text.");
+    if (forceBackgroundEnrichment) {
+      await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "visual_started", "Trying visual match.");
+    }
     const sequential = await processRetryFramesSequentially({
       metadata,
       transcript,
       selectionMode: "anchors",
-      includeVisual: false,
+      includeVisual: forceBackgroundEnrichment,
+      visualForceReason: forceBackgroundEnrichment ? "background_post_save_standard_visual_enrichment" : null,
       memoryTracker,
       priorAttemptHypotheses,
     });
@@ -2343,15 +2377,33 @@ export async function runExtractionPipeline(input: {
     ocrMs = sequential.ocrMs;
     frameExtractionMs = sequential.frameExtractionMs;
     ocrOnlyMs = sequential.ocrOnlyMs;
+    visualFallback = sequential.visualFallback;
+    visualFallbackMs = sequential.visualFallbackMs;
+    visualFallbackOnlyMs = sequential.visualFallbackOnlyMs;
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "frame_extraction_done", "Frame check finished.");
     await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "ocr_done", "On-screen text step finished.");
+    if (forceBackgroundEnrichment) {
+      await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "visual_done", "Visual match finished.");
+    }
     orchestration.ocrFrameCount = sequential.screenshots.length;
-    orchestration.visualFrameCount = 0;
+    orchestration.visualFrameCount = forceBackgroundEnrichment ? sequential.screenshots.length : 0;
   }
 
   if (attemptNumber >= 3) {
     pushDecision(orchestration, "visualFallback", true, visualFallbackPolicy.decisionReason);
     finalizeTrace(orchestration, visualFallback.selectedCandidate ? "visualFallback" : "manual_review");
+  } else if (forceBackgroundEnrichment) {
+    pushDecision(orchestration, "visualFallback", true, "background_post_save_standard_visual_enrichment");
+    finalizeTrace(
+      orchestration,
+      visualFallback.selectedCandidate
+        ? "visualFallback"
+        : hasMeaningfulOcr(ocr)
+          ? "ocr"
+          : hasMeaningfulTranscript(transcript)
+            ? "transcript"
+            : "manual_review",
+    );
   } else {
     pushDecision(orchestration, "visualFallback", false, visualFallbackPolicy.decisionReason);
     finalizeTrace(orchestration, hasMeaningfulOcr(ocr) ? "ocr" : "manual_review");
