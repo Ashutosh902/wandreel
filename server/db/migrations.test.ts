@@ -68,14 +68,14 @@ test("runDatabaseMigrations applies unapplied migrations and records version", a
 
   assert.match(mock.calls[0]?.sql || "", /create table if not exists schema_migrations/i);
   assert.match(mock.calls[1]?.sql || "", /alter table schema_migrations add column if not exists checksum/i);
-  assert.match(mock.calls[2]?.sql || "", /pg_advisory_lock/i);
-  assert.match(mock.calls[3]?.sql || "", /select version, checksum from schema_migrations/i);
-  assert.match(mock.calls[4]?.sql || "", /pg_advisory_unlock/i);
-  assert.equal(mock.clientCalls[0]?.sql, "begin");
-  assert.match(mock.clientCalls[1]?.sql || "", /create table if not exists strolls/i);
-  assert.match(mock.clientCalls[2]?.sql || "", /insert into schema_migrations/i);
-  assert.deepEqual(mock.clientCalls[2]?.params, ["0001", "stroll_foundation", calculateMigrationChecksum(strollMigration.sql)]);
-  assert.equal(mock.clientCalls[3]?.sql, "commit");
+  assert.match(mock.calls[2]?.sql || "", /select version, checksum from schema_migrations/i);
+  assert.match(mock.clientCalls[0]?.sql || "", /pg_advisory_lock/i);
+  assert.equal(mock.clientCalls[1]?.sql, "begin");
+  assert.match(mock.clientCalls[2]?.sql || "", /create table if not exists strolls/i);
+  assert.match(mock.clientCalls[3]?.sql || "", /insert into schema_migrations/i);
+  assert.deepEqual(mock.clientCalls[3]?.params, ["0001", "stroll_foundation", calculateMigrationChecksum(strollMigration.sql)]);
+  assert.equal(mock.clientCalls[4]?.sql, "commit");
+  assert.match(mock.clientCalls[5]?.sql || "", /pg_advisory_unlock/i);
   assert.equal(mock.wasReleased(), true);
 });
 
@@ -87,9 +87,8 @@ test("runDatabaseMigrations skips already recorded migrations", async () => {
     migrations: [strollMigration],
   });
 
-  assert.match(mock.calls[2]?.sql || "", /pg_advisory_lock/i);
-  assert.match(mock.calls.at(-1)?.sql || "", /pg_advisory_unlock/i);
-  assert.equal(mock.clientCalls.length, 0);
+  assert.match(mock.clientCalls[0]?.sql || "", /pg_advisory_lock/i);
+  assert.match(mock.clientCalls.at(-1)?.sql || "", /pg_advisory_unlock/i);
 });
 
 test("runDatabaseMigrations rejects changed applied migration checksums", async () => {
@@ -103,7 +102,7 @@ test("runDatabaseMigrations rejects changed applied migration checksums", async 
     /Migration checksum mismatch/,
   );
 
-  assert.match(mock.calls.at(-1)?.sql || "", /pg_advisory_unlock/i);
+  assert.match(mock.clientCalls.at(-1)?.sql || "", /pg_advisory_unlock/i);
 });
 
 test("runDatabaseMigrations backfills missing checksums for already applied migrations", async () => {

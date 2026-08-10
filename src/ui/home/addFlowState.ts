@@ -4,6 +4,42 @@ import { sanitizeDetectedPlace } from "./addEntitySanitizer";
 
 export type DetectedCategory = "Taste" | "Activity" | "Stay" | "Explore";
 
+export type IdentificationEvidenceSnapshot = {
+  version: "identification_evidence_v1";
+  observedAt?: string | null;
+  attemptNumber?: number | null;
+  acceptedAfter?: string | null;
+  metadata?: {
+    title?: string | null;
+    description?: string | null;
+    siteName?: string | null;
+    imageUrl?: string | null;
+    provider?: string | null;
+  };
+  transcript?: {
+    text: string;
+    source?: string | null;
+    segments?: Array<{ text: string; startMs: number | null; endMs: number | null }>;
+  } | null;
+  ocr?: {
+    text: string;
+    provider?: string | null;
+    regions?: Array<{
+      text: string;
+      frameLabel?: string | null;
+      frameIndex?: number | null;
+      timestampSec?: number | null;
+      boundingBox?: { x: number; y: number; width: number; height: number } | null;
+    }>;
+  } | null;
+  visual?: {
+    summaryText?: string | null;
+    selectedCandidate?: Record<string, unknown> | null;
+    screenshots?: Array<{ label: string; frameIndex?: number | null; timestampSec?: number | null }>;
+  } | null;
+  placeResolution?: Record<string, unknown> | null;
+};
+
 export type DetectedPlace = {
   id: string;
   runId: number;
@@ -26,6 +62,7 @@ export type DetectedPlace = {
   city?: string | null;
   state?: string | null;
   country?: string | null;
+  identificationEvidence?: IdentificationEvidenceSnapshot | null;
 };
 
 export type IntelligenceEntity = {
@@ -234,7 +271,14 @@ export function mapCategory(category: IntelligenceEntity["category"]): DetectedC
 
 export function mapEntitiesToPlaces(
   entities: IntelligenceEntity[],
-  defaults: { source: string; imageUrl: string; videoUrl: string; sourceUrl: string; retryCount?: number },
+  defaults: {
+    source: string;
+    imageUrl: string;
+    videoUrl: string;
+    sourceUrl: string;
+    retryCount?: number;
+    identificationEvidence?: IdentificationEvidenceSnapshot | null;
+  },
   runId: number,
 ): DetectedPlace[] {
   return entities
@@ -270,6 +314,7 @@ export function mapEntitiesToPlaces(
         city: entity.city ?? null,
         state: entity.state ?? null,
         country: entity.country ?? null,
+        identificationEvidence: defaults.identificationEvidence ?? null,
       }).place;
     })
     .filter((value): value is DetectedPlace => value !== null);

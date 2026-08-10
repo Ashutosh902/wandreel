@@ -16,6 +16,7 @@ import {
   type DetectedCategory,
   type DetectedPlace,
   type IntelligenceEntity,
+  type IdentificationEvidenceSnapshot,
   type PendingDetectionJob,
 } from "./addFlowState";
 import { shouldApplyResolvedPlacesUpdate, summarizePlacesForLog } from "./addAsyncResolution";
@@ -60,7 +61,33 @@ type ExtractionApiResponse = {
     sourceUrl?: string;
     title?: string | null;
     description?: string | null;
+    siteName?: string | null;
+    provider?: string | null;
+    fetchedAtIso?: string | null;
   };
+  transcript?: {
+    text?: string | null;
+    source?: string | null;
+    segments?: Array<{ text?: string | null; startMs?: number | null; endMs?: number | null }>;
+  } | null;
+  ocr?: {
+    text?: string | null;
+    provider?: string | null;
+    regions?: Array<{
+      text?: string | null;
+      frameLabel?: string | null;
+      frameIndex?: number | null;
+      timestampSec?: number | null;
+      boundingBox?: { x?: number; y?: number; width?: number; height?: number } | null;
+    }>;
+  } | null;
+  visualFallback?: {
+    summaryText?: string | null;
+    selectedCandidate?: Record<string, unknown> | null;
+    screenshots?: Array<{ label?: string | null; frameIndex?: number | null; timestampSec?: number | null }>;
+  } | null;
+  attemptInfo?: { attemptNumber?: number | null };
+  debug?: { orchestration?: { acceptedAfter?: string | null } };
 };
 
 type ExtractionStreamEvent = {
@@ -86,6 +113,76 @@ type EditAnalyticsDiff = {
   before: string | number | null;
   after: string | number | null;
 };
+
+function boundedEvidenceText(value: unknown, maxLength = 8_000) {
+  return String(value || "").split("\u0000").join("").trim().slice(0, maxLength);
+}
+
+function buildIdentificationEvidenceSnapshot(extraction: ExtractionApiResponse): IdentificationEvidenceSnapshot {
+  const transcriptText = boundedEvidenceText(extraction.transcript?.text);
+  const ocrText = boundedEvidenceText(extraction.ocr?.text);
+  return {
+    version: "identification_evidence_v1",
+    observedAt: extraction.metadata?.fetchedAtIso ?? new Date().toISOString(),
+    attemptNumber: extraction.attemptInfo?.attemptNumber ?? null,
+    acceptedAfter: extraction.debug?.orchestration?.acceptedAfter ?? null,
+    metadata: {
+      title: boundedEvidenceText(extraction.metadata?.title, 1_000) || null,
+      description: boundedEvidenceText(extraction.metadata?.description) || null,
+      siteName: boundedEvidenceText(extraction.metadata?.siteName, 200) || null,
+      imageUrl: boundedEvidenceText(extraction.metadata?.imageUrl, 2_000) || null,
+      provider: boundedEvidenceText(extraction.metadata?.provider, 100) || null,
+    },
+    transcript: transcriptText
+      ? {
+          text: transcriptText,
+          source: boundedEvidenceText(extraction.transcript?.source, 100) || null,
+          segments: (extraction.transcript?.segments || []).slice(0, 200).flatMap((segment) => {
+            const text = boundedEvidenceText(segment.text, 2_000);
+            return text ? [{ text, startMs: segment.startMs ?? null, endMs: segment.endMs ?? null }] : [];
+          }),
+        }
+      : null,
+    ocr: ocrText
+      ? {
+          text: ocrText,
+          provider: boundedEvidenceText(extraction.ocr?.provider, 100) || null,
+          regions: (extraction.ocr?.regions || []).slice(0, 100).flatMap((region) => {
+            const text = boundedEvidenceText(region.text, 2_000);
+            return text ? [{
+              text,
+              frameLabel: boundedEvidenceText(region.frameLabel, 200) || null,
+              frameIndex: region.frameIndex ?? null,
+              timestampSec: region.timestampSec ?? null,
+              boundingBox: region.boundingBox
+                ? {
+                    x: Number(region.boundingBox.x),
+                    y: Number(region.boundingBox.y),
+                    width: Number(region.boundingBox.width),
+                    height: Number(region.boundingBox.height),
+                  }
+                : null,
+            }] : [];
+          }),
+        }
+      : null,
+    visual: extraction.visualFallback?.selectedCandidate || extraction.visualFallback?.summaryText
+      ? {
+          summaryText: boundedEvidenceText(extraction.visualFallback.summaryText, 2_000) || null,
+          selectedCandidate: extraction.visualFallback.selectedCandidate ?? null,
+          screenshots: (extraction.visualFallback.screenshots || []).slice(0, 20).flatMap((screenshot) => {
+            const label = boundedEvidenceText(screenshot.label, 200);
+            return label ? [{
+              label,
+              frameIndex: screenshot.frameIndex ?? null,
+              timestampSec: screenshot.timestampSec ?? null,
+            }] : [];
+          }),
+        }
+      : null,
+    placeResolution: null,
+  };
+}
 
 type PreviewCard =
   | {
@@ -1028,6 +1125,7 @@ export function AddScreen() {
       city: null,
       state: null,
       country: null,
+      identificationEvidence: buildIdentificationEvidenceSnapshot(extraction),
     };
   };
 
@@ -1571,6 +1669,7 @@ export function AddScreen() {
           videoUrl: extraction.metadata?.canonicalUrl || extraction.metadata?.sourceUrl || normalizedSourceUrl,
           sourceUrl: normalizedSourceUrl,
           retryCount,
+          identificationEvidence: buildIdentificationEvidenceSnapshot(extraction),
         },
         runId,
       );
@@ -1711,6 +1810,7 @@ export function AddScreen() {
                   videoUrl: pending.videoUrl,
                   sourceUrl: pending.sourceUrl,
                   retryCount: pending.retryCount,
+                  identificationEvidence: pending.fallbackPlace.identificationEvidence ?? null,
                 },
                 pending.runId,
               );
@@ -2044,6 +2144,26 @@ export function AddScreen() {
           },
           coinSource: "external_import",
           idempotencyKey: `external-import:${String(place.runId)}:${place.placeId || place.id}`,
+          identificationEvidence: place.identificationEvidence
+            ? {
+                ...place.identificationEvidence,
+                placeResolution: {
+                  name: place.name,
+                  category: place.category,
+                  locality: place.locality,
+                  city: place.city ?? null,
+                  state: place.state ?? null,
+                  country: place.country ?? null,
+                  fullAddress: place.fullAddress,
+                  placeId: place.placeId ?? null,
+                  lat: place.lat ?? null,
+                  lng: place.lng ?? null,
+                  confidence: place.confidence ?? null,
+                  evidenceText: place.evidenceText ?? null,
+                  intent: place.intent ?? null,
+                },
+              }
+            : null,
         }),
       });
       if (!response.ok) {

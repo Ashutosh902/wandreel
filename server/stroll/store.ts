@@ -1,4 +1,5 @@
 import { getPostgresDatabase, type PostgresDatabase } from "../auth/postgresAuth";
+import { loadNormalizedPlaceKnowledge } from "../placeEnrichment/readModel";
 import type {
   CreateDraftStrollInput,
   HeroBookmarkInput,
@@ -12,6 +13,7 @@ import {
   type SavedPlaceForStrollCuration,
 } from "./curation";
 import { runStrollContextShadow } from "./informationFoundation";
+import { selectPlaceKnowledgeForStroll, type StrollPlaceKnowledgeContext } from "./placeKnowledgeContext";
 import {
   enrichStopDescriptionIfNeeded,
   type PersistedStrollStopEnrichment,
@@ -103,6 +105,7 @@ type StrollStopRow = {
   place_title: string | null;
   place_category: string | null;
   place_metadata_json: unknown | null;
+  canonical_place_id: string | null;
   sequence: number | string;
   reason: string | null;
   generated_description: string | null;
@@ -356,11 +359,12 @@ function mapStopRow(row: StrollStopRow): StrollStop {
   };
 }
 
-function mapStopRowToTrustedInput(row: StrollStopRow): TrustedStrollStopInput {
+function mapStopRowToTrustedInput(row: StrollStopRow, placeKnowledgeContext: StrollPlaceKnowledgeContext | null): TrustedStrollStopInput {
   const metadata = toRecord(row.place_metadata_json);
   return {
     stopId: row.id,
     placeId: row.place_id,
+    canonicalPlaceId: row.canonical_place_id,
     sequence: toNullableNumber(row.sequence) ?? 0,
     existingGeneratedDescription: row.generated_description,
     existingReason: row.reason,
@@ -378,6 +382,7 @@ function mapStopRowToTrustedInput(row: StrollStopRow): TrustedStrollStopInput {
       metadataString(metadata, "sourceDescription") ||
       metadataString(metadata, "latestDescription"),
     sourceUrl: metadataString(metadata, "sourceUrl") || metadataString(metadata, "videoUrl"),
+    placeKnowledgeContext,
   };
 }
 
@@ -793,6 +798,7 @@ export async function getStrollDetail(userId: string, strollId: string): Promise
             usp.title as place_title,
             usp.category as place_category,
             usp.metadata_json as place_metadata_json,
+            usp.canonical_place_id,
             ss.sequence,
             ss.reason,
             ss.generated_description,
@@ -825,6 +831,7 @@ async function getTrustedStopInputsForEnrichment(userId: string, strollId: strin
             usp.title as place_title,
             usp.category as place_category,
             usp.metadata_json as place_metadata_json,
+            usp.canonical_place_id,
             ss.sequence,
             ss.reason,
             ss.generated_description,
@@ -841,7 +848,28 @@ async function getTrustedStopInputsForEnrichment(userId: string, strollId: strin
      order by ss.sequence asc`,
     [strollId, userId],
   );
-  return stopsResult.rows.map(mapStopRowToTrustedInput);
+  return Promise.all(stopsResult.rows.map(async (row) => {
+    let placeKnowledgeContext: StrollPlaceKnowledgeContext | null = null;
+    if (row.canonical_place_id) {
+      try {
+        const readModel = await loadNormalizedPlaceKnowledge(database(), row.canonical_place_id);
+        placeKnowledgeContext = selectPlaceKnowledgeForStroll(readModel, {
+          category: row.place_category,
+          interests: stroll.interests,
+          theme: stroll.name,
+          requestedStartTime: stroll.requestedStartTime,
+        });
+      } catch (error) {
+        console.warn("stroll_place_knowledge_read_failed", {
+          strollId,
+          stopId: row.id,
+          canonicalPlaceId: row.canonical_place_id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    return mapStopRowToTrustedInput(row, placeKnowledgeContext);
+  }));
 }
 
 async function persistStopEnrichment(strollId: string, enrichment: PersistedStrollStopEnrichment): Promise<void> {

@@ -21,6 +21,21 @@ function coerceTranscriptReason(result: any, fallback: string): string {
   return fallback;
 }
 
+function coerceSegments(value: unknown): NonNullable<TranscriptResult["segments"]> {
+  if (!Array.isArray(value)) return [];
+  return value.slice(0, 500).flatMap((item) => {
+    const text = String(item?.text || "").trim();
+    if (!text) return [];
+    const startMs = Number(item?.startMs);
+    const endMs = Number(item?.endMs);
+    return [{
+      text,
+      startMs: Number.isFinite(startMs) ? startMs : null,
+      endMs: Number.isFinite(endMs) ? endMs : null,
+    }];
+  });
+}
+
 export async function enrichWithTranscript(metadata: ExtractedMetadata): Promise<TranscriptResult> {
   if (metadata.platform !== "youtube" && metadata.platform !== "instagram") {
     console.info("[transcript-extraction]", {
@@ -36,12 +51,12 @@ export async function enrichWithTranscript(metadata: ExtractedMetadata): Promise
   if (metadata.platform === "youtube") {
     const captions = await runPythonJsonScript("fetch_youtube_transcript.py", metadata.canonicalUrl, 45000);
     if (captions?.ok && typeof captions.transcript === "string" && captions.transcript.trim()) {
-      return { attempted: true, used: true, source: "captions", text: captions.transcript.trim(), reason: null };
+      return { attempted: true, used: true, source: "captions", text: captions.transcript.trim(), reason: null, segments: coerceSegments(captions.segments) };
     }
 
     const whisper = await runPythonJsonScript("fetch_media_whisper.py", metadata.canonicalUrl, 120000);
     if (whisper?.ok && typeof whisper.transcript === "string" && whisper.transcript.trim()) {
-      return { attempted: true, used: true, source: "whisper", text: whisper.transcript.trim(), reason: null };
+      return { attempted: true, used: true, source: "whisper", text: whisper.transcript.trim(), reason: null, segments: coerceSegments(whisper.segments) };
     }
 
     return {
@@ -55,7 +70,7 @@ export async function enrichWithTranscript(metadata: ExtractedMetadata): Promise
 
   const whisper = await runPythonJsonScript("fetch_media_whisper.py", metadata.canonicalUrl, 120000);
   if (whisper?.ok && typeof whisper.transcript === "string" && whisper.transcript.trim()) {
-    return { attempted: true, used: true, source: "whisper", text: whisper.transcript.trim(), reason: null };
+    return { attempted: true, used: true, source: "whisper", text: whisper.transcript.trim(), reason: null, segments: coerceSegments(whisper.segments) };
   }
 
   return {

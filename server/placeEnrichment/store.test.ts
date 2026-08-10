@@ -3,13 +3,74 @@ import assert from "node:assert/strict";
 import { __resetPostgresTestConfig, __setPostgresTestConfig } from "../auth/postgresAuth";
 import {
   determineEnrichmentTerminalStatus,
+  loadGroundedPlaceKnowledge,
+  mergeIdentificationEvidence,
   PlaceEnrichmentJobStore,
+  sanitizeIdentificationEvidenceSnapshot,
   shouldEscalateEnrichmentAttempt,
   shouldReuseExistingEnrichment,
 } from "./store";
+import type { ExtractionResult } from "../extraction/types";
 
 test.afterEach(() => {
   __resetPostgresTestConfig();
+});
+
+test("identification evidence is bounded and survives a later empty OCR result", () => {
+  const snapshot = sanitizeIdentificationEvidenceSnapshot({
+    version: "identification_evidence_v1",
+    observedAt: "2026-08-09T00:00:00.000Z",
+    attemptNumber: 1,
+    acceptedAfter: "ocr",
+    metadata: {
+      title: "Eva Cafe",
+      description: "By the sea",
+      provider: "instagram_script",
+    },
+    ocr: {
+      text: "YOU ME&COFFEE\nBY THE SEA\nEva cafe, Anjuna",
+      provider: "frame_ocr",
+    },
+    placeResolution: {
+      name: "YOU ME&COFFEE",
+      locality: "Anjuna",
+      confidence: "high",
+      ignored: "x".repeat(20_000),
+    },
+  });
+  assert.ok(snapshot);
+  assert.equal("ignored" in (snapshot?.placeResolution || {}), false);
+
+  const freshExtraction: ExtractionResult = {
+    mode: "deep",
+    metadata: {
+      sourceUrl: "https://www.instagram.com/p/example/",
+      canonicalUrl: "https://www.instagram.com/p/example/",
+      platform: "instagram",
+      title: "Eva Cafe",
+      description: "",
+      siteName: "Instagram",
+      imageUrl: null,
+      fetchedAtIso: "2026-08-10T00:00:00.000Z",
+      provider: "instagram_script",
+    },
+    transcript: null,
+    ocr: { attempted: true, used: false, text: "", reason: "vision_ocr_empty" },
+    source: "https://www.instagram.com/p/example/",
+    platform: "instagram",
+    canonicalUrl: "https://www.instagram.com/p/example/",
+  };
+
+  const merged = mergeIdentificationEvidence(freshExtraction, snapshot, "instagram");
+  assert.equal(merged.ocr?.text, "YOU ME&COFFEE\nBY THE SEA\nEva cafe, Anjuna");
+  assert.equal(merged.ocr?.used, true);
+  assert.deepEqual((merged.debug as any)?.identificationEvidence, {
+    reused: true,
+    acceptedAfter: "ocr",
+    transcriptReused: false,
+    ocrReused: true,
+    visualReused: false,
+  });
 });
 
 type QueryResult = {
@@ -160,8 +221,8 @@ test("shouldReuseExistingEnrichment reuses completed matching source knowledge",
           sourceUrl: "https://www.instagram.com/p/example/",
           sourcePlatform: "instagram",
           contentFingerprint: "fp-same",
-          extractionVersion: "deep_v1",
-          knowledgeSchemaVersion: "place_knowledge_v2",
+          extractionVersion: "deep_v2",
+          knowledgeSchemaVersion: "place_knowledge_v4",
         }),
       },
     } as any,
@@ -212,8 +273,8 @@ test("shouldReuseExistingEnrichment rejects version or source mismatches", () =>
           sourceUrl: "https://www.instagram.com/p/example/",
           sourcePlatform: "instagram",
           contentFingerprint: "fp-same",
-          extractionVersion: "deep_v1",
-          knowledgeSchemaVersion: "place_knowledge_v2",
+          extractionVersion: "deep_v2",
+          knowledgeSchemaVersion: "place_knowledge_v4",
         }),
       },
     } as any,
@@ -239,8 +300,8 @@ test("shouldReuseExistingEnrichment rejects changed content behind the same URL"
           sourceUrl: "https://www.instagram.com/p/example/",
           sourcePlatform: "instagram",
           contentFingerprint: "fp-old",
-          extractionVersion: "deep_v1",
-          knowledgeSchemaVersion: "place_knowledge_v2",
+          extractionVersion: "deep_v2",
+          knowledgeSchemaVersion: "place_knowledge_v4",
         }),
       },
     } as any,
@@ -315,4 +376,59 @@ test("determineEnrichmentTerminalStatus returns partial when attempted sources r
     },
   });
   assert.equal(completed, "completed");
+});
+
+test("loadGroundedPlaceKnowledge returns a query-ready supported fact view", async () => {
+  const grounding = {
+    supportType: "direct",
+    sourceSignal: "transcript",
+    evidenceText: "order the butter garlic prawns",
+    sourceField: "transcript.segments[0].text",
+    groundingConfidence: 0.98,
+    span: { start: 0, end: 32, unit: "character" },
+    sourceLocation: { startMs: 21_000, endMs: 25_000 },
+    validation: { status: "validated", method: "exact_span", reason: null },
+  };
+  const database = {
+    query: async (sql: string) => {
+      assert.match(sql, /validation' ->> 'status' = 'validated'/);
+      return { rows: [{
+        id: "evidence-1",
+        fact_type: "knowledge_food",
+        fact_value_json: {
+          structured: { kind: "recommended_item", value: "butter garlic prawns", qualifiers: {} },
+          grounding,
+          provenance: { sourceType: "website_transcript", originPhase: "place_identification" },
+        },
+        source_url: "https://example.com/source",
+        source_type: "website_transcript",
+        source_record_id: "job-1:identification:transcript",
+        extraction_version: "deep_v2",
+        intelligence_version: null,
+        confidence: 0.9,
+        observed_at: "2026-08-10T00:00:00.000Z",
+        verified_at: "2026-08-10T00:01:00.000Z",
+        expires_at: "2027-08-10T00:00:00.000Z",
+      }] };
+    },
+  };
+  const result = await loadGroundedPlaceKnowledge(database as any, "place-1");
+  assert.deepEqual(result[0], {
+    evidenceId: "evidence-1",
+    factType: "knowledge_food",
+    kind: "recommended_item",
+    value: "butter garlic prawns",
+    qualifiers: {},
+    factConfidence: 0.9,
+    grounding,
+    provenance: { sourceType: "website_transcript", originPhase: "place_identification" },
+    sourceUrl: "https://example.com/source",
+    sourceType: "website_transcript",
+    sourceRecordId: "job-1:identification:transcript",
+    extractorVersion: "deep_v2",
+    model: null,
+    observedAt: "2026-08-10T00:00:00.000Z",
+    verifiedAt: "2026-08-10T00:01:00.000Z",
+    expiresAt: "2027-08-10T00:00:00.000Z",
+  });
 });

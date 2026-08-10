@@ -158,13 +158,23 @@ def main() -> int:
             else:
                 raise transcribe_err
 
-        transcript_parts = [seg.text.strip() for seg in segments if getattr(seg, "text", "").strip()]
+        segment_rows = [
+            {
+                "text": seg.text.strip(),
+                "startMs": round(float(getattr(seg, "start", 0.0)) * 1000),
+                "endMs": round(float(getattr(seg, "end", 0.0)) * 1000),
+            }
+            for seg in segments
+            if getattr(seg, "text", "").strip()
+        ]
+        transcript_parts = [row["text"] for row in segment_rows]
         transcript = " ".join(transcript_parts).strip()
 
         print(json.dumps({
             "ok": True,
             "video_id": media_id,
             "transcript": transcript,
+            "segments": segment_rows,
             "source": "whisper",
             "device": selected_device,
             "compute_type": selected_compute,

@@ -186,6 +186,8 @@ export async function runDatabaseFoundationSmokeTest(database: SmokeDatabase): P
         staleEvidenceCount: 0,
         builderDurationMs: 1,
         snapshotFailures: 0,
+        knowledgeLookupMs: 0,
+        knowledgeReadFailures: 0,
       },
     };
     const snapshotId = await persistStrollGenerationSnapshot({ client, context });

@@ -1925,7 +1925,7 @@ app.post("/api/metadata/extract/stream", optionalAuth, async (req, res) => {
   const authUser = (req as express.Request & { authUser?: { userId: string } }).authUser;
   const canonicalUrl = canonicalizeUrl(url);
   const urlHash = buildMetadataUrlHash(canonicalUrl);
-  let operationRunId: string | null = await createOperationRun(getPostgresDatabase(), {
+  const operationRunId: string | null = await createOperationRun(getPostgresDatabase(), {
     operationType: "add_extraction",
     userId: authUser?.userId ?? null,
     sessionId: getAuthSessionId(req),
@@ -3465,6 +3465,7 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
       const enrichmentJob = !saveResult.alreadySaved
         ? await placeEnrichmentJobStore.triggerFromSavedPlace({
             userId: authUser!.userId,
+            identificationEvidence: req.body?.identificationEvidence,
             savedPlace: {
               id: saveResult.item.id,
               placeId: saveResult.item.placeId,
@@ -3548,6 +3549,7 @@ app.post("/api/saved-places", requireAuth, async (req, res) => {
     const enrichmentJob = saved
       ? await placeEnrichmentJobStore.triggerFromSavedPlace({
           userId: authUser!.userId,
+          identificationEvidence: req.body?.identificationEvidence,
           savedPlace: {
             id: saved.id,
             placeId: saved.placeId,

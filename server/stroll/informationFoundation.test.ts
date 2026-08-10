@@ -242,6 +242,9 @@ test("snapshot persistence writes immutable generation and candidate records", a
       resolutionStrategy: "created_new",
       source: "user_saved" as const,
       databaseEvidence: { evidenceRowCount: 6, latestObservedAt: "2026-07-11 10:00:00+00", expiredEvidenceCount: 0 },
+      placeKnowledge: null,
+      knowledgeSelection: null,
+      knowledgeRead: { status: "loaded" as const, lookupMs: 0, error: null },
     }],
     sourceFreshness: { missingEvidenceCount: 0, staleEvidenceCount: 0 },
     diagnostics: {
@@ -253,6 +256,8 @@ test("snapshot persistence writes immutable generation and candidate records", a
       staleEvidenceCount: 0,
       builderDurationMs: 3,
       snapshotFailures: 0,
+      knowledgeLookupMs: 0,
+      knowledgeReadFailures: 0,
     },
   };
   const client: any = {

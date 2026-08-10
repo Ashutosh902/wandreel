@@ -1,15 +1,21 @@
 import { createHash } from "node:crypto";
 import OpenAI from "openai";
 import { sharedProviderRuntime } from "../providers/runtime";
+import {
+  compactPlaceKnowledgeForPrompt,
+  type SelectedStrollKnowledgeClaim,
+  type StrollPlaceKnowledgeContext,
+} from "./placeKnowledgeContext";
 
-export const STROLL_STOP_ENRICHMENT_PROMPT_VERSION = "stroll_stop_enrichment_v1";
-export const STROLL_STOP_ENRICHMENT_VALIDATION_VERSION = "stroll_stop_validation_v1";
+export const STROLL_STOP_ENRICHMENT_PROMPT_VERSION = "stroll_stop_enrichment_v2";
+export const STROLL_STOP_ENRICHMENT_VALIDATION_VERSION = "stroll_stop_validation_v2";
 
 export type StrollStopEnrichmentValidationStatus = "accepted" | "rejected" | "provider_failed" | "skipped_cached";
 
 export type TrustedStrollStopInput = {
   stopId: string;
   placeId: string;
+  canonicalPlaceId: string | null;
   sequence: number;
   existingGeneratedDescription: string | null;
   existingReason: string | null;
@@ -23,11 +29,13 @@ export type TrustedStrollStopInput = {
   placeMetaSecondary: string | null;
   sourceCaption: string | null;
   sourceUrl: string | null;
+  placeKnowledgeContext: StrollPlaceKnowledgeContext | null;
 };
 
 export type StrollStopEnrichmentOutput = {
   description: string;
   whyThisStop: string | null;
+  usedKnowledgeClaimIds: string[];
 };
 
 export type StrollStopEnrichmentProviderResult = StrollStopEnrichmentOutput & {
@@ -56,6 +64,33 @@ export type StrollStopGenerationMetadata = {
   validationStatus: StrollStopEnrichmentValidationStatus;
   validationReasons: string[];
   trustedInputKeys: string[];
+  knowledgeAttribution: StrollKnowledgeAttribution;
+};
+
+export type StrollKnowledgeStatementAudit = {
+  field: "description" | "whyThisStop";
+  statement: string;
+  classification: "A_supported_knowledge" | "B_generic_connective" | "C_unsupported_place_claim";
+  claimIds: string[];
+  reasonCodes: string[];
+};
+
+export type StrollKnowledgeAttribution = {
+  canonicalPlaceId: string | null;
+  selectionVersion: string | null;
+  suppliedClaimIds: string[];
+  selectedClaims: Array<{
+    claimId: string;
+    kind: string;
+    value: string;
+    qualifiers: Record<string, unknown>;
+    truthState: string;
+    qualityScore: number | null;
+  }>;
+  omittedClaims: Array<{ claimId: string; reason: string }>;
+  usedClaimIds: string[];
+  invalidClaimIds: string[];
+  statementAudit: StrollKnowledgeStatementAudit[];
 };
 
 const unsupportedPatterns: Array<{ reason: string; pattern: RegExp }> = [
@@ -169,8 +204,7 @@ export function buildTrustedInputFingerprint(input: TrustedStrollStopInput) {
     placeDescription: normalizeText(input.placeDescription),
     placeMetaPrimary: normalizeText(input.placeMetaPrimary),
     placeMetaSecondary: normalizeText(input.placeMetaSecondary),
-    sourceCaption: normalizeText(input.sourceCaption).slice(0, 800),
-    sourceUrl: normalizeText(input.sourceUrl),
+    placeKnowledge: compactPlaceKnowledgeForPrompt(input.placeKnowledgeContext),
   };
   return createHash("sha256").update(JSON.stringify(stableInput)).digest("hex");
 }
@@ -184,8 +218,7 @@ export function getTrustedInputKeys(input: TrustedStrollStopInput) {
     ["placeDescription", input.placeDescription],
     ["placeMetaPrimary", input.placeMetaPrimary],
     ["placeMetaSecondary", input.placeMetaSecondary],
-    ["sourceCaption", input.sourceCaption],
-    ["sourceUrl", input.sourceUrl],
+    ["placeKnowledgeContext", input.placeKnowledgeContext?.selectedClaims.length ? "selected_claims" : null],
   ] as const)
     .filter(([, value]) => Boolean(normalizeText(value)))
     .map(([key]) => key);
@@ -205,6 +238,10 @@ export function shouldGenerateStopDescription(input: TrustedStrollStopInput, sou
     return { shouldGenerate: false, reason: "cached_generated_description" };
   }
 
+  if (input.placeKnowledgeContext?.selectedClaims.length) {
+    return { shouldGenerate: true, reason: "selected_place_knowledge_available" };
+  }
+
   if (existingStored.ok) {
     return { shouldGenerate: false, reason: "stored_description_is_sufficient" };
   }
@@ -219,6 +256,7 @@ export function buildRejectedMetadata(input: {
   validationReasons: string[];
   generatedAt?: string;
   trustedInputKeys: string[];
+  knowledgeAttribution: StrollKnowledgeAttribution;
 }): StrollStopGenerationMetadata {
   return {
     model: input.model,
@@ -229,6 +267,7 @@ export function buildRejectedMetadata(input: {
     validationStatus: input.validationStatus,
     validationReasons: input.validationReasons,
     trustedInputKeys: input.trustedInputKeys,
+    knowledgeAttribution: input.knowledgeAttribution,
   };
 }
 
@@ -237,6 +276,7 @@ export function buildAcceptedMetadata(input: {
   sourceInputFingerprint: string;
   generatedAt?: string;
   trustedInputKeys: string[];
+  knowledgeAttribution: StrollKnowledgeAttribution;
 }): StrollStopGenerationMetadata {
   return buildRejectedMetadata({
     model: input.model,
@@ -245,6 +285,7 @@ export function buildAcceptedMetadata(input: {
     validationReasons: [],
     generatedAt: input.generatedAt,
     trustedInputKeys: input.trustedInputKeys,
+    knowledgeAttribution: input.knowledgeAttribution,
   });
 }
 
@@ -252,7 +293,11 @@ function buildSystemPrompt() {
   return [
     "You write brief Wandreel Stroll stop descriptions from verified stored data only.",
     "Never invent awards, popularity, directions, traffic, closures, waterlogging, opening status, or historical facts.",
-    "Return JSON only: {\"description\":\"...\",\"whyThisStop\":\"...\"}.",
+    "Place-specific factual claims may come only from supplied Place Knowledge claims.",
+    "Preserve all supplied qualifiers. Never state either side of a disputed claim as settled fact.",
+    "General connective copy is allowed, but do not invent dishes, activities, timing, prices, parking, booking, access, warnings, operators, or creator tips.",
+    "usedKnowledgeClaimIds may contain only claimId values from placeKnowledge.claims. If claims is empty or placeKnowledge is null, return an empty array.",
+    "Return JSON only: {\"description\":\"...\",\"whyThisStop\":\"...\",\"usedKnowledgeClaimIds\":[\"claim_id\"]}.",
     "Description must be one short sentence under 34 words.",
     "whyThisStop must use only supplied Stroll context, or null if not clearly supported.",
   ].join("\n");
@@ -265,11 +310,113 @@ function buildUserPrompt(input: TrustedStrollStopInput) {
     category: input.placeCategory,
     locality: input.placeLocality,
     address: input.placeAddress,
-    storedDescription: input.placeDescription,
-    attributes: [input.placeMetaPrimary, input.placeMetaSecondary].filter(Boolean),
-    sourceCaption: input.sourceCaption,
-    sourceUrl: input.sourceUrl,
+    placeKnowledge: compactPlaceKnowledgeForPrompt(input.placeKnowledgeContext),
   });
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value) ? value.map(String).map((item) => item.trim()).filter(Boolean) : [];
+}
+
+function claimSupportsText(text: string, claim: SelectedStrollKnowledgeClaim) {
+  const normalizedStatement = normalizeText(text).toLowerCase();
+  const value = normalizeText(claim.value).toLowerCase();
+  if (value && normalizedStatement.includes(value)) return true;
+  if (claim.kind === "booking_required" && /\b(book|booking|reservation|required)\b/.test(normalizedStatement)) return true;
+  if (claim.kind === "parking" && /\b(parking|valet)\b/.test(normalizedStatement)) return true;
+  if (["pricing", "entry_fee"].includes(claim.kind) && /(?:\u20b9|\brs\.?\b|\binr\b|\bprice\b|\bcost\b|\bfee\b)/.test(normalizedStatement)) return true;
+  if (claim.kind === "crowd_note" && /\b(crowd|crowded|busy)\b/.test(normalizedStatement)) return true;
+  if (claim.kind === "best_time" && /\b(best time|morning|afternoon|evening|night|sunset|sunrise|\d{1,2}(?::\d{2})?\s*(?:am|pm))\b/.test(normalizedStatement)) return true;
+  if (claim.kind === "seating_tip" && /\b(seat|seating|upstairs|downstairs|terrace|deck|view)\b/.test(normalizedStatement)) return true;
+  return false;
+}
+
+function qualifierIsPreserved(text: string, claim: SelectedStrollKnowledgeClaim) {
+  const normalizedStatement = normalizeText(text).toLowerCase();
+  for (const [key, rawValue] of Object.entries(claim.qualifiers)) {
+    if (!["when", "activity", "reason"].includes(key)) continue;
+    const value = normalizeText(String(rawValue)).toLowerCase();
+    if (value && !normalizedStatement.includes(value)) return false;
+  }
+  return true;
+}
+
+const PLACE_FACT_PATTERN = /(?:\u20b9|\brs\.?\b|\binr\b|\bmust try\b|\border\b|\bdish\b|\bmenu\b|\bprice\b|\bcost\b|\bfee\b|\bparking\b|\bvalet\b|\bbook(?:ing)?\b|\breservation\b|\brequired\b|\bbest time\b|\bsunrise\b|\bsunset\b|\bcrowd(?:ed)?\b|\bbusy\b|\bseating\b|\bupstairs\b|\bterrace\b|\bboat ride\b|\bsafari\b|\boperator\b|\borganised by\b|\borganized by\b|\bavoid\b|\bwarning\b|\baccess\b)/i;
+
+export function auditStrollKnowledgeAttribution(input: {
+  stop: TrustedStrollStopInput;
+  description: string;
+  whyThisStop: string | null;
+  usedKnowledgeClaimIds: string[];
+}): StrollKnowledgeAttribution {
+  const context = input.stop.placeKnowledgeContext;
+  const selectedClaims = context?.selectedClaims || [];
+  const selectedById = new Map(selectedClaims.map((claim) => [claim.claimId, claim]));
+  const usedClaimIds = [...new Set(input.usedKnowledgeClaimIds)];
+  const invalidClaimIds = usedClaimIds.filter((claimId) => !selectedById.has(claimId));
+  const usedClaims = usedClaimIds.flatMap((claimId) => selectedById.get(claimId) || []);
+  const statementAudit: StrollKnowledgeStatementAudit[] = [];
+  for (const [field, statement] of [["description", input.description], ["whyThisStop", input.whyThisStop]] as const) {
+    if (!statement) continue;
+    const matchingClaims = usedClaims.filter((claim) => claimSupportsText(statement, claim));
+    const missingQualifier = matchingClaims.some((claim) => !qualifierIsPreserved(statement, claim));
+    const disputedWithoutCaution = matchingClaims.some((claim) => claim.truthState === "disputed") &&
+      !/\b(disputed|conflicting|sources differ|unclear|may|reported)\b/i.test(statement);
+    if (invalidClaimIds.length || missingQualifier || disputedWithoutCaution) {
+      statementAudit.push({
+        field,
+        statement,
+        classification: "C_unsupported_place_claim",
+        claimIds: matchingClaims.map((claim) => claim.claimId),
+        reasonCodes: [
+          ...(invalidClaimIds.length ? ["unknown_claim_id"] : []),
+          ...(missingQualifier ? ["conditional_qualifier_missing"] : []),
+          ...(disputedWithoutCaution ? ["dispute_stated_as_settled"] : []),
+        ],
+      });
+    } else if (matchingClaims.length) {
+      statementAudit.push({
+        field,
+        statement,
+        classification: "A_supported_knowledge",
+        claimIds: matchingClaims.map((claim) => claim.claimId),
+        reasonCodes: ["selected_claim_cited", "claim_value_or_semantics_present"],
+      });
+    } else if (PLACE_FACT_PATTERN.test(statement)) {
+      statementAudit.push({
+        field,
+        statement,
+        classification: "C_unsupported_place_claim",
+        claimIds: [],
+        reasonCodes: ["place_specific_fact_without_matching_claim"],
+      });
+    } else {
+      statementAudit.push({
+        field,
+        statement,
+        classification: "B_generic_connective",
+        claimIds: [],
+        reasonCodes: ["no_place_specific_fact_detected"],
+      });
+    }
+  }
+  return {
+    canonicalPlaceId: input.stop.canonicalPlaceId,
+    selectionVersion: context?.selectionVersion || null,
+    suppliedClaimIds: selectedClaims.map((claim) => claim.claimId),
+    selectedClaims: selectedClaims.map((claim) => ({
+      claimId: claim.claimId,
+      kind: claim.kind,
+      value: claim.value,
+      qualifiers: claim.qualifiers,
+      truthState: claim.truthState,
+      qualityScore: claim.quality.score,
+    })),
+    omittedClaims: (context?.omittedClaims || []).map((claim) => ({ claimId: claim.claimId, reason: claim.reason })),
+    usedClaimIds,
+    invalidClaimIds,
+    statementAudit,
+  };
 }
 
 export async function callOpenAiStrollStopEnrichment(
@@ -292,14 +439,24 @@ export async function callOpenAiStrollStopEnrichment(
         { role: "system", content: [{ type: "input_text", text: buildSystemPrompt() }] },
         { role: "user", content: [{ type: "input_text", text: buildUserPrompt(input) }] },
       ],
+      reasoning: { effort: "minimal" },
       text: { format: { type: "json_object" } },
-      max_output_tokens: 220,
+      // Reasoning models can consume part of this budget before emitting the compact JSON payload.
+      max_output_tokens: 600,
     }, { signal }),
   });
-  const parsed = parseJsonObject(extractResponseText(response));
+  const responseText = extractResponseText(response);
+  if (!responseText) {
+    const status = metadataString(objectValue(response, "status")) || "unknown_status";
+    const incompleteReason = metadataString(objectValue(objectValue(response, "incomplete_details"), "reason"));
+    throw new Error(`openai_empty_response:${status}:${incompleteReason || "no_output_text"}`);
+  }
+  const parsed = parseJsonObject(responseText);
+  if (!parsed) throw new Error("openai_invalid_json_response");
   return {
     description: normalizeText(metadataString(parsed?.description)),
     whyThisStop: metadataString(parsed?.whyThisStop),
+    usedKnowledgeClaimIds: stringArray(parsed?.usedKnowledgeClaimIds),
     model,
     raw: parsed,
   };
@@ -319,10 +476,21 @@ export async function enrichStopDescriptionIfNeeded(
       promptVersion: STROLL_STOP_ENRICHMENT_PROMPT_VERSION,
       sourceInputFingerprint,
     });
+    const knowledgeAttribution = auditStrollKnowledgeAttribution({
+      stop: input,
+      description: result.description,
+      whyThisStop: result.whyThisStop,
+      usedKnowledgeClaimIds: result.usedKnowledgeClaimIds || [],
+    });
     const validation = validateStopDescriptionQuality(result.description);
     const whyValidation = result.whyThisStop ? validateStopDescriptionQuality(result.whyThisStop) : { ok: true, reasons: [] };
-    const validationReasons = [...validation.reasons, ...whyValidation.reasons.map((reason) => `why_${reason}`)];
-    if (!validation.ok || !whyValidation.ok) {
+    const categoryC = knowledgeAttribution.statementAudit.filter((entry) => entry.classification === "C_unsupported_place_claim");
+    const validationReasons = [
+      ...validation.reasons,
+      ...whyValidation.reasons.map((reason) => `why_${reason}`),
+      ...categoryC.flatMap((entry) => entry.reasonCodes.map((reason) => `knowledge_${entry.field}_${reason}`)),
+    ];
+    if (!validation.ok || !whyValidation.ok || categoryC.length > 0) {
       return {
         stopId: input.stopId,
         description: null,
@@ -333,6 +501,7 @@ export async function enrichStopDescriptionIfNeeded(
           validationStatus: "rejected",
           validationReasons,
           trustedInputKeys,
+          knowledgeAttribution,
         }),
       };
     }
@@ -345,6 +514,7 @@ export async function enrichStopDescriptionIfNeeded(
         model: result.model,
         sourceInputFingerprint,
         trustedInputKeys,
+        knowledgeAttribution,
       }),
     };
   } catch (error) {
@@ -358,6 +528,12 @@ export async function enrichStopDescriptionIfNeeded(
         validationStatus: "provider_failed",
         validationReasons: [error instanceof Error ? error.message : "provider_failed"],
         trustedInputKeys,
+        knowledgeAttribution: auditStrollKnowledgeAttribution({
+          stop: input,
+          description: "",
+          whyThisStop: null,
+          usedKnowledgeClaimIds: [],
+        }),
       }),
     };
   }

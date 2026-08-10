@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { PostgresDatabase } from "../auth/postgresAuth";
+import type { NormalizedPlaceKnowledge } from "../placeEnrichment/readModel";
 import {
   completeOperationRun,
   createOperationRun,
@@ -12,6 +13,10 @@ import {
   type SavedPlaceForStrollCuration,
 } from "./curation";
 import type { StrollSummary } from "./types";
+import {
+  selectPlaceKnowledgeForStroll,
+  type StrollPlaceKnowledgeContext,
+} from "./placeKnowledgeContext";
 
 export const STROLL_CONTEXT_SCHEMA_VERSION = "stroll_context_v1";
 
@@ -93,6 +98,13 @@ export type StrollGenerationContext = {
     resolutionStrategy: string;
     source: "user_saved" | "global_shared";
     databaseEvidence: DatabaseEvidenceSummary;
+    placeKnowledge: NormalizedPlaceKnowledge | null;
+    knowledgeSelection: StrollPlaceKnowledgeContext | null;
+    knowledgeRead: {
+      status: "loaded" | "not_selected" | "missing_canonical_place" | "failed";
+      lookupMs: number;
+      error: string | null;
+    };
   }>;
   sourceFreshness: {
     missingEvidenceCount: number;
@@ -107,6 +119,8 @@ export type StrollGenerationContext = {
     staleEvidenceCount: number;
     builderDurationMs: number;
     snapshotFailures: number;
+    knowledgeLookupMs: number;
+    knowledgeReadFailures: number;
   };
 };
 
@@ -561,6 +575,59 @@ async function loadDatabaseEvidenceSummary(client: Queryable, placeId: string | 
   };
 }
 
+async function loadCandidateKnowledge(input: {
+  client: Queryable;
+  canonicalPlaceId: string | null;
+  selected: boolean;
+  stroll: StrollSummary;
+  category: string | null;
+}) {
+  const startedAt = performance.now();
+  if (!input.selected) {
+    return {
+      placeKnowledge: null,
+      knowledgeSelection: null,
+      knowledgeRead: { status: "not_selected" as const, lookupMs: 0, error: null },
+    };
+  }
+  if (!input.canonicalPlaceId) {
+    return {
+      placeKnowledge: null,
+      knowledgeSelection: null,
+      knowledgeRead: { status: "missing_canonical_place" as const, lookupMs: 0, error: null },
+    };
+  }
+  try {
+    const { loadNormalizedPlaceKnowledge } = await import("../placeEnrichment/readModel");
+    const placeKnowledge = await loadNormalizedPlaceKnowledge(input.client as any, input.canonicalPlaceId);
+    const knowledgeSelection = selectPlaceKnowledgeForStroll(placeKnowledge, {
+      category: input.category,
+      interests: input.stroll.interests,
+      theme: input.stroll.name,
+      requestedStartTime: input.stroll.requestedStartTime,
+    });
+    return {
+      placeKnowledge,
+      knowledgeSelection,
+      knowledgeRead: {
+        status: "loaded" as const,
+        lookupMs: Number((performance.now() - startedAt).toFixed(3)),
+        error: null,
+      },
+    };
+  } catch (error) {
+    return {
+      placeKnowledge: null,
+      knowledgeSelection: null,
+      knowledgeRead: {
+        status: "failed" as const,
+        lookupMs: Number((performance.now() - startedAt).toFixed(3)),
+        error: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+}
+
 export async function buildStrollContext(input: {
   client: Queryable;
   userId: string;
@@ -607,6 +674,13 @@ export async function buildStrollContext(input: {
       strategy: "not_resolved",
       matchedCount: 0,
     };
+    const knowledge = await loadCandidateKnowledge({
+      client: input.client,
+      canonicalPlaceId: resolution.canonicalPlaceId,
+      selected: decision.selected,
+      stroll: input.stroll,
+      category: match?.place.category ?? null,
+    });
     enrichedCandidates.push({
       ...decision,
       canonicalPlaceId: resolution.canonicalPlaceId,
@@ -614,6 +688,7 @@ export async function buildStrollContext(input: {
       resolutionStrategy: resolution.strategy,
       source: match?.source ?? "user_saved",
       databaseEvidence: await loadDatabaseEvidenceSummary(input.client, resolution.canonicalPlaceId),
+      ...knowledge,
     });
   }
 
@@ -682,6 +757,8 @@ export async function buildStrollContext(input: {
       staleEvidenceCount,
       builderDurationMs: Date.now() - startedAt,
       snapshotFailures: 0,
+      knowledgeLookupMs: Number(enrichedCandidates.reduce((sum, candidate) => sum + candidate.knowledgeRead.lookupMs, 0).toFixed(3)),
+      knowledgeReadFailures: enrichedCandidates.filter((candidate) => candidate.knowledgeRead.status === "failed").length,
     },
   };
 }
@@ -737,7 +814,13 @@ export async function persistStrollGenerationSnapshot(input: {
         candidate.candidateRank,
         candidate.selected,
         JSON.stringify({ ...candidate.scoringFactors, source: candidate.source, resolutionStrategy: candidate.resolutionStrategy }),
-        JSON.stringify({ ...candidate.evidenceSummary, database: candidate.databaseEvidence }),
+        JSON.stringify({
+          ...candidate.evidenceSummary,
+          database: candidate.databaseEvidence,
+          placeKnowledge: candidate.placeKnowledge,
+          knowledgeSelection: candidate.knowledgeSelection,
+          knowledgeRead: candidate.knowledgeRead,
+        }),
         JSON.stringify({ ...candidate.sourceFreshness, databaseLatestObservedAt: candidate.databaseEvidence.latestObservedAt }),
       ],
     );

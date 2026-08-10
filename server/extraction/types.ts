@@ -46,6 +46,11 @@ export type TranscriptResult = {
   source: "captions" | "whisper" | null;
   text: string;
   reason: string | null;
+  segments?: Array<{
+    text: string;
+    startMs: number | null;
+    endMs: number | null;
+  }>;
 };
 
 export type OcrResult = {
@@ -54,6 +59,13 @@ export type OcrResult = {
   text: string;
   reason: string | null;
   provider?: string | null;
+  regions?: Array<{
+    text: string;
+    frameLabel?: string | null;
+    frameIndex?: number | null;
+    timestampSec?: number | null;
+    boundingBox?: { x: number; y: number; width: number; height: number } | null;
+  }>;
 };
 
 export type ExtractionStageStatus = "success" | "partial" | "failed";

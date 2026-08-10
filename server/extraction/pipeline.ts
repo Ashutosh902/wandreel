@@ -942,6 +942,7 @@ function mergeTranscriptResults(base: TranscriptResult | null, extra: Transcript
     source: extra?.source || base?.source || null,
     text,
     reason: text ? null : extra?.reason || base?.reason || null,
+    segments: [...(base?.segments || []), ...(extra?.segments || [])],
   };
 }
 
@@ -953,6 +954,8 @@ function mergeOcrResults(base: OcrResult | null, extra: OcrResult | null): OcrRe
     used: Boolean(base?.used || extra?.used || text),
     text,
     reason: text ? null : extra?.reason || base?.reason || null,
+    provider: extra?.provider || base?.provider || null,
+    regions: [...(base?.regions || []), ...(extra?.regions || [])],
   };
 }
 
@@ -1046,6 +1049,7 @@ async function processRetryFramesSequentially(input: {
   });
   const screenshots: ScreenshotAsset[] = [];
   const ocrParts: string[] = [];
+  const ocrRegions: NonNullable<OcrResult["regions"]> = [];
   let ocrReason: string | null = null;
   let bestVisual: VisualFallbackResult | null = null;
   const perFrameVisualDebug: unknown[] = [];
@@ -1136,6 +1140,13 @@ async function processRetryFramesSequentially(input: {
       ocrOnlyMs += ocrDurationMs;
       if (ocrResult.text.trim()) {
         ocrParts.push(ocrResult.text.trim());
+        ocrRegions.push({
+          text: ocrResult.text.trim(),
+          frameLabel: frame.label,
+          frameIndex,
+          timestampSec: frame.timestampSec ?? null,
+          boundingBox: null,
+        });
       } else if (ocrResult.reason) {
         ocrReason = ocrReason ? `${ocrReason};${ocrResult.reason}` : ocrResult.reason;
       }
@@ -1172,6 +1183,7 @@ async function processRetryFramesSequentially(input: {
           used: ocrParts.length > 0,
           text: mergeOcrTexts(ocrParts),
           reason: ocrParts.length > 0 ? null : ocrReason || "vision_ocr_empty",
+          regions: [...ocrRegions],
         };
         const visualStartedAt = nowMs();
         input.memoryTracker?.checkpoint("before_visual_fallback", {
@@ -1255,6 +1267,8 @@ async function processRetryFramesSequentially(input: {
     used: Boolean(mergedOcrText),
     text: mergedOcrText,
     reason: mergedOcrText ? null : ocrReason || "vision_ocr_empty",
+    provider: "frame_ocr",
+    regions: ocrRegions,
   };
 
   const visualFallback =

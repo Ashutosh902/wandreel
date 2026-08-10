@@ -50,17 +50,29 @@ def main() -> int:
     try:
         transcript_rows = YouTubeTranscriptApi().fetch(video_id, languages=["en", "hi", "en-US", "en-GB", "ta", "te", "mr", "bn"])
         transcript_parts = []
+        segments = []
         for row in transcript_rows:
             if hasattr(row, "text"):
                 text = str(row.text or "").strip()
+                start = float(getattr(row, "start", 0.0) or 0.0)
+                duration = float(getattr(row, "duration", 0.0) or 0.0)
             elif isinstance(row, dict):
                 text = str(row.get("text", "")).strip()
+                start = float(row.get("start", 0.0) or 0.0)
+                duration = float(row.get("duration", 0.0) or 0.0)
             else:
                 text = ""
+                start = 0.0
+                duration = 0.0
             if text:
                 transcript_parts.append(text)
+                segments.append({
+                    "text": text,
+                    "startMs": round(start * 1000),
+                    "endMs": round((start + duration) * 1000),
+                })
         transcript = " ".join(transcript_parts)
-        print(json.dumps({"ok": True, "video_id": video_id, "transcript": transcript}))
+        print(json.dumps({"ok": True, "video_id": video_id, "transcript": transcript, "segments": segments}))
     except Exception as err:
         print(json.dumps({"ok": False, "error": f"TRANSCRIPT_FETCH_FAILED: {err}"}))
 

@@ -91,7 +91,9 @@ export async function runDatabaseMigrations(options: {
   await database.query(MIGRATION_TABLE_SQL);
   await database.query("alter table schema_migrations add column if not exists checksum text");
 
-  await database.query("select pg_advisory_lock(hashtext($1))", [MIGRATION_LOCK_KEY]);
+  // PostgreSQL advisory locks are session-scoped, so acquire and release on one client.
+  const lockClient = (await database.connect()) as MigrationClient;
+  await lockClient.query("select pg_advisory_lock(hashtext($1))", [MIGRATION_LOCK_KEY]);
   try {
     for (const migration of migrations) {
       const checksum = calculateMigrationChecksum(migration.sql);
@@ -115,6 +117,7 @@ export async function runDatabaseMigrations(options: {
       await applyMigration(database, migration, checksum);
     }
   } finally {
-    await database.query("select pg_advisory_unlock(hashtext($1))", [MIGRATION_LOCK_KEY]).catch(() => undefined);
+    await lockClient.query("select pg_advisory_unlock(hashtext($1))", [MIGRATION_LOCK_KEY]).catch(() => undefined);
+    lockClient.release();
   }
 }

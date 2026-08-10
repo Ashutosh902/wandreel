@@ -31,12 +31,44 @@ export type PlaceKnowledgeFact = {
     value: string;
     qualifiers?: Record<string, unknown>;
   };
+  grounding?: {
+    supportType: "direct" | "inferred";
+    sourceSignal: PlaceKnowledgeFact["sourceSignal"];
+    evidenceText: string;
+    sourceField: string;
+    groundingConfidence: number;
+    span: {
+      start: number;
+      end: number;
+      unit: "character";
+    };
+    sourceLocation?: {
+      startMs?: number | null;
+      endMs?: number | null;
+      frameLabel?: string | null;
+      frameIndex?: number | null;
+      timestampSec?: number | null;
+      boundingBox?: { x: number; y: number; width: number; height: number } | null;
+    };
+    frameReferences?: Array<{
+      label: string;
+      frameIndex?: number | null;
+      timestampSec?: number | null;
+    }>;
+    validation: {
+      status: "validated" | "unsupported";
+      method: "exact_span" | "normalized_span" | "visual_evidence_record";
+      reason: string | null;
+    };
+  };
   provenance?: {
     sourceType: string;
     sourceUrl: string | null;
     sourceRecordId: string | null;
+    extractorName?: string | null;
     extractorVersion?: string | null;
     model?: string | null;
+    originPhase?: "place_identification" | "background_enrichment" | null;
   };
   freshness?: {
     observedAt?: string | null;
@@ -47,6 +79,46 @@ export type PlaceKnowledgeFact = {
 };
 
 export type PlaceEnrichmentJobStatus = "pending" | "running" | "completed" | "partial" | "failed";
+
+export type IdentificationEvidenceSnapshot = {
+  version: "identification_evidence_v1";
+  observedAt: string | null;
+  attemptNumber: number | null;
+  acceptedAfter: string | null;
+  metadata: {
+    title: string | null;
+    description: string | null;
+    siteName: string | null;
+    imageUrl: string | null;
+    provider: string | null;
+  };
+  transcript: {
+    text: string;
+    source: string | null;
+    segments?: Array<{ text: string; startMs: number | null; endMs: number | null }>;
+  } | null;
+  ocr: {
+    text: string;
+    provider: string | null;
+    regions?: Array<{
+      text: string;
+      frameLabel: string | null;
+      frameIndex: number | null;
+      timestampSec: number | null;
+      boundingBox: { x: number; y: number; width: number; height: number } | null;
+    }>;
+  } | null;
+  visual: {
+    summaryText: string | null;
+    selectedCandidate: Record<string, unknown> | null;
+    screenshots?: Array<{
+      label: string;
+      frameIndex: number | null;
+      timestampSec: number | null;
+    }>;
+  } | null;
+  placeResolution: Record<string, unknown> | null;
+};
 
 export type PlaceEnrichmentPayload = {
   savedPlace: {
@@ -61,6 +133,7 @@ export type PlaceEnrichmentPayload = {
   sourceUrl: string | null;
   sourcePlatform: string | null;
   contentFingerprint?: string | null;
+  identificationEvidence?: IdentificationEvidenceSnapshot | null;
   resolutionStrategy: string;
 };
 

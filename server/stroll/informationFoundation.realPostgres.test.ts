@@ -35,7 +35,9 @@ function quoteIdentifier(value: string) {
 }
 
 function withSchemaSearchPath(pool: Pool, schema: string): PgPool {
-  const searchPathSql = `set search_path to ${quoteIdentifier(schema)}, public`;
+  // Including public lets PostgreSQL find the production schema_migrations table and skip
+  // creating isolated test tables, which makes runtime rows leak into count assertions.
+  const searchPathSql = `set search_path to ${quoteIdentifier(schema)}`;
   return {
     query: async (sql: string, params?: unknown[]) => {
       const client = await pool.connect();

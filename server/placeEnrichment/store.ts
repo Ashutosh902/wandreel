@@ -3,10 +3,11 @@ import { canonicalizeUrl } from "../extraction/url";
 import { runExtractionPipeline } from "../extraction";
 import { extractMetadata } from "../extraction/metadata";
 import { runIntelligencePipeline } from "../intelligence";
+import type { ExtractionResult, SourcePlatform, VisualSearchCandidate } from "../extraction/types";
 import { getPostgresDatabase, isPostgresConfigured, type PostgresDatabase } from "../auth/postgresAuth";
 import { resolveCanonicalPlace, writePlaceEvidence } from "../stroll/informationFoundation";
 import type { SavedPlaceForStrollCuration } from "../stroll/curation";
-import { extractPlaceKnowledgeFacts } from "./facts";
+import { extractPlaceKnowledgeFacts, extractPlaceKnowledgeResult, type PlaceKnowledgeGroundingRejection } from "./facts";
 import {
   assessKnowledgeCoverage,
   ENRICHMENT_ACTION_CAPABILITIES,
@@ -20,6 +21,7 @@ import type {
   EnrichmentSourceAudit,
   EnrichmentSourceAuditEntry,
   EnrichmentSourceCoverage,
+  IdentificationEvidenceSnapshot,
   PlaceEnrichmentExecutionResult,
   PlaceEnrichmentJobStatus,
   PlaceEnrichmentPayload,
@@ -101,8 +103,8 @@ type EnrichmentAttemptSummary = {
   };
 };
 
-const PLACE_ENRICHMENT_EXTRACTION_VERSION = "deep_v1";
-const PLACE_KNOWLEDGE_SCHEMA_VERSION = "place_knowledge_v2";
+const PLACE_ENRICHMENT_EXTRACTION_VERSION = "deep_v2";
+const PLACE_KNOWLEDGE_SCHEMA_VERSION = "place_knowledge_v4";
 
 function toSavedPlaceRecord(input: PlaceEnrichmentPayload["savedPlace"]): SavedPlaceForStrollCuration {
   return {
@@ -122,6 +124,335 @@ function normalizeText(value: unknown) {
 
 function metadataRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function boundedSnapshotText(value: unknown, maxLength = 8_000) {
+  return String(value || "").split("\u0000").join("").trim().slice(0, maxLength);
+}
+
+function optionalSnapshotText(value: unknown, maxLength?: number) {
+  return boundedSnapshotText(value, maxLength) || null;
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function finiteNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function sanitizeVisualCandidateRecord(value: unknown): Record<string, unknown> | null {
+  const candidate = objectRecord(value);
+  if (!candidate) return null;
+  const candidateName = optionalSnapshotText(candidate.candidateName, 500);
+  const visualEvidence = optionalSnapshotText(candidate.visualEvidence, 2_000);
+  if (!candidateName && !visualEvidence) return null;
+  return {
+    candidateName,
+    formattedAddress: optionalSnapshotText(candidate.formattedAddress, 1_000),
+    locality: optionalSnapshotText(candidate.locality, 300),
+    city: optionalSnapshotText(candidate.city, 300),
+    state: optionalSnapshotText(candidate.state, 300),
+    country: optionalSnapshotText(candidate.country, 300),
+    placeId: optionalSnapshotText(candidate.placeId, 500),
+    query: optionalSnapshotText(candidate.query, 1_000),
+    visualEvidence,
+    supportFrameLabels: Array.isArray(candidate.supportFrameLabels)
+      ? candidate.supportFrameLabels.slice(0, 20).map((item) => boundedSnapshotText(item, 200)).filter(Boolean)
+      : [],
+    verificationConfidence: ["high", "medium", "low"].includes(String(candidate.verificationConfidence))
+      ? candidate.verificationConfidence
+      : "low",
+    lat: finiteNumber(candidate.lat),
+    lng: finiteNumber(candidate.lng),
+  };
+}
+
+function sanitizePlaceResolutionRecord(value: unknown): Record<string, unknown> | null {
+  const resolution = objectRecord(value);
+  if (!resolution) return null;
+  const intent = objectRecord(resolution.intent);
+  const name = optionalSnapshotText(resolution.name, 500);
+  const evidenceText = optionalSnapshotText(resolution.evidenceText, 2_000);
+  if (!name && !evidenceText) return null;
+  return {
+    name,
+    category: optionalSnapshotText(resolution.category, 100),
+    locality: optionalSnapshotText(resolution.locality, 300),
+    city: optionalSnapshotText(resolution.city, 300),
+    state: optionalSnapshotText(resolution.state, 300),
+    country: optionalSnapshotText(resolution.country, 300),
+    fullAddress: optionalSnapshotText(resolution.fullAddress, 1_000),
+    placeId: optionalSnapshotText(resolution.placeId, 500),
+    lat: finiteNumber(resolution.lat),
+    lng: finiteNumber(resolution.lng),
+    confidence: ["high", "medium", "low"].includes(String(resolution.confidence)) ? resolution.confidence : null,
+    evidenceText,
+    intent: intent
+      ? {
+          l1: optionalSnapshotText(intent.l1, 100),
+          l2: optionalSnapshotText(intent.l2, 100),
+          l3: Array.isArray(intent.l3)
+            ? intent.l3.slice(0, 20).map((item) => boundedSnapshotText(item, 200)).filter(Boolean)
+            : [],
+        }
+      : null,
+  };
+}
+
+export function sanitizeIdentificationEvidenceSnapshot(value: unknown): IdentificationEvidenceSnapshot | null {
+  const input = objectRecord(value);
+  if (!input || input.version !== "identification_evidence_v1") return null;
+  const metadata = objectRecord(input.metadata) || {};
+  const transcript = objectRecord(input.transcript);
+  const ocr = objectRecord(input.ocr);
+  const visual = objectRecord(input.visual);
+  const transcriptText = boundedSnapshotText(transcript?.text);
+  const ocrText = boundedSnapshotText(ocr?.text);
+  const transcriptSegments = Array.isArray(transcript?.segments)
+    ? transcript.segments.slice(0, 200).flatMap((item) => {
+        const segment = objectRecord(item);
+        const text = boundedSnapshotText(segment?.text, 2_000);
+        if (!text) return [];
+        return [{ text, startMs: finiteNumber(segment?.startMs), endMs: finiteNumber(segment?.endMs) }];
+      })
+    : [];
+  const ocrRegions = Array.isArray(ocr?.regions)
+    ? ocr.regions.slice(0, 100).flatMap((item) => {
+        const region = objectRecord(item);
+        const text = boundedSnapshotText(region?.text, 2_000);
+        if (!text) return [];
+        const rawBox = objectRecord(region?.boundingBox);
+        const values = rawBox
+          ? [finiteNumber(rawBox.x), finiteNumber(rawBox.y), finiteNumber(rawBox.width), finiteNumber(rawBox.height)]
+          : [];
+        return [{
+          text,
+          frameLabel: optionalSnapshotText(region?.frameLabel, 200),
+          frameIndex: finiteNumber(region?.frameIndex),
+          timestampSec: finiteNumber(region?.timestampSec),
+          boundingBox: values.length === 4 && values.every((entry) => entry !== null)
+            ? { x: values[0]!, y: values[1]!, width: values[2]!, height: values[3]! }
+            : null,
+        }];
+      })
+    : [];
+  const selectedCandidate = sanitizeVisualCandidateRecord(visual?.selectedCandidate);
+  const visualScreenshots = Array.isArray(visual?.screenshots)
+    ? visual.screenshots.slice(0, 20).flatMap((item) => {
+        const screenshot = objectRecord(item);
+        const label = boundedSnapshotText(screenshot?.label, 200);
+        return label ? [{
+          label,
+          frameIndex: finiteNumber(screenshot?.frameIndex),
+          timestampSec: finiteNumber(screenshot?.timestampSec),
+        }] : [];
+      })
+    : [];
+  const observedAtRaw = optionalSnapshotText(input.observedAt, 100);
+  const observedAt = observedAtRaw && !Number.isNaN(Date.parse(observedAtRaw)) ? observedAtRaw : null;
+  const attemptNumber = Number(input.attemptNumber);
+
+  return {
+    version: "identification_evidence_v1",
+    observedAt,
+    attemptNumber: Number.isInteger(attemptNumber) && attemptNumber >= 1 && attemptNumber <= 3 ? attemptNumber : null,
+    acceptedAfter: optionalSnapshotText(input.acceptedAfter, 100),
+    metadata: {
+      title: optionalSnapshotText(metadata.title, 1_000),
+      description: optionalSnapshotText(metadata.description),
+      siteName: optionalSnapshotText(metadata.siteName, 200),
+      imageUrl: optionalSnapshotText(metadata.imageUrl, 2_000),
+      provider: optionalSnapshotText(metadata.provider, 100),
+    },
+    transcript: transcriptText
+      ? {
+          text: transcriptText,
+          source: optionalSnapshotText(transcript?.source, 100),
+          ...(transcriptSegments.length ? { segments: transcriptSegments } : {}),
+        }
+      : null,
+    ocr: ocrText
+      ? {
+          text: ocrText,
+          provider: optionalSnapshotText(ocr?.provider, 100),
+          ...(ocrRegions.length ? { regions: ocrRegions } : {}),
+        }
+      : null,
+    visual: selectedCandidate || optionalSnapshotText(visual?.summaryText, 2_000)
+      ? {
+          summaryText: optionalSnapshotText(visual?.summaryText, 2_000),
+          selectedCandidate,
+          ...(visualScreenshots.length ? { screenshots: visualScreenshots } : {}),
+        }
+      : null,
+    placeResolution: sanitizePlaceResolutionRecord(input.placeResolution),
+  };
+}
+
+function normalizedSourcePlatform(value: string | null): SourcePlatform {
+  const normalized = normalizeText(value).toLowerCase();
+  if (normalized.includes("instagram")) return "instagram";
+  if (normalized.includes("youtube")) return "youtube";
+  return "web";
+}
+
+function snapshotVisualCandidate(value: Record<string, unknown> | null): VisualSearchCandidate | null {
+  if (!value) return null;
+  const confidence = ["high", "medium", "low"].includes(String(value.verificationConfidence))
+    ? value.verificationConfidence as "high" | "medium" | "low"
+    : "low";
+  return {
+    query: normalizeText(value.query),
+    source: "vision_search",
+    rationale: "Reused from place identification.",
+    candidateName: optionalSnapshotText(value.candidateName, 500),
+    formattedAddress: optionalSnapshotText(value.formattedAddress, 1_000),
+    locality: optionalSnapshotText(value.locality, 300),
+    city: optionalSnapshotText(value.city, 300),
+    state: optionalSnapshotText(value.state, 300),
+    country: optionalSnapshotText(value.country, 300),
+    placeId: optionalSnapshotText(value.placeId, 500),
+    lat: finiteNumber(value.lat),
+    lng: finiteNumber(value.lng),
+    visualEvidence: optionalSnapshotText(value.visualEvidence, 2_000),
+    supportFrameLabels: Array.isArray(value.supportFrameLabels)
+      ? value.supportFrameLabels.map((item) => boundedSnapshotText(item, 200)).filter(Boolean)
+      : [],
+    verificationConfidence: confidence,
+    rankingScore: confidence === "high" ? 1 : confidence === "medium" ? 0.7 : 0.4,
+    matchedSignals: ["place_identification"],
+  };
+}
+
+export function extractionFromIdentificationEvidence(input: {
+  snapshot: IdentificationEvidenceSnapshot;
+  sourceUrl: string;
+  sourcePlatform: string | null;
+}): ExtractionResult {
+  const platform = normalizedSourcePlatform(input.sourcePlatform);
+  const visualCandidate = snapshotVisualCandidate(input.snapshot.visual?.selectedCandidate ?? null);
+  const provider = ["html", "youtube_script", "instagram_script", "fallback"].includes(String(input.snapshot.metadata.provider))
+    ? input.snapshot.metadata.provider as "html" | "youtube_script" | "instagram_script" | "fallback"
+    : "fallback";
+  const transcriptSource = ["captions", "whisper"].includes(String(input.snapshot.transcript?.source))
+    ? input.snapshot.transcript?.source as "captions" | "whisper"
+    : null;
+  const transcript = input.snapshot.transcript
+    ? {
+        attempted: true,
+        used: true,
+        source: transcriptSource,
+        text: input.snapshot.transcript.text,
+        reason: null,
+        segments: input.snapshot.transcript.segments,
+      }
+    : null;
+  const ocr = input.snapshot.ocr
+    ? {
+        attempted: true,
+        used: true,
+        text: input.snapshot.ocr.text,
+        reason: null,
+        provider: input.snapshot.ocr.provider,
+        regions: input.snapshot.ocr.regions,
+      }
+    : null;
+  const visualFallback = input.snapshot.visual
+    ? {
+        attempted: true,
+        triggered: true,
+        reason: visualCandidate ? null : "identification_visual_summary_only",
+        provider: "shared_visual_fallback" as const,
+        confidence: visualCandidate?.verificationConfidence ?? "low" as const,
+        needsReview: visualCandidate?.verificationConfidence !== "high",
+        screenshots: (input.snapshot.visual.screenshots || []).map((screenshot) => ({
+          url: "",
+          origin: "video_frame" as const,
+          label: screenshot.label,
+          frameIndex: screenshot.frameIndex,
+          timestampSec: screenshot.timestampSec,
+        })),
+        textQueries: [],
+        visualQueries: [],
+        candidates: visualCandidate ? [visualCandidate] : [],
+        selectedCandidate: visualCandidate,
+        summaryText: input.snapshot.visual.summaryText || visualCandidate?.visualEvidence || "",
+      }
+    : null;
+  return {
+    mode: "deep",
+    metadata: {
+      sourceUrl: input.sourceUrl,
+      canonicalUrl: input.sourceUrl,
+      platform,
+      title: input.snapshot.metadata.title || "",
+      description: input.snapshot.metadata.description || "",
+      siteName: input.snapshot.metadata.siteName,
+      imageUrl: input.snapshot.metadata.imageUrl,
+      fetchedAtIso: input.snapshot.observedAt || new Date().toISOString(),
+      provider,
+    },
+    transcript,
+    ocr,
+    visualFallback,
+    attemptInfo: {
+      attemptNumber: input.snapshot.attemptNumber || 1,
+      triggerType: "initial",
+    },
+    source: input.sourceUrl,
+    platform,
+    canonicalUrl: input.sourceUrl,
+    combinedTextRaw: [input.snapshot.metadata.description, transcript?.text, ocr?.text, visualFallback?.summaryText].filter(Boolean).join("\n"),
+    debug: {
+      identificationEvidence: {
+        reused: true,
+        acceptedAfter: input.snapshot.acceptedAfter,
+      },
+    },
+  };
+}
+
+export function mergeIdentificationEvidence(
+  extraction: ExtractionResult,
+  snapshot: IdentificationEvidenceSnapshot | null,
+  sourcePlatform: string | null,
+): ExtractionResult {
+  if (!snapshot) return extraction;
+  const seed = extractionFromIdentificationEvidence({
+    snapshot,
+    sourceUrl: extraction.metadata.canonicalUrl || extraction.canonicalUrl,
+    sourcePlatform,
+  });
+  return {
+    ...extraction,
+    metadata: {
+      ...extraction.metadata,
+      title: seed.metadata.title || extraction.metadata.title,
+      description: seed.metadata.description || extraction.metadata.description,
+      siteName: seed.metadata.siteName || extraction.metadata.siteName,
+      imageUrl: seed.metadata.imageUrl || extraction.metadata.imageUrl,
+      fetchedAtIso: snapshot.observedAt || extraction.metadata.fetchedAtIso,
+    },
+    transcript: seed.transcript?.text ? seed.transcript : extraction.transcript,
+    ocr: seed.ocr?.text ? seed.ocr : extraction.ocr,
+    visualFallback: seed.visualFallback?.selectedCandidate ? seed.visualFallback : extraction.visualFallback,
+    combinedTextRaw: [seed.combinedTextRaw, extraction.combinedTextRaw].filter(Boolean).join("\n"),
+    debug: {
+      ...(extraction.debug || {}),
+      identificationEvidence: {
+        reused: true,
+        acceptedAfter: snapshot.acceptedAfter,
+        transcriptReused: Boolean(seed.transcript?.text),
+        ocrReused: Boolean(seed.ocr?.text),
+        visualReused: Boolean(seed.visualFallback?.selectedCandidate),
+      },
+    },
+  };
 }
 
 function sourceUrlFromSavedPlace(place: SavedPlaceForStrollCuration) {
@@ -330,6 +661,74 @@ async function loadCanonicalKnowledgeEvidence(client: Queryable, canonicalPlaceI
   });
 }
 
+export type GroundedPlaceKnowledgeRecord = {
+  evidenceId: string;
+  factType: string;
+  kind: string;
+  value: string;
+  qualifiers: Record<string, unknown>;
+  factConfidence: number;
+  grounding: NonNullable<ReturnType<typeof extractPlaceKnowledgeFacts>[number]["grounding"]>;
+  provenance: Record<string, unknown> | null;
+  sourceUrl: string | null;
+  sourceType: string | null;
+  sourceRecordId: string | null;
+  extractorVersion: string | null;
+  model: string | null;
+  observedAt: string | null;
+  verifiedAt: string | null;
+  expiresAt: string | null;
+};
+
+export async function loadGroundedPlaceKnowledge(
+  database: Pick<PostgresDatabase, "query">,
+  canonicalPlaceId: string,
+): Promise<GroundedPlaceKnowledgeRecord[]> {
+  const result = await database.query<{
+    id: string;
+    fact_type: string;
+    fact_value_json: Record<string, any>;
+    source_url: string | null;
+    source_type: string | null;
+    source_record_id: string | null;
+    extraction_version: string | null;
+    intelligence_version: string | null;
+    confidence: number | string | null;
+    observed_at: string | null;
+    verified_at: string | null;
+    expires_at: string | null;
+  }>(
+    `select id, fact_type, fact_value_json, source_url, source_type, source_record_id,
+            extraction_version, intelligence_version, confidence,
+            observed_at, verified_at, expires_at
+     from place_source_evidence
+     where place_id = $1
+       and fact_type like 'knowledge_%'
+       and fact_value_json -> 'structured' ->> 'kind' is not null
+       and fact_value_json -> 'grounding' -> 'validation' ->> 'status' = 'validated'
+     order by created_at asc`,
+    [canonicalPlaceId],
+  );
+  return result.rows.map((row) => ({
+    evidenceId: row.id,
+    factType: row.fact_type,
+    kind: normalizeText(row.fact_value_json.structured.kind),
+    value: normalizeText(row.fact_value_json.structured.value),
+    qualifiers: objectRecord(row.fact_value_json.structured.qualifiers) || {},
+    factConfidence: Number(row.confidence ?? row.fact_value_json.confidenceScore ?? 0) || 0,
+    grounding: row.fact_value_json.grounding,
+    provenance: objectRecord(row.fact_value_json.provenance),
+    sourceUrl: row.source_url,
+    sourceType: row.source_type,
+    sourceRecordId: row.source_record_id,
+    extractorVersion: row.extraction_version,
+    model: row.intelligence_version,
+    observedAt: row.observed_at,
+    verifiedAt: row.verified_at,
+    expiresAt: row.expires_at,
+  }));
+}
+
 function unresolvedCoverageKinds(coverage: KnowledgeCoverageAssessment) {
   return Object.entries(coverage)
     .filter(([, entry]) => entry.status !== "sufficient")
@@ -371,6 +770,130 @@ function inferSourceType(signal: "caption" | "transcript" | "ocr" | "comment" | 
   if (signal === "visual") return `${platform}_vision`;
   if (signal === "intelligence") return "llm_structured_enrichment";
   return "saved_place_seed";
+}
+
+async function writeIdentificationSnapshotEvidence(client: Queryable, input: {
+  canonicalPlaceId: string;
+  jobId: string;
+  sourceUrl: string;
+  sourcePlatform: string | null;
+  snapshot: IdentificationEvidenceSnapshot;
+  facts: ReturnType<typeof extractPlaceKnowledgeFacts>;
+}) {
+  const extraction = extractionFromIdentificationEvidence({
+    snapshot: input.snapshot,
+    sourceUrl: input.sourceUrl,
+    sourcePlatform: input.sourcePlatform,
+  });
+  const observedAt = input.snapshot.observedAt || new Date().toISOString();
+  const verifiedAt = new Date().toISOString();
+  const base = {
+    canonicalPlaceId: input.canonicalPlaceId,
+    sourceUrl: input.sourceUrl,
+    observedAt,
+    verifiedAt,
+    extractionVersion: PLACE_ENRICHMENT_EXTRACTION_VERSION,
+  };
+  const insertTextSignal = async (signal: "caption" | "transcript" | "ocr", factType: string, text: string, confidence: number) => {
+    const sourceRecordId = `${input.jobId}:identification:${signal}`;
+    await insertEvidenceRow(client, {
+      ...base,
+      factType,
+      factValue: {
+        text,
+        provenance: {
+          sourceType: inferSourceType(signal, input.sourcePlatform),
+          sourceUrl: input.sourceUrl,
+          sourceRecordId,
+          extractorVersion: PLACE_ENRICHMENT_EXTRACTION_VERSION,
+          model: null,
+          originPhase: "place_identification" as const,
+        },
+      },
+      sourceType: inferSourceType(signal, input.sourcePlatform),
+      sourceRecordId,
+      confidence,
+      expiresAt: addDaysIso(freshnessDaysForFactType(factType)),
+      originalPayload: { jobId: input.jobId, originPhase: "place_identification" },
+    });
+  };
+
+  if (input.snapshot.metadata.description) await insertTextSignal("caption", "source_caption", input.snapshot.metadata.description, 0.7);
+  if (input.snapshot.transcript?.text) await insertTextSignal("transcript", "transcript", input.snapshot.transcript.text, 0.9);
+  if (input.snapshot.ocr?.text) await insertTextSignal("ocr", "ocr_text", input.snapshot.ocr.text, 0.75);
+
+  if (extraction.visualFallback?.selectedCandidate) {
+    const candidate = extraction.visualFallback.selectedCandidate;
+    await insertEvidenceRow(client, {
+      ...base,
+      factType: "visual_candidate",
+      factValue: {
+        candidateName: candidate.candidateName,
+        formattedAddress: candidate.formattedAddress,
+        placeId: candidate.placeId,
+        visualEvidence: candidate.visualEvidence,
+        provenance: {
+          sourceType: inferSourceType("visual", input.sourcePlatform),
+          sourceUrl: input.sourceUrl,
+          sourceRecordId: `${input.jobId}:identification:visual`,
+          extractorVersion: PLACE_ENRICHMENT_EXTRACTION_VERSION,
+          model: null,
+          originPhase: "place_identification",
+        },
+      },
+      sourceType: inferSourceType("visual", input.sourcePlatform),
+      sourceRecordId: `${input.jobId}:identification:visual`,
+      confidence: candidate.verificationConfidence === "high" ? 0.92 : 0.74,
+      expiresAt: addDaysIso(freshnessDaysForFactType("visual_candidate")),
+      originalPayload: { jobId: input.jobId, originPhase: "place_identification" },
+    });
+  }
+
+  if (input.snapshot.placeResolution) {
+    await insertEvidenceRow(client, {
+      ...base,
+      factType: "identification_place_resolution",
+      factValue: {
+        ...input.snapshot.placeResolution,
+        provenance: {
+          sourceType: "place_identification",
+          sourceUrl: input.sourceUrl,
+          sourceRecordId: `${input.jobId}:identification:resolution`,
+          extractorVersion: PLACE_ENRICHMENT_EXTRACTION_VERSION,
+          model: null,
+          originPhase: "place_identification",
+        },
+      },
+      sourceType: "place_identification",
+      sourceRecordId: `${input.jobId}:identification:resolution`,
+      confidence: input.snapshot.placeResolution.confidence === "high" ? 0.9 : 0.7,
+      expiresAt: addDaysIso(freshnessDaysForFactType("place_resolution")),
+      originalPayload: { jobId: input.jobId, originPhase: "place_identification" },
+    });
+  }
+
+  for (const fact of input.facts) {
+    await insertEvidenceRow(client, {
+      ...base,
+      factType: `knowledge_${fact.category}`,
+      factValue: {
+        text: fact.text,
+        category: fact.category,
+        sourceSignal: fact.sourceSignal,
+        confidence: fact.confidence,
+        confidenceScore: fact.confidenceScore ?? confidenceLabelToScore(fact.confidence),
+        structured: fact.structured ?? null,
+        grounding: fact.grounding ?? null,
+        provenance: fact.provenance,
+        attributes: fact.attributes ?? {},
+      },
+      sourceType: inferSourceType(fact.sourceSignal, input.sourcePlatform),
+      sourceRecordId: `${input.jobId}:identification:knowledge:${fact.category}:${fingerprint(fact.text).slice(0, 12)}`,
+      confidence: fact.confidenceScore ?? confidenceLabelToScore(fact.confidence),
+      expiresAt: addDaysIso(freshnessDaysForFactType(`knowledge_${fact.category}`)),
+      originalPayload: { jobId: input.jobId, originPhase: "place_identification" },
+    });
+  }
 }
 
 function parseResultSummary(row: Pick<PlaceEnrichmentJobRow, "result_summary_json"> | null | undefined) {
@@ -733,14 +1256,20 @@ function buildAuditEntry(input: {
   reason?: string | null;
   provider?: string | null;
 }) : EnrichmentSourceAuditEntry {
-  const failed = input.attempted && !input.contributed && Boolean(input.reason) && input.reason !== "not_attempted";
+  const reason = input.reason ?? null;
+  const noUsableReason = Boolean(
+    reason === "vision_ocr_empty" ||
+    reason === "no_verified_candidates" ||
+    reason?.startsWith("no_")
+  );
+  const failed = input.attempted && !input.contributed && Boolean(reason) && reason !== "not_attempted" && !noUsableReason;
   return {
     available: input.available,
     attempted: input.attempted,
     contributed: input.contributed,
     failed,
-    noUsableEvidence: input.attempted && !input.contributed && !failed,
-    reason: input.reason ?? null,
+    noUsableEvidence: input.attempted && !input.contributed && (!failed || noUsableReason),
+    reason,
     provider: input.provider ?? null,
   };
 }
@@ -846,6 +1375,8 @@ export class PlaceEnrichmentJobStore {
   private readonly workerId: string;
   private readonly leaseMs: number;
   private readonly metadataExtractor: typeof extractMetadata;
+  private readonly extractionRunner: typeof runExtractionPipeline;
+  private readonly intelligenceRunner: typeof runIntelligencePipeline;
   private drainScheduled = false;
   private running = false;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -855,11 +1386,15 @@ export class PlaceEnrichmentJobStore {
     workerId?: string;
     leaseMs?: number;
     metadataExtractor?: typeof extractMetadata;
+    extractionRunner?: typeof runExtractionPipeline;
+    intelligenceRunner?: typeof runIntelligencePipeline;
   } = {}) {
     this.database = options.database ?? getPostgresDatabase();
     this.workerId = options.workerId ?? `place-enrichment-${process.pid}-${randomUUID()}`;
     this.leaseMs = options.leaseMs ?? 60_000;
     this.metadataExtractor = options.metadataExtractor ?? extractMetadata;
+    this.extractionRunner = options.extractionRunner ?? runExtractionPipeline;
+    this.intelligenceRunner = options.intelligenceRunner ?? runIntelligencePipeline;
   }
 
   start() {
@@ -891,6 +1426,7 @@ export class PlaceEnrichmentJobStore {
   async triggerFromSavedPlace(input: {
     userId: string;
     savedPlace: PlaceEnrichmentPayload["savedPlace"];
+    identificationEvidence?: unknown;
   }): Promise<TriggerResult | null> {
     if (!isPostgresConfigured()) return null;
     let client: TransactionClient | null = null;
@@ -898,6 +1434,7 @@ export class PlaceEnrichmentJobStore {
       client = await this.database.connect() as TransactionClient;
       await client.query("begin");
       const place = toSavedPlaceRecord(input.savedPlace);
+      const identificationEvidence = sanitizeIdentificationEvidenceSnapshot(input.identificationEvidence);
       const resolution = await resolveCanonicalPlace(client, place);
       const canonicalPlaceId = resolution.canonicalPlaceId;
       if (canonicalPlaceId) {
@@ -935,7 +1472,17 @@ export class PlaceEnrichmentJobStore {
         canonicalPlaceId,
         sourceUrl,
       });
-      let currentContentFingerprint = cheapFingerprintSeedFromSavedPlace(place);
+      let currentContentFingerprint = identificationEvidence
+        ? buildCheapSourceContentFingerprint({
+            title: identificationEvidence.metadata.title || place.title,
+            description: identificationEvidence.metadata.description,
+            imageUrl: identificationEvidence.metadata.imageUrl,
+            siteName: identificationEvidence.metadata.siteName,
+            provider: identificationEvidence.metadata.provider,
+            canonicalUrl: sourceUrl,
+            sourcePlatform,
+          })
+        : cheapFingerprintSeedFromSavedPlace(place);
       if (!currentContentFingerprint && sourceUrl) {
         try {
           const metadata = await this.metadataExtractor(sourceUrl);
@@ -994,7 +1541,7 @@ export class PlaceEnrichmentJobStore {
       let row = latestForSource && latestForSource.status === "failed"
         ? latestForSource
         : null;
-      let duplicate = false;
+      const duplicate = false;
       if (row) {
         const retried = await client.query<PlaceEnrichmentJobRow>(
           `update place_enrichment_jobs
@@ -1011,6 +1558,7 @@ export class PlaceEnrichmentJobStore {
             sourceUrl,
             sourcePlatform,
             contentFingerprint: currentContentFingerprint,
+            identificationEvidence,
             resolutionStrategy: resolution.strategy,
           } satisfies PlaceEnrichmentPayload)],
         );
@@ -1037,6 +1585,7 @@ export class PlaceEnrichmentJobStore {
               sourceUrl,
               sourcePlatform,
               contentFingerprint: currentContentFingerprint,
+              identificationEvidence,
               resolutionStrategy: resolution.strategy,
             } satisfies PlaceEnrichmentPayload),
           ],
@@ -1208,14 +1757,95 @@ export class PlaceEnrichmentJobStore {
     const attempts: EnrichmentAttemptSummary[] = [];
     let extraction: Awaited<ReturnType<typeof runExtractionPipeline>> | null = null;
     let intelligence: Awaited<ReturnType<typeof runIntelligencePipeline>> | null = null;
+    const identificationEvidence = sanitizeIdentificationEvidenceSnapshot(payload.identificationEvidence);
+    const identificationExtraction = identificationEvidence
+      ? extractionFromIdentificationEvidence({ snapshot: identificationEvidence, sourceUrl, sourcePlatform })
+      : null;
+    const accumulatedFacts = new Map<string, ReturnType<typeof extractPlaceKnowledgeFacts>[number]>();
+    const groundingRejections: PlaceKnowledgeGroundingRejection[] = [];
+    const identificationResult = identificationExtraction
+      ? extractPlaceKnowledgeResult({ extraction: identificationExtraction, intelligence: null })
+      : { facts: [], rejections: [] };
+    const identificationFacts = identificationResult.facts;
+    groundingRejections.push(...identificationResult.rejections);
+    for (const fact of identificationFacts) {
+      const enrichedFact = {
+        ...fact,
+        provenance: {
+          sourceType: inferSourceType(fact.sourceSignal, sourcePlatform),
+          sourceUrl,
+          sourceRecordId: `${job.id}:identification:${fact.sourceSignal}`,
+          extractorName: "deterministic_place_knowledge",
+          extractorVersion: PLACE_ENRICHMENT_EXTRACTION_VERSION,
+          model: null,
+          originPhase: "place_identification" as const,
+        },
+        attributes: {
+          ...(fact.attributes || {}),
+          originPhase: "place_identification",
+        },
+      };
+      const key = JSON.stringify([enrichedFact.structured?.kind ?? null, enrichedFact.structured?.value ?? null, enrichedFact.category, enrichedFact.text]);
+      accumulatedFacts.set(key, enrichedFact);
+    }
+
+    // Commit Phase 1 evidence before slow providers so a later timeout cannot erase accepted evidence.
+    if (identificationEvidence) {
+      const phaseOneClient = await this.database.connect() as TransactionClient;
+      try {
+        await phaseOneClient.query("begin");
+        await writeIdentificationSnapshotEvidence(phaseOneClient, {
+          canonicalPlaceId,
+          jobId: job.id,
+          sourceUrl,
+          sourcePlatform,
+          snapshot: identificationEvidence,
+          facts: [...accumulatedFacts.values()],
+        });
+        const phaseOneNow = new Date().toISOString();
+        await insertEvidenceRow(phaseOneClient, {
+          canonicalPlaceId,
+          factType: "grounding_validation_audit",
+          factValue: {
+            phase: "place_identification",
+            validatedStructuredFactCount: [...accumulatedFacts.values()]
+              .filter((fact) => fact.structured && fact.grounding?.validation.status === "validated").length,
+            rejectedUnsupportedFactCount: groundingRejections.length,
+            rejections: groundingRejections,
+            knowledgeSchemaVersion: PLACE_KNOWLEDGE_SCHEMA_VERSION,
+          },
+          sourceType: "grounding_validation_audit",
+          sourceUrl,
+          sourceRecordId: `${job.id}:identification:grounding-validation-audit`,
+          confidence: 1,
+          observedAt: identificationEvidence.observedAt || phaseOneNow,
+          verifiedAt: phaseOneNow,
+          expiresAt: addDaysIso(90),
+          extractionVersion: PLACE_ENRICHMENT_EXTRACTION_VERSION,
+          originalPayload: { jobId: job.id, originPhase: "place_identification" },
+        });
+        await phaseOneClient.query("commit");
+      } catch (error) {
+        await phaseOneClient.query("rollback").catch(() => undefined);
+        throw error;
+      } finally {
+        phaseOneClient.release();
+      }
+    }
     const existingKnowledgeEvidence = await loadCanonicalKnowledgeEvidence(this.database, canonicalPlaceId);
-    const initialCoverage = assessKnowledgeCoverage(existingKnowledgeEvidence);
+    const identificationKnowledgeEvidence = evidenceFromStructuredFacts([...accumulatedFacts.values()]).map((fact) => ({
+      ...fact,
+      sourceUrl,
+      observedAt: identificationEvidence?.observedAt ?? new Date().toISOString(),
+      verifiedAt: new Date().toISOString(),
+      expiresAt: addDaysIso(365),
+    }));
+    const initialCoverage = assessKnowledgeCoverage([...existingKnowledgeEvidence, ...identificationKnowledgeEvidence]);
     const initialRoutingDecision = planAdaptiveEnrichment({ coverage: initialCoverage });
     let routingDecision: AdaptiveRoutingDecision = initialRoutingDecision;
     let coverageBefore = initialCoverage;
     let finalCoverage = initialCoverage;
     let finalStopReason = initialRoutingDecision.stopReason;
-    const accumulatedFacts = new Map<string, ReturnType<typeof extractPlaceKnowledgeFacts>[number]>();
 
     if (!initialRoutingDecision.selectedActions.length) {
       const now = new Date().toISOString();
@@ -1223,6 +1853,16 @@ export class PlaceEnrichmentJobStore {
       try {
         await client.query("begin");
         await writePlaceEvidence(client, canonicalPlaceId, place);
+        if (identificationEvidence) {
+          await writeIdentificationSnapshotEvidence(client, {
+            canonicalPlaceId,
+            jobId: job.id,
+            sourceUrl,
+            sourcePlatform,
+            snapshot: identificationEvidence,
+            facts: [...accumulatedFacts.values()],
+          });
+        }
         await insertEvidenceRow(client, {
           canonicalPlaceId,
           factType: "enrichment_routing_audit",
@@ -1232,7 +1872,17 @@ export class PlaceEnrichmentJobStore {
             actionsConsidered: initialRoutingDecision.actionsConsidered,
             actionsSelected: [],
             actionsSkipped: initialRoutingDecision.skippedActions,
-            factsAddedOrUpdated: [],
+            factsAddedOrUpdated: [...accumulatedFacts.values()]
+              .filter((fact) => fact.structured)
+              .map((fact) => ({
+                kind: fact.structured!.kind,
+                value: fact.structured!.value,
+                confidence: fact.confidenceScore ?? confidenceLabelToScore(fact.confidence),
+                sourceSignal: fact.sourceSignal,
+                supportType: fact.grounding?.supportType ?? "unsupported",
+                groundingConfidence: fact.grounding?.groundingConfidence ?? 0,
+                groundingValidation: fact.grounding?.validation.status ?? "unsupported",
+              })),
             remainingGaps: [],
             finalStopReason: initialRoutingDecision.stopReason,
             costAvoidance: {
@@ -1244,6 +1894,26 @@ export class PlaceEnrichmentJobStore {
           sourceType: "enrichment_routing_audit",
           sourceUrl,
           sourceRecordId: `${job.id}:routing-audit`,
+          confidence: 1,
+          observedAt: now,
+          verifiedAt: now,
+          expiresAt: addDaysIso(90),
+          extractionVersion: PLACE_ENRICHMENT_EXTRACTION_VERSION,
+          originalPayload: { jobId: job.id },
+        });
+        await insertEvidenceRow(client, {
+          canonicalPlaceId,
+          factType: "grounding_validation_audit",
+          factValue: {
+            validatedStructuredFactCount: [...accumulatedFacts.values()]
+              .filter((fact) => fact.structured && fact.grounding?.validation.status === "validated").length,
+            rejectedUnsupportedFactCount: groundingRejections.length,
+            rejections: groundingRejections,
+            knowledgeSchemaVersion: PLACE_KNOWLEDGE_SCHEMA_VERSION,
+          },
+          sourceType: "grounding_validation_audit",
+          sourceUrl,
+          sourceRecordId: `${job.id}:grounding-validation-audit`,
           confidence: 1,
           observedAt: now,
           verifiedAt: now,
@@ -1266,7 +1936,7 @@ export class PlaceEnrichmentJobStore {
           sourceUrl,
           sourcePlatform,
           attemptsRun: 0,
-          knowledgeFactCount: existingKnowledgeEvidence.length,
+          knowledgeFactCount: existingKnowledgeEvidence.length + accumulatedFacts.size,
           adaptiveRouting: {
             ...initialRoutingDecision,
             finalCoverage,
@@ -1291,7 +1961,12 @@ export class PlaceEnrichmentJobStore {
       };
     }
 
-    const pendingAttempts = [1];
+    const identificationCompletedSlowSignal = Boolean(
+      identificationEvidence?.transcript?.text ||
+      identificationEvidence?.ocr?.text ||
+      identificationEvidence?.visual?.selectedCandidate,
+    );
+    const pendingAttempts = [identificationCompletedSlowSignal ? 2 : 1];
     while (pendingAttempts.length) {
       const attemptNumber = pendingAttempts.shift()!;
       const triggerType = attemptNumber === 1 ? "initial" as const : "retry" as const;
@@ -1300,7 +1975,7 @@ export class PlaceEnrichmentJobStore {
         : attemptNumber === 2
           ? ["transcript", "ocr"]
           : ["ocr", "visual"];
-      extraction = await runExtractionPipeline({
+      const freshExtraction = await this.extractionRunner({
         url: sourceUrl,
         mode: "deep",
         attemptNumber,
@@ -1310,7 +1985,8 @@ export class PlaceEnrichmentJobStore {
           attemptNumber === 1 &&
           routingDecision.selectedActions.every((action) => action === "caption"),
       });
-      intelligence = await runIntelligencePipeline({
+      extraction = mergeIdentificationEvidence(freshExtraction, identificationEvidence, sourcePlatform);
+      intelligence = await this.intelligenceRunner({
         source: extraction,
         analytics: {
           attemptNumber,
@@ -1327,10 +2003,18 @@ export class PlaceEnrichmentJobStore {
         sourcePlatform,
         sourceUrl,
       });
-      const attemptFacts = extractPlaceKnowledgeFacts({ extraction, intelligence });
+      const attemptResult = extractPlaceKnowledgeResult({ extraction, intelligence });
+      const attemptFacts = attemptResult.facts;
+      for (const rejection of attemptResult.rejections) {
+        const duplicate = groundingRejections.some((existing) =>
+          existing.reason === rejection.reason &&
+          existing.claimedEvidenceText === rejection.claimedEvidenceText &&
+          existing.model === rejection.model);
+        if (!duplicate) groundingRejections.push(rejection);
+      }
       for (const fact of attemptFacts) {
         const key = JSON.stringify([fact.structured?.kind ?? null, fact.structured?.value ?? null, fact.category, fact.text]);
-        accumulatedFacts.set(key, fact);
+        if (!accumulatedFacts.has(key)) accumulatedFacts.set(key, fact);
       }
       const provisionalEvidence = evidenceFromStructuredFacts([...accumulatedFacts.values()]).map((fact) => ({
         ...fact,
@@ -1403,6 +2087,13 @@ export class PlaceEnrichmentJobStore {
     const extractionVersion = PLACE_ENRICHMENT_EXTRACTION_VERSION;
     const intelligenceVersion = intelligence.providerMeta?.model ?? null;
     const metadata = metadataRecord(place.metadata);
+    const identificationOrigin = {
+      caption: Boolean(identificationEvidence?.metadata.description),
+      transcript: Boolean(identificationEvidence?.transcript?.text),
+      ocr: Boolean(identificationEvidence?.ocr?.text),
+      visual: Boolean(identificationEvidence?.visual?.selectedCandidate),
+      placeResolution: Boolean(identificationEvidence?.placeResolution),
+    };
     const contentFingerprint = buildCheapSourceContentFingerprint({
       title: extraction.metadata.title,
       description: extraction.metadata.description,
@@ -1422,6 +2113,39 @@ export class PlaceEnrichmentJobStore {
       await client.query("begin");
       await writePlaceEvidence(client, canonicalPlaceId, place);
 
+      if (identificationEvidence?.placeResolution) {
+        await insertEvidenceRow(client, {
+          canonicalPlaceId,
+          factType: "identification_place_resolution",
+          factValue: {
+            ...identificationEvidence.placeResolution,
+            provenance: {
+              sourceType: "place_identification",
+              sourceUrl,
+              sourceRecordId: `${job.id}:identification:resolution`,
+              extractorVersion: extractionVersion,
+              model: null,
+              originPhase: "place_identification",
+            },
+            freshness: {
+              observedAt: identificationEvidence.observedAt || observedAt,
+              verifiedAt,
+              staleAfterDays: freshnessDaysForFactType("place_resolution"),
+            },
+          },
+          sourceType: "place_identification",
+          sourceUrl,
+          sourceRecordId: `${job.id}:identification:resolution`,
+          confidence: identificationEvidence.placeResolution.confidence === "high" ? 0.9 : 0.7,
+          observedAt: identificationEvidence.observedAt || observedAt,
+          verifiedAt,
+          expiresAt: addDaysIso(freshnessDaysForFactType("place_resolution")),
+          extractionVersion,
+          intelligenceVersion,
+          originalPayload: { jobId: job.id, originPhase: "place_identification" },
+        });
+      }
+
       await insertEvidenceRow(client, {
         canonicalPlaceId,
         factType: "source_metadata",
@@ -1437,6 +2161,7 @@ export class PlaceEnrichmentJobStore {
             sourceRecordId: job.id,
             extractorVersion: extractionVersion,
             model: null,
+            originPhase: identificationOrigin.caption ? "place_identification" : "background_enrichment",
           },
           freshness: {
             observedAt,
@@ -1502,9 +2227,10 @@ export class PlaceEnrichmentJobStore {
             provenance: {
               sourceType: inferSourceType("caption", sourcePlatform),
               sourceUrl,
-              sourceRecordId: `${job.id}:caption`,
+              sourceRecordId: identificationOrigin.caption ? `${job.id}:identification:caption` : `${job.id}:caption`,
               extractorVersion: extractionVersion,
               model: null,
+              originPhase: identificationOrigin.caption ? "place_identification" : "background_enrichment",
             },
             freshness: {
               observedAt,
@@ -1514,7 +2240,7 @@ export class PlaceEnrichmentJobStore {
           },
           sourceType: inferSourceType("caption", sourcePlatform),
           sourceUrl,
-          sourceRecordId: `${job.id}:caption`,
+          sourceRecordId: identificationOrigin.caption ? `${job.id}:identification:caption` : `${job.id}:caption`,
           confidence: 0.7,
           observedAt,
           verifiedAt,
@@ -1536,9 +2262,10 @@ export class PlaceEnrichmentJobStore {
             provenance: {
               sourceType: inferSourceType("transcript", sourcePlatform),
               sourceUrl,
-              sourceRecordId: `${job.id}:transcript`,
+              sourceRecordId: identificationOrigin.transcript ? `${job.id}:identification:transcript` : `${job.id}:transcript`,
               extractorVersion: extractionVersion,
               model: extraction.transcript.source ?? null,
+              originPhase: identificationOrigin.transcript ? "place_identification" : "background_enrichment",
             },
             freshness: {
               observedAt,
@@ -1548,7 +2275,7 @@ export class PlaceEnrichmentJobStore {
           },
           sourceType: inferSourceType("transcript", sourcePlatform),
           sourceUrl,
-          sourceRecordId: `${job.id}:transcript`,
+          sourceRecordId: identificationOrigin.transcript ? `${job.id}:identification:transcript` : `${job.id}:transcript`,
           confidence: extraction.transcript.used ? 0.9 : 0.6,
           observedAt,
           verifiedAt,
@@ -1569,9 +2296,10 @@ export class PlaceEnrichmentJobStore {
             provenance: {
               sourceType: inferSourceType("ocr", sourcePlatform),
               sourceUrl,
-              sourceRecordId: `${job.id}:ocr`,
+              sourceRecordId: identificationOrigin.ocr ? `${job.id}:identification:ocr` : `${job.id}:ocr`,
               extractorVersion: extractionVersion,
               model: extraction.ocr.provider ?? null,
+              originPhase: identificationOrigin.ocr ? "place_identification" : "background_enrichment",
             },
             freshness: {
               observedAt,
@@ -1581,7 +2309,7 @@ export class PlaceEnrichmentJobStore {
           },
           sourceType: inferSourceType("ocr", sourcePlatform),
           sourceUrl,
-          sourceRecordId: `${job.id}:ocr`,
+          sourceRecordId: identificationOrigin.ocr ? `${job.id}:identification:ocr` : `${job.id}:ocr`,
           confidence: extraction.ocr.used ? 0.75 : 0.5,
           observedAt,
           verifiedAt,
@@ -1609,9 +2337,10 @@ export class PlaceEnrichmentJobStore {
             provenance: {
               sourceType: inferSourceType("visual", sourcePlatform),
               sourceUrl,
-              sourceRecordId: `${job.id}:visual`,
+              sourceRecordId: identificationOrigin.visual ? `${job.id}:identification:visual` : `${job.id}:visual`,
               extractorVersion: extractionVersion,
               model: null,
+              originPhase: identificationOrigin.visual ? "place_identification" : "background_enrichment",
             },
             freshness: {
               observedAt,
@@ -1621,7 +2350,7 @@ export class PlaceEnrichmentJobStore {
           },
           sourceType: inferSourceType("visual", sourcePlatform),
           sourceUrl,
-          sourceRecordId: `${job.id}:visual`,
+          sourceRecordId: identificationOrigin.visual ? `${job.id}:identification:visual` : `${job.id}:visual`,
           confidence: extraction.visualFallback.selectedCandidate.verificationConfidence === "high" ? 0.92 : 0.74,
           observedAt,
           verifiedAt,
@@ -1743,6 +2472,7 @@ export class PlaceEnrichmentJobStore {
       }
 
       for (const fact of facts) {
+        if (fact.attributes?.originPhase === "place_identification") continue;
         await insertEvidenceRow(client, {
           canonicalPlaceId,
           factType: `knowledge_${fact.category}`,
@@ -1753,10 +2483,12 @@ export class PlaceEnrichmentJobStore {
             confidence: fact.confidence,
             confidenceScore: fact.confidenceScore ?? confidenceLabelToScore(fact.confidence),
             structured: fact.structured ?? null,
+            grounding: fact.grounding ?? null,
             provenance: fact.provenance ?? {
               sourceType: inferSourceType(fact.sourceSignal, sourcePlatform),
               sourceUrl,
               sourceRecordId: `${job.id}:knowledge:${fact.category}:${fingerprint(fact.text).slice(0, 12)}`,
+              extractorName: "deterministic_place_knowledge",
               extractorVersion: extractionVersion,
               model: fact.sourceSignal === "intelligence" ? intelligenceVersion : null,
             },
@@ -1794,6 +2526,9 @@ export class PlaceEnrichmentJobStore {
             value: fact.structured!.value,
             confidence: fact.confidenceScore ?? confidenceLabelToScore(fact.confidence),
             sourceSignal: fact.sourceSignal,
+            supportType: fact.grounding?.supportType ?? "unsupported",
+            groundingConfidence: fact.grounding?.groundingConfidence ?? 0,
+            groundingValidation: fact.grounding?.validation.status ?? "unsupported",
           })),
         finalCoverage,
         remainingGaps: unresolvedCoverageKinds(finalCoverage),
@@ -1804,6 +2539,27 @@ export class PlaceEnrichmentJobStore {
           ladderAttemptsAvoided: Math.max(0, 3 - attempts.length),
         },
       };
+
+      await insertEvidenceRow(client, {
+        canonicalPlaceId,
+        factType: "grounding_validation_audit",
+        factValue: {
+          validatedStructuredFactCount: facts.filter((fact) => fact.structured && fact.grounding?.validation.status === "validated").length,
+          rejectedUnsupportedFactCount: groundingRejections.length,
+          rejections: groundingRejections,
+          knowledgeSchemaVersion: PLACE_KNOWLEDGE_SCHEMA_VERSION,
+        },
+        sourceType: "grounding_validation_audit",
+        sourceUrl,
+        sourceRecordId: `${job.id}:grounding-validation-audit`,
+        confidence: 1,
+        observedAt,
+        verifiedAt,
+        expiresAt: addDaysIso(90),
+        extractionVersion,
+        intelligenceVersion,
+        originalPayload: { jobId: job.id },
+      });
 
       await insertEvidenceRow(client, {
         canonicalPlaceId,

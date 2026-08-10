@@ -31,14 +31,30 @@ export async function enrichWithFrameOcr(metadata: ExtractedMetadata, screenshot
   if (screenshots.length > 0) {
     const visionScreens = await extractVisionOcrFromScreenshots(screenshots);
     if (visionScreens.text.trim()) {
-      return { attempted: true, used: true, text: visionScreens.text.trim(), reason: null };
+      const screenshot = screenshots.length === 1 ? screenshots[0] : null;
+      return {
+        attempted: true,
+        used: true,
+        text: visionScreens.text.trim(),
+        reason: null,
+        provider: "openai_vision",
+        regions: screenshot
+          ? [{
+              text: visionScreens.text.trim(),
+              frameLabel: screenshot.label,
+              frameIndex: screenshot.frameIndex,
+              timestampSec: screenshot.timestampSec,
+              boundingBox: null,
+            }]
+          : undefined,
+      };
     }
   }
 
   if (metadata.platform === "youtube" || metadata.platform === "instagram") {
     const parsed = await runPythonJsonScript("fetch_ocr_text.py", metadata.canonicalUrl, 120000);
     if (parsed?.ok && typeof parsed.text === "string" && parsed.text.trim()) {
-      return { attempted: true, used: true, text: parsed.text.trim(), reason: null };
+      return { attempted: true, used: true, text: parsed.text.trim(), reason: null, provider: String(parsed.engine || "local_python") };
     }
 
     const pythonReason = typeof parsed?.errorCode === "string"
@@ -52,7 +68,7 @@ export async function enrichWithFrameOcr(metadata: ExtractedMetadata, screenshot
     if (metadata.imageUrl) {
       const vision = await extractVisionOcr(metadata.imageUrl);
       if (vision.text.trim()) {
-        return { attempted: true, used: true, text: vision.text.trim(), reason: null };
+        return { attempted: true, used: true, text: vision.text.trim(), reason: null, provider: "openai_vision" };
       }
       if (vision.reason) {
         return {
@@ -75,7 +91,7 @@ export async function enrichWithFrameOcr(metadata: ExtractedMetadata, screenshot
   if (metadata.imageUrl) {
     const vision = await extractVisionOcr(metadata.imageUrl);
     if (vision.text.trim()) {
-      return { attempted: true, used: true, text: vision.text.trim(), reason: null };
+      return { attempted: true, used: true, text: vision.text.trim(), reason: null, provider: "openai_vision" };
     }
     if (vision.reason) {
       return {
