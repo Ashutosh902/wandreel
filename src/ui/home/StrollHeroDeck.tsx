@@ -550,7 +550,7 @@ function DeckCard({
             </div>
           ) : null}
         </div>
-      <h3>{stroll.name}</h3>
+      {!isFailed ? <h3>{stroll.name}</h3> : null}
       <p className="wr-stroll-hero-body-copy">{bodyCopy}</p>
       {isWorking ? (
         <div className="wr-stroll-hero-progress" role="status" aria-label={`${stroll.name} is ${presentation.label.toLowerCase()}`}>
