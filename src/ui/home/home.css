@@ -750,9 +750,7 @@
 
 .wr-stroll-hero-card.is-create {
   background:
-    radial-gradient(circle at 18% 20%, rgba(255, 255, 255, 0.6), transparent 22%),
-    radial-gradient(circle at 84% 76%, rgba(255, 153, 92, 0.24), transparent 28%),
-    linear-gradient(145deg, #fbf6ef 0%, #f4eadc 54%, #eadfcd 100%);
+    linear-gradient(145deg, #faf5ee 0%, #f3ebdf 58%, #ede3d4 100%);
 }
 
 .wr-stroll-hero-create-shell {
@@ -766,42 +764,16 @@
   text-align: center;
 }
 
-.wr-stroll-hero-card.is-create::before {
-  content: "";
-  position: absolute;
-  inset: auto -12% -20% auto;
-  width: 180px;
-  height: 180px;
-  border-radius: 999px;
-  background: radial-gradient(circle, rgba(190, 117, 66, 0.18) 0%, rgba(255, 255, 255, 0) 72%);
-  filter: blur(10px);
-  pointer-events: none;
-}
-
-.wr-stroll-hero-card.is-create::after {
-  content: "";
-  position: absolute;
-  inset: 18% auto auto 8%;
-  width: 120px;
-  height: 120px;
-  border-radius: 28px;
-  border: 1px solid rgba(150, 113, 78, 0.14);
-  background: rgba(255, 255, 255, 0.28);
-  transform: rotate(-14deg);
-  pointer-events: none;
-}
-
 .wr-stroll-hero-create-plus {
-  width: 72px;
-  height: 72px;
+  width: 64px;
+  height: 64px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 24px;
-  border: 1px solid rgba(189, 122, 70, 0.22);
-  background: rgba(255, 251, 247, 0.88);
-  backdrop-filter: blur(14px);
-  box-shadow: 0 14px 26px rgba(115, 85, 57, 0.14);
+  border-radius: 20px;
+  border: 1px solid rgba(180, 130, 91, 0.18);
+  background: rgba(255, 252, 248, 0.92);
+  box-shadow: 0 10px 20px rgba(115, 85, 57, 0.1);
   color: #b45528;
 }
 
@@ -814,9 +786,9 @@
 .wr-stroll-hero-card.is-create h3 {
   max-width: none;
   margin-top: 0;
-  font-size: 18px;
+  font-size: 17px;
   line-height: 1.18;
-  font-weight: 700;
+  font-weight: 650;
   letter-spacing: -0.01em;
   text-transform: none;
   color: #173024;
@@ -1081,44 +1053,38 @@
   color: rgba(255, 247, 237, 0.82);
 }
 
-.wr-stroll-hero-metric-row {
+.wr-stroll-hero-info-row {
   position: relative;
   z-index: 1;
-  margin-top: 0.72rem;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.42rem;
+  margin-top: 0.76rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
 }
 
-.wr-stroll-hero-metric {
-  border-radius: 0.78rem;
-  padding: 0.48rem 0.54rem;
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+.wr-stroll-hero-info-chip {
+  min-width: 0;
+  flex: 1 1 10rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.42rem;
+  border-radius: 999px;
+  padding: 0.48rem 0.7rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   backdrop-filter: blur(8px);
 }
 
-.wr-stroll-hero-metric svg {
+.wr-stroll-hero-info-chip svg {
+  flex-shrink: 0;
   color: rgba(255, 247, 237, 0.86);
   width: 14px;
   height: 14px;
 }
 
-.wr-stroll-hero-metric-label {
-  display: block;
-  margin-top: 0.22rem;
-  font-size: 9px;
-  line-height: 1.2;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(255, 247, 237, 0.66);
-}
-
-.wr-stroll-hero-metric strong {
-  display: block;
-  margin-top: 0.18rem;
-  font-size: 12px;
+.wr-stroll-hero-info-chip strong {
+  min-width: 0;
+  font-size: 11.7px;
   line-height: 1.16;
   font-weight: 800;
   color: #fff;
@@ -1140,7 +1106,7 @@
   margin-top: 0.28rem;
 }
 
-.wr-stroll-hero-card.is-minimal-failed .wr-stroll-hero-metric-row {
+.wr-stroll-hero-card.is-minimal-failed .wr-stroll-hero-info-row {
   margin-top: 0.54rem;
 }
 

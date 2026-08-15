@@ -467,9 +467,7 @@ function DeckCard({
   const bodyCopy = isFailed
     ? getMinimalFailureCopy(stroll, presentation.description)
     : stroll.failureMessage || stroll.description || presentation.description;
-  const locationMeta = isFailed ? "Place" : "Place";
   const whenRangeValue = formatWhenRange(stroll) || formatStrollMeta(stroll) || "Flexible";
-  const whenRangeMeta = isFailed ? "When" : "When / Range";
 
   return (
     <article
@@ -556,15 +554,13 @@ function DeckCard({
           <small>{effectiveStatus === "queued" ? "Starting curation..." : "Curating your stroll..."}</small>
         </div>
       ) : null}
-      <div className="wr-stroll-hero-metric-row">
-        <div className="wr-stroll-hero-metric">
-          <MapPinned size={16} />
-          <span className="wr-stroll-hero-metric-label">{locationMeta}</span>
+      <div className="wr-stroll-hero-info-row" aria-label="Stroll details">
+        <div className="wr-stroll-hero-info-chip">
+          <MapPinned size={15} />
           <strong>{stroll.city}</strong>
         </div>
-        <div className="wr-stroll-hero-metric">
-          <Clock3 size={16} />
-          <span className="wr-stroll-hero-metric-label">{whenRangeMeta}</span>
+        <div className="wr-stroll-hero-info-chip">
+          <Clock3 size={15} />
           <strong>{whenRangeValue}</strong>
         </div>
       </div>
