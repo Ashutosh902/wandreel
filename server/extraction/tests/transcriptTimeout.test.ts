@@ -14,10 +14,10 @@ test("attempt 3 transcript timeout is capped at 60 seconds", () => {
   assert.equal(getTranscriptTimeoutMsForAttempt(3), 60000);
 });
 
-test("instagram transcript timeout gets a larger budget", () => {
-  assert.equal(getTranscriptTimeoutMsForAttempt(1, "instagram"), 45000);
+test("instagram transcript timeout gets a 60 second budget", () => {
+  assert.equal(getTranscriptTimeoutMsForAttempt(1, "instagram"), 60000);
   assert.equal(getTranscriptTimeoutMsForAttempt(2, "instagram"), 60000);
-  assert.equal(getTranscriptTimeoutMsForAttempt(3, "instagram"), 90000);
+  assert.equal(getTranscriptTimeoutMsForAttempt(3, "instagram"), 60000);
 });
 
 test("instagram travel boilerplate description is treated as weak", () => {

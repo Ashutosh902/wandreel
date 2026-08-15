@@ -151,7 +151,7 @@ const extractionCache = new Map<string, CacheEntry>();
 const attemptExecutionProfileCache = new Map<string, AttemptExecutionProfileEntry>();
 const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000;
 const DEFAULT_METADATA_BUDGET_MS = 12000;
-const DEFAULT_TRANSCRIPT_BUDGET_MS = 60000;
+const DEFAULT_TRANSCRIPT_BUDGET_MS = 90000;
 const ATTEMPT1_TRANSCRIPT_BUDGET_MS = 20000;
 const ATTEMPT2_TRANSCRIPT_BUDGET_MS = 30000;
 const ATTEMPT3_TRANSCRIPT_BUDGET_MS = 60000;
@@ -971,9 +971,7 @@ export function getTranscriptTimeoutMsForAttempt(
 ): number {
   const configuredMs = getNumberEnv("EXTRACTION_TRANSCRIPT_BUDGET_MS", DEFAULT_TRANSCRIPT_BUDGET_MS);
   if (platform === "instagram") {
-    if (attemptNumber <= 1) return Math.min(configuredMs, 45000);
-    if (attemptNumber === 2) return Math.min(configuredMs, 60000);
-    return Math.min(configuredMs, 90000);
+    return Math.min(configuredMs, 60000);
   }
   if (attemptNumber <= 1) return Math.min(configuredMs, ATTEMPT1_TRANSCRIPT_BUDGET_MS);
   if (attemptNumber === 2) return Math.min(configuredMs, ATTEMPT2_TRANSCRIPT_BUDGET_MS);
