@@ -750,6 +750,7 @@
 
 .wr-stroll-hero-card.is-create {
   background:
+    radial-gradient(circle at 16% 18%, rgba(255, 255, 255, 0.5), transparent 20%),
     linear-gradient(145deg, #faf5ee 0%, #f3ebdf 58%, #ede3d4 100%);
 }
 
@@ -762,6 +763,27 @@
   justify-items: center;
   gap: 0.9rem;
   text-align: center;
+}
+
+.wr-stroll-hero-create-art {
+  position: absolute;
+  right: -0.8rem;
+  bottom: -0.5rem;
+  width: 10rem;
+  height: 10rem;
+  z-index: 0;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-size: contain;
+  opacity: 0.14;
+  filter: saturate(0.7) brightness(1.02);
+  transform: rotate(-10deg);
+  pointer-events: none;
+}
+
+.wr-stroll-hero-card.is-create .wr-stroll-hero-overlay {
+  background:
+    linear-gradient(145deg, rgba(255, 251, 247, 0.62) 0%, rgba(236, 225, 209, 0.18) 100%);
 }
 
 .wr-stroll-hero-create-plus {

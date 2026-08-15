@@ -5,6 +5,7 @@ import activityArt from "../assets/categories/activity.png";
 import exploreArt from "../assets/categories/explore.png";
 import stayArt from "../assets/categories/stay.png";
 import tasteArt from "../assets/categories/taste.png";
+import cartoonGlobe from "../assets/hero/cartoon-globe.png";
 import golgharPatna from "../assets/hero/golghar-patna.jpeg";
 import { getStrollStatusPresentation, type PersistentStrollSummary, type StrollLibraryLoadState } from "./strollLibrary";
 
@@ -397,6 +398,11 @@ function DeckCard({
         tabIndex={isInteractive ? 0 : undefined}
       >
         <div className="wr-stroll-hero-overlay" />
+        <div
+          className="wr-stroll-hero-create-art"
+          aria-hidden="true"
+          style={{ backgroundImage: `url(${cartoonGlobe})` }}
+        />
         <div className="wr-stroll-hero-topline">
           <div className="wr-stroll-hero-kicker-wrap">
             <p className="wr-stroll-hero-kicker">YOUR STROLL</p>
