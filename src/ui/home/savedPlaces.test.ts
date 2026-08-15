@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   createEmptySavedPlacesByCategory,
+  mapSavedPlaceApiItem,
   readSavedPlacesByCategory,
+  sanitizeSavedPlaceImageForPersistence,
   setSavedPlacesCacheUser,
   writeSavedPlacesByCategory,
 } from "./savedPlaces";
+import { categoryFallbackImage } from "./addFlowState";
 
 type MockStorage = {
   getItem: (key: string) => string | null;
@@ -106,4 +109,23 @@ test("saved places cache is scoped by active user", () => {
   setSavedPlacesCacheUser("user_a");
   assert.equal(readSavedPlacesByCategory().Taste[0]?.title, "Cafe A");
   assert.equal(readSavedPlacesByCategory().Explore.length, 0);
+});
+
+test("saved place API mapping prefers alternate real image fields", () => {
+  const mapped = mapSavedPlaceApiItem({
+    placeId: "taste-1",
+    title: "Craft Coffee",
+    category: "Taste",
+    metadata: {
+      locality: "Sri Krishna Puri",
+      photoUrl: "http://example.com/craft.jpg",
+    } as never,
+  });
+
+  assert.equal(mapped?.imageUrl, "https://example.com/craft.jpg");
+});
+
+test("saved place image persistence strips known placeholder art", () => {
+  assert.equal(sanitizeSavedPlaceImageForPersistence(categoryFallbackImage.Taste), null);
+  assert.equal(sanitizeSavedPlaceImageForPersistence("https://example.com/real-place.jpg"), "https://example.com/real-place.jpg");
 });

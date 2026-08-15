@@ -1,5 +1,6 @@
 import { categoryImageByLabel, type CategoryLabel } from "./home.data";
 import { CATEGORY_FEED_CACHE_KEY } from "./addFlowState";
+import { categoryFallbackImage } from "./addFlowState";
 import type { EntityIntent } from "./intent";
 import { resolveEntityIntent } from "./intent";
 import { notifyCoinWalletUpdated, type CoinWallet } from "../economy/coinWallet";
@@ -68,10 +69,20 @@ type PersistSavedPlaceOptions = {
 export const SAVED_PLACES_UPDATED_EVENT = "wr:category-saved-updated";
 const categoryOrder: CategoryLabel[] = ["Taste", "Activity", "Stay", "Explore"];
 const SAVED_PLACES_ACTIVE_USER_KEY = "wr_saved_places_active_user_v1";
+const savedPlacePlaceholderImages = new Set<string>([
+  ...Object.values(categoryImageByLabel),
+  ...Object.values(categoryFallbackImage),
+]);
+
+function isSavedPlacePlaceholderImage(value: string | null | undefined) {
+  const trimmed = String(value || "").trim();
+  return trimmed ? savedPlacePlaceholderImages.has(trimmed) : false;
+}
 
 export function normalizeSavedPlaceImageUrl(value: string | null | undefined): string {
   const trimmed = String(value || "").trim();
   if (!trimmed) return "";
+  if (isSavedPlacePlaceholderImage(trimmed)) return "";
   if (/^https?:\/\//i.test(trimmed)) {
     return trimmed.replace(/^http:\/\//i, "https://");
   }
@@ -83,6 +94,33 @@ export function normalizeSavedPlaceImageUrl(value: string | null | undefined): s
 
 export function getSavedPlaceFallbackImage(category: CategoryLabel): string {
   return categoryImageByLabel[category];
+}
+
+export function sanitizeSavedPlaceImageForPersistence(value: string | null | undefined): string | null {
+  const normalized = normalizeSavedPlaceImageUrl(value);
+  return normalized || null;
+}
+
+function readSavedPlaceMetadataImage(metadata: SavedPlaceApiItem["metadata"]): string {
+  if (!metadata || typeof metadata !== "object") return "";
+  const record = metadata as Record<string, unknown>;
+  const placeResolution = record.placeResolution && typeof record.placeResolution === "object"
+    ? record.placeResolution as Record<string, unknown>
+    : null;
+  const candidates = [
+    record.imageUrl,
+    record.photoUrl,
+    record.thumbnailUrl,
+    record.latestImageUrl,
+    placeResolution?.imageUrl,
+    placeResolution?.photoUrl,
+    placeResolution?.thumbnailUrl,
+  ];
+  for (const candidate of candidates) {
+    const normalized = normalizeSavedPlaceImageUrl(typeof candidate === "string" ? candidate : null);
+    if (normalized) return normalized;
+  }
+  return "";
 }
 
 function buildSavedPlacesStorageKey(userId: string | null) {
@@ -383,7 +421,7 @@ export function mapSavedPlaceApiItem(item: SavedPlaceApiItem): SavedPlaceRecord 
   const title = String(item.title || "Saved place").trim() || "Saved place";
   const locality = String(item.metadata?.locality || "Unknown locality").trim() || "Unknown locality";
   const fullAddress = String(item.metadata?.fullAddress || locality).trim() || locality;
-  const imageUrl = normalizeSavedPlaceImageUrl(item.metadata?.imageUrl);
+  const imageUrl = readSavedPlaceMetadataImage(item.metadata);
   const videoUrl = String(item.metadata?.videoUrl || "").trim();
   const intent = resolveEntityIntent({
     category,

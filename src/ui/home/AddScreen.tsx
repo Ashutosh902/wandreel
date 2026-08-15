@@ -24,7 +24,7 @@ import { createRunToastDeduper, type AddToastReason } from "./addToastDeduper";
 import { isPlaceNeedsManualReview, shouldShowImmediateDraftPlaces } from "./addDraftVisibility";
 import { isValidDetectedPlaceName, sanitizeDetectedPlace, sanitizeDetectedPlaces } from "./addEntitySanitizer";
 import { buildIntentSubtitle, resolveEntityIntent } from "./intent";
-import { upsertSavedPlace } from "./savedPlaces";
+import { sanitizeSavedPlaceImageForPersistence, upsertSavedPlace } from "./savedPlaces";
 import {
   SHARED_INTENT_RECEIVED_EVENT,
   clearPendingSharedIntent,
@@ -2129,7 +2129,7 @@ export function AddScreen() {
             locality: place.locality,
             fullAddress: place.fullAddress,
             source: place.source,
-            imageUrl: place.imageUrl,
+            imageUrl: sanitizeSavedPlaceImageForPersistence(place.imageUrl),
             videoUrl: place.videoUrl,
             confidence: place.confidence ?? null,
             evidenceText: place.evidenceText ?? null,
