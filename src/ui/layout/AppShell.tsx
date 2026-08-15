@@ -17,7 +17,7 @@ export function AppShell({ children }: AppShellProps) {
 
   useEffect(() => {
     if (!showSplash) {
-      const fade = setTimeout(() => setSplashVisible(false), 260);
+      const fade = setTimeout(() => setSplashVisible(false), 320);
       return () => clearTimeout(fade);
     }
   }, [showSplash]);

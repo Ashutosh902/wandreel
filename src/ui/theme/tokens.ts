@@ -1,4 +1,4 @@
-export const SPLASH_DURATION_MS = 2000;
+export const SPLASH_DURATION_MS = 1650;
 export const SPLASH_TRIGGER = "every_open" as const;
 
 export const BRAND_TOKENS = {

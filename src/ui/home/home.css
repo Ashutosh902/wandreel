@@ -707,9 +707,9 @@
 .wr-stroll-hero-card h3 {
   position: relative;
   z-index: 1;
-  margin: 0.42rem 0 0;
+  margin: 0.36rem 0 0;
   max-width: 14rem;
-  font-size: 21px;
+  font-size: 20px;
   line-height: 1.08;
   font-weight: 800;
   letter-spacing: -0.03em;
@@ -825,7 +825,7 @@
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 0.6rem;
+  gap: 0.5rem;
 }
 
 .wr-stroll-hero-kicker-stack {
@@ -1008,10 +1008,10 @@
 .wr-stroll-hero-body-copy {
   position: relative;
   z-index: 1;
-  margin: 0.36rem 0 0;
+  margin: 0.28rem 0 0;
   max-width: 14rem;
-  font-size: 11.5px;
-  line-height: 1.34;
+  font-size: 11.2px;
+  line-height: 1.3;
   font-weight: 600;
   color: rgba(255, 247, 237, 0.88);
   display: -webkit-box;
@@ -1056,10 +1056,10 @@
 .wr-stroll-hero-info-row {
   position: relative;
   z-index: 1;
-  margin-top: 0.76rem;
+  margin-top: 0.62rem;
   display: flex;
   flex-wrap: wrap;
-  gap: 0.4rem;
+  gap: 0.34rem;
 }
 
 .wr-stroll-hero-info-chip {
@@ -1069,7 +1069,7 @@
   align-items: center;
   gap: 0.42rem;
   border-radius: 999px;
-  padding: 0.48rem 0.7rem;
+  padding: 0.42rem 0.66rem;
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.12);
   backdrop-filter: blur(8px);
@@ -1084,7 +1084,7 @@
 
 .wr-stroll-hero-info-chip strong {
   min-width: 0;
-  font-size: 11.7px;
+  font-size: 11.3px;
   line-height: 1.16;
   font-weight: 800;
   color: #fff;
@@ -1103,11 +1103,11 @@
 }
 
 .wr-stroll-hero-card.is-minimal-failed .wr-stroll-hero-body-copy {
-  margin-top: 0.28rem;
+  margin-top: 0.22rem;
 }
 
 .wr-stroll-hero-card.is-minimal-failed .wr-stroll-hero-info-row {
-  margin-top: 0.54rem;
+  margin-top: 0.48rem;
 }
 
 .wr-stroll-hero-actions {

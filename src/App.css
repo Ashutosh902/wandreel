@@ -13,7 +13,7 @@
   position: fixed;
   inset: 0;
   z-index: 30;
-  transition: opacity 260ms ease, transform 260ms ease;
+  transition: opacity 320ms cubic-bezier(0.22, 1, 0.36, 1), transform 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .splash-layer.is-active { opacity: 1; transform: translateY(0); }
@@ -116,7 +116,7 @@
   width: min(50vw, 168px);
   display: grid;
   place-items: center;
-  animation: splashFloatIn 680ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: splashFloatIn 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .splash-image-glow {
@@ -160,7 +160,7 @@
   font-weight: 900;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  animation: splashTextRise 520ms cubic-bezier(0.2, 0.9, 0.25, 1) 180ms both;
+  animation: splashTextRise 460ms cubic-bezier(0.2, 0.9, 0.25, 1) 140ms both;
 }
 
 .splash-tagline {
@@ -172,7 +172,7 @@
   letter-spacing: 0.28em;
   text-transform: uppercase;
   text-align: center;
-  animation: splashTaglineFade 540ms cubic-bezier(0.2, 0.9, 0.25, 1) 320ms both;
+  animation: splashTaglineFade 500ms cubic-bezier(0.2, 0.9, 0.25, 1) 240ms both;
 }
 
 @keyframes splashFloatIn {
