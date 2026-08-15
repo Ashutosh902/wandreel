@@ -108,7 +108,8 @@
   width: min(84vw, 360px);
   display: grid;
   justify-items: center;
-  gap: 0;
+  grid-template-rows: auto 1fr auto;
+  min-height: clamp(28rem, 68vh, 36rem);
 }
 
 .splash-image-shell {
@@ -151,7 +152,7 @@
   justify-items: center;
   gap: 0.28rem;
   width: min(84vw, 320px);
-  margin-top: clamp(9rem, 25vh, 15rem);
+  align-self: end;
 }
 
 .splash-wordmark {
