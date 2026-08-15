@@ -17,6 +17,7 @@ export type DraftStrollPayload = {
   source: StrollSource;
   name: string;
   city: string;
+  radiusKm?: number;
   startDate?: string;
   endDate?: string;
   requestedStartTime?: string;
@@ -30,6 +31,7 @@ export type DraftStrollPayload = {
 export type DraftStrollSeed = {
   name: string;
   city: string;
+  radiusKm?: number;
   startDate: string;
   endDate: string;
   requestedStartTime: string;
@@ -115,6 +117,7 @@ export function buildDraftStrollPayload(input: {
   clientRequestId: string;
   source?: StrollSource;
   city: string;
+  radiusKm?: number;
   startDate?: string;
   endDate?: string;
   requestedStartTime?: string;
@@ -128,6 +131,7 @@ export function buildDraftStrollPayload(input: {
     source: input.source ?? "manual",
     name: `${city} Stroll`,
     city,
+    radiusKm: typeof input.radiusKm === "number" ? input.radiusKm : 10,
     travellerCount: input.travellerCount,
     interests: input.interests.slice(0, 10),
     placeIds: [],

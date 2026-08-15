@@ -37,6 +37,13 @@ export const categories: CategoryItem[] = [
   { label: "Explore", icon: Camera, fill: "from-[#0F766E] to-[#0E7490]", image: exploreCategoryImage },
 ];
 
+export const categoryImageByLabel: Record<CategoryLabel, string> = {
+  Taste: tasteCategoryImage,
+  Activity: activityCategoryImage,
+  Stay: stayCategoryImage,
+  Explore: exploreCategoryImage,
+};
+
 export const navItems: NavItem[] = [
   { label: "Discover", icon: Compass },
   { label: "Map", icon: MapPin },

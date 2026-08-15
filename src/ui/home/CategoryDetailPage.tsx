@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Globe2, Pencil, Search, Share2, Trash2, X } from "lucide-react";
 import type { CategoryLabel } from "./home.data";
+import { SafePlaceImage } from "./SafePlaceImage";
 import { useUx } from "../layout/UxProvider";
 import { distanceKm } from "../geo";
 import {
@@ -395,7 +396,13 @@ export function CategoryDetailPage({
               </button>
             </div>
             <div className="wr-taste-sheet-body">
-              <img src={activePlace.imageUrl} alt={activePlace.title} className="wr-taste-sheet-image" />
+              <SafePlaceImage
+                src={activePlace.imageUrl}
+                category={activePlace.category}
+                alt={activePlace.title}
+                className="wr-taste-sheet-image"
+                loading="eager"
+              />
               <h3 className="wr-taste-sheet-title">{activePlace.title}</h3>
               <p className="wr-taste-sheet-address">Full address: {activePlace.fullAddress}</p>
               <div className="wr-taste-sheet-actions">
@@ -630,7 +637,12 @@ export function CategoryDetailPage({
             }}
           >
             <div className="wr-taste-row-thumb-wrap">
-              <img src={place.imageUrl} alt={place.title} className="wr-taste-row-thumb" />
+              <SafePlaceImage
+                src={place.imageUrl}
+                category={place.category}
+                alt={place.title}
+                className="wr-taste-row-thumb"
+              />
               {isPlaceGlobal(place) ? (
                 <span className="wr-taste-row-global-marker" aria-label="Globally recommended place">
                   <Globe2 size={11} />

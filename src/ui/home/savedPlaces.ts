@@ -1,4 +1,4 @@
-import type { CategoryLabel } from "./home.data";
+import { categoryImageByLabel, type CategoryLabel } from "./home.data";
 import { CATEGORY_FEED_CACHE_KEY } from "./addFlowState";
 import type { EntityIntent } from "./intent";
 import { resolveEntityIntent } from "./intent";
@@ -68,6 +68,22 @@ type PersistSavedPlaceOptions = {
 export const SAVED_PLACES_UPDATED_EVENT = "wr:category-saved-updated";
 const categoryOrder: CategoryLabel[] = ["Taste", "Activity", "Stay", "Explore"];
 const SAVED_PLACES_ACTIVE_USER_KEY = "wr_saved_places_active_user_v1";
+
+export function normalizeSavedPlaceImageUrl(value: string | null | undefined): string {
+  const trimmed = String(value || "").trim();
+  if (!trimmed) return "";
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed.replace(/^http:\/\//i, "https://");
+  }
+  if (/^data:image\//i.test(trimmed) || trimmed.startsWith("/")) {
+    return trimmed;
+  }
+  return "";
+}
+
+export function getSavedPlaceFallbackImage(category: CategoryLabel): string {
+  return categoryImageByLabel[category];
+}
 
 function buildSavedPlacesStorageKey(userId: string | null) {
   return userId ? `${CATEGORY_FEED_CACHE_KEY}:${userId}` : CATEGORY_FEED_CACHE_KEY;
@@ -367,7 +383,7 @@ export function mapSavedPlaceApiItem(item: SavedPlaceApiItem): SavedPlaceRecord 
   const title = String(item.title || "Saved place").trim() || "Saved place";
   const locality = String(item.metadata?.locality || "Unknown locality").trim() || "Unknown locality";
   const fullAddress = String(item.metadata?.fullAddress || locality).trim() || locality;
-  const imageUrl = String(item.metadata?.imageUrl || "").trim();
+  const imageUrl = normalizeSavedPlaceImageUrl(item.metadata?.imageUrl);
   const videoUrl = String(item.metadata?.videoUrl || "").trim();
   const intent = resolveEntityIntent({
     category,
@@ -443,7 +459,7 @@ function normalizeSavedPlace(
     country: typeof item.country === "string" ? item.country : null,
     fullAddress: String(item.fullAddress || locality),
     videoUrl: String(item.videoUrl || ""),
-    imageUrl: String(item.imageUrl || ""),
+    imageUrl: normalizeSavedPlaceImageUrl(item.imageUrl),
     tags: Array.isArray(item.tags) ? item.tags.filter((tag): tag is string => typeof tag === "string") : ["Saved"],
     intent: resolveEntityIntent({
       category,

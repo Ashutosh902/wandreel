@@ -1,5 +1,6 @@
 import { Compass, MapPin } from "lucide-react";
 import type { CategoryLabel } from "./home.data";
+import { SafePlaceImage } from "./SafePlaceImage";
 import type { SavedPlaceRecord } from "./savedPlaces";
 
 const categoryColors: Record<CategoryLabel, string> = {
@@ -29,11 +30,11 @@ export function RecentlyAddedCarousel({
           <article key={card.id} className="wr-recent-card">
             <div className="wr-recent-image">
               {card.imageUrl ? (
-                <img
+                <SafePlaceImage
                   src={card.imageUrl}
+                  category={card.category}
                   alt={card.title}
                   className="wr-recent-image-photo"
-                  loading="lazy"
                 />
               ) : (
                 <div className="wr-recent-image-photo is-placeholder" aria-hidden="true" />
