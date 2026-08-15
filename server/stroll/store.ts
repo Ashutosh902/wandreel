@@ -939,7 +939,7 @@ export async function enrichPersistedStrollStopDescriptions(
 
 async function listSavedPlacesForStrollCuration(userId: string): Promise<SavedPlaceForStrollCuration[]> {
   const result = await database().query<SavedPlaceForCurationRow>(
-    `select id,
+    `select usp.id,
             usp.place_id,
             usp.title,
             usp.category,
@@ -954,7 +954,7 @@ async function listSavedPlacesForStrollCuration(userId: string): Promise<SavedPl
      from user_saved_places usp
      left join places p on p.id = usp.canonical_place_id
      where usp.user_id = $1
-     order by created_at desc`,
+     order by usp.created_at desc`,
     [userId],
   );
   return result.rows.map(mapSavedPlaceForCurationRow);
