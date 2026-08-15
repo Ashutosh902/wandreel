@@ -62,8 +62,15 @@ function formatWhenRange(stroll: PersistentStrollSummary) {
 function getMinimalFailureCopy(stroll: PersistentStrollSummary, fallback: string) {
   const message = (stroll.failureMessage || "").trim();
   if (!message) return fallback;
-  if (message.toLowerCase().includes("interrupted before a durable job could be recovered")) {
+  const normalized = message.toLowerCase();
+  if (normalized.includes("interrupted before a durable job could be recovered")) {
     return "Curation paused. Retry to continue.";
+  }
+  if (normalized.includes("need coordinates before a stroll can be curated")) {
+    return "Need 2 saved places with coordinates.";
+  }
+  if (normalized.includes("not enough eligible saved places")) {
+    return "Not enough nearby places yet.";
   }
   return message;
 }
@@ -444,9 +451,9 @@ function DeckCard({
   const bodyCopy = isFailed
     ? getMinimalFailureCopy(stroll, presentation.description)
     : stroll.failureMessage || stroll.description || presentation.description;
-  const locationMeta = "Place";
+  const locationMeta = isFailed ? "Place" : "Place";
   const whenRangeValue = formatWhenRange(stroll) || formatStrollMeta(stroll) || "Flexible";
-  const whenRangeMeta = "When / Range";
+  const whenRangeMeta = isFailed ? "When" : "When / Range";
 
   return (
     <article
@@ -536,13 +543,13 @@ function DeckCard({
       <div className="wr-stroll-hero-metric-row">
         <div className="wr-stroll-hero-metric">
           <MapPinned size={16} />
+          <span className="wr-stroll-hero-metric-label">{locationMeta}</span>
           <strong>{stroll.city}</strong>
-          <small>{locationMeta}</small>
         </div>
         <div className="wr-stroll-hero-metric">
           <Clock3 size={16} />
+          <span className="wr-stroll-hero-metric-label">{whenRangeMeta}</span>
           <strong>{whenRangeValue}</strong>
-          <small>{whenRangeMeta}</small>
         </div>
       </div>
       {isInteractive ? (
