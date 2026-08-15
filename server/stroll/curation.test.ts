@@ -91,6 +91,16 @@ test("candidate selection filters out mixed-city and coordinate-less saved place
   assert.deepEqual(plan.stops.map((stop) => stop.placeId).sort(), ["patna-food", "patna-heritage"]);
 });
 
+test("candidate selection prefers radius filtering over locality text when stroll has coordinates", () => {
+  const plan = generateDeterministicStrollPlan(stroll({ city: "Dhanaut", radiusKm: 10 }), [
+    place("nearby-patna-1", "Nearby Cafe", "Taste", 25.5988, 85.1452, { city: "Patna", locality: "Patna" }),
+    place("nearby-patna-2", "Nearby Museum", "Explore", 25.613, 85.123, { city: "Patna", locality: "Patna" }),
+    place("far-dhanaut", "Far Dhanaut Claim", "Taste", 26.5, 86.2, { city: "Dhanaut", locality: "Dhanaut" }),
+  ]);
+
+  assert.deepEqual(plan.stops.map((stop) => stop.placeId).sort(), ["nearby-patna-1", "nearby-patna-2"]);
+});
+
 test("candidate analysis separates hard exclusions from ranking factors", () => {
   const savedPlaces = [
     place("patna-food", "Patna Cafe", "Taste", 25.5945, 85.1379),
@@ -116,6 +126,21 @@ test("candidate analysis separates hard exclusions from ranking factors", () => 
   assert.equal(analysis.decisions.find((decision) => decision.title === "Patna Cafe Duplicate")?.exclusionReason, "DUPLICATE_PLACE");
   assert.equal(byPlaceId.get("delhi-food")?.exclusionReason, "WRONG_CITY");
   assert.equal(byPlaceId.get("missing-location")?.exclusionReason, "MISSING_COORDINATES");
+});
+
+test("candidate analysis falls back to city matching only when stroll origin coordinates are missing", () => {
+  const analysis = analyzeDeterministicStrollCandidates(stroll({
+    city: "Dhanaut",
+    latitude: null,
+    longitude: null,
+  }), [
+    place("dhanaut-food", "Dhanaut Cafe", "Taste", 25.5988, 85.1452, { city: "Patna", locality: "Dhanaut" }),
+    place("patna-only", "Patna Only", "Explore", 25.613, 85.123, { city: "Patna", locality: "Patna" }),
+  ]);
+  const byPlaceId = new Map(analysis.decisions.map((decision) => [decision.legacyPlaceId || decision.title, decision]));
+
+  assert.equal(byPlaceId.get("dhanaut-food")?.eligible, true);
+  assert.equal(byPlaceId.get("patna-only")?.exclusionReason, "WRONG_CITY");
 });
 
 test("ranking prefers interest and metadata quality over weaker saved places", () => {
@@ -156,8 +181,8 @@ test("single-theme Stroll can keep one dominant category", () => {
 test("geographically incoherent results fail clearly", () => {
   assert.throws(
     () =>
-      generateDeterministicStrollPlan(stroll(), [
-        place("patna-1", "Patna Cafe", "Taste", 25.5945, 85.1379),
+      generateDeterministicStrollPlan(stroll({ latitude: null, longitude: null }), [
+        place("patna-1", "Patna Cafe", "Taste", 25.5945, 85.1379, { city: "Patna", locality: "Patna" }),
         place("far-1", "Far Patna Claim", "Explore", 26.5, 86.2, { city: "Patna", locality: "Patna" }),
       ]),
     (error) => error instanceof StrollCurationPipelineError && error.code === "geographically_incoherent",
