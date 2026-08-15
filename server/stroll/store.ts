@@ -58,6 +58,7 @@ type StrollRow = {
   name: string;
   description: string | null;
   city: string;
+  radius_km: number | string | null;
   status: StrollStatus;
   source: StrollSource;
   start_date: string | Date | null;
@@ -88,6 +89,11 @@ type SavedPlaceForCurationRow = {
   title: string;
   category: string | null;
   metadata_json: unknown;
+  canonical_place_id: string | null;
+  canonical_latitude: number | string | null;
+  canonical_longitude: number | string | null;
+  canonical_city: string | null;
+  canonical_locality: string | null;
   created_at: string | Date | null;
   updated_at: string | Date | null;
 };
@@ -145,6 +151,7 @@ const strollSelectColumns = `
   s.name,
   s.description,
   s.city,
+  s.radius_km,
   s.status,
   s.source,
   s.start_date,
@@ -174,6 +181,7 @@ const strollReturningColumns = `
   name,
   description,
   city,
+  radius_km,
   status,
   source,
   start_date,
@@ -309,6 +317,7 @@ function mapStrollRow(row: StrollRow): StrollSummary {
     name: row.name,
     description: row.description,
     city: row.city,
+    radiusKm: toNullableNumber(row.radius_km),
     status: row.status,
     source: row.source,
     startDate: toDateOnly(row.start_date),
@@ -387,12 +396,27 @@ function mapStopRowToTrustedInput(row: StrollStopRow, placeKnowledgeContext: Str
 }
 
 function mapSavedPlaceForCurationRow(row: SavedPlaceForCurationRow): SavedPlaceForStrollCuration {
+  const metadata = toRecord(row.metadata_json);
+  const fallbackLatitude = toNullableNumber(row.canonical_latitude);
+  const fallbackLongitude = toNullableNumber(row.canonical_longitude);
+  const fallbackCity = row.canonical_city?.trim() || null;
+  const fallbackLocality = row.canonical_locality?.trim() || null;
   return {
     id: row.id,
     placeId: row.place_id,
     title: row.title,
     category: row.category,
-    metadata: row.metadata_json ?? {},
+    metadata: {
+      ...metadata,
+      ...(metadataNumber(metadata, "lat") == null && metadataNumber(metadata, "latitude") == null && fallbackLatitude != null
+        ? { lat: fallbackLatitude, latitude: fallbackLatitude }
+        : {}),
+      ...(metadataNumber(metadata, "lng") == null && metadataNumber(metadata, "longitude") == null && fallbackLongitude != null
+        ? { lng: fallbackLongitude, longitude: fallbackLongitude }
+        : {}),
+      ...(metadataString(metadata, "city") == null && fallbackCity ? { city: fallbackCity } : {}),
+      ...(metadataString(metadata, "locality") == null && fallbackLocality ? { locality: fallbackLocality } : {}),
+    },
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at),
   };
@@ -537,6 +561,7 @@ export async function createDraftStroll(userId: string, input: CreateDraftStroll
          client_request_id,
          name,
          city,
+         radius_km,
          status,
          source,
          start_date,
@@ -547,13 +572,14 @@ export async function createDraftStroll(userId: string, input: CreateDraftStroll
          latitude,
          longitude
        )
-       values ($1, $2, $3, $4, 'draft', $5, $6, $7, $8, $9, $10::jsonb, $11, $12)
+       values ($1, $2, $3, $4, $5, 'draft', $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
        returning ${strollReturningColumns}`,
       [
         userId,
         input.clientRequestId,
         input.name,
         input.city,
+        input.radiusKm ?? 10,
         input.source,
         input.startDate ?? null,
         input.endDate ?? null,
@@ -656,6 +682,7 @@ export async function updateDraftStroll(userId: string, strollId: string, input:
     const nextEndDate = input.endDate ?? toDateOnly(current.end_date);
     const nextRequestedStartTime = input.requestedStartTime ?? current.requested_start_time;
     const nextTravellerCount = input.travellerCount ?? toNullableNumber(current.traveller_count);
+    const nextRadiusKm = input.radiusKm ?? toNullableNumber(current.radius_km) ?? 10;
     const nextInterests = input.interests.length > 0 ? input.interests : toStringArray(current.interests_json);
     const nextLatitude = input.latitude ?? toNullableNumber(current.latitude);
     const nextLongitude = input.longitude ?? toNullableNumber(current.longitude);
@@ -664,13 +691,14 @@ export async function updateDraftStroll(userId: string, strollId: string, input:
       `update strolls
        set name = $3,
            city = $4,
-           start_date = $5,
-           end_date = $6,
-           requested_start_time = $7,
-           traveller_count = $8,
-           interests_json = $9::jsonb,
-           latitude = $10,
-           longitude = $11,
+           radius_km = $5,
+           start_date = $6,
+           end_date = $7,
+           requested_start_time = $8,
+           traveller_count = $9,
+           interests_json = $10::jsonb,
+           latitude = $11,
+           longitude = $12,
            failure_code = case when status = 'failed' then failure_code else null end,
            failure_message = case when status = 'failed' then failure_message else null end,
            updated_at = now()
@@ -681,6 +709,7 @@ export async function updateDraftStroll(userId: string, strollId: string, input:
         strollId,
         nextName,
         nextCity,
+        nextRadiusKm,
         nextStartDate ?? null,
         nextEndDate ?? null,
         nextRequestedStartTime ?? null,
@@ -911,14 +940,20 @@ export async function enrichPersistedStrollStopDescriptions(
 async function listSavedPlacesForStrollCuration(userId: string): Promise<SavedPlaceForStrollCuration[]> {
   const result = await database().query<SavedPlaceForCurationRow>(
     `select id,
-            place_id,
-            title,
-            category,
-            metadata_json,
-            created_at,
-            updated_at
-     from user_saved_places
-     where user_id = $1
+            usp.place_id,
+            usp.title,
+            usp.category,
+            usp.metadata_json,
+            usp.canonical_place_id::text as canonical_place_id,
+            p.latitude as canonical_latitude,
+            p.longitude as canonical_longitude,
+            p.city as canonical_city,
+            p.locality as canonical_locality,
+            usp.created_at,
+            usp.updated_at
+     from user_saved_places usp
+     left join places p on p.id = usp.canonical_place_id
+     where usp.user_id = $1
      order by created_at desc`,
     [userId],
   );

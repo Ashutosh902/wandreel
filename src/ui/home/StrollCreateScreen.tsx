@@ -12,7 +12,12 @@ import {
 } from "./strollOnboarding";
 import { curateStroll } from "./strollLibrary";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+const API_BASE_URL = (() => {
+  const configured = String(import.meta.env.VITE_API_BASE_URL || "").trim();
+  const isLocalDevUrl = /:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(configured);
+  if (import.meta.env.PROD) return configured && !isLocalDevUrl ? configured : "https://api.wandreel.com";
+  return configured || "http://localhost:8787";
+})();
 
 type StrollCreateScreenProps = {
   currentLocationLabel: string;
@@ -59,6 +64,7 @@ export function StrollCreateScreen({
   const [endDate, setEndDate] = useState("");
   const [requestedStartTime, setRequestedStartTime] = useState("");
   const [travellerCount, setTravellerCount] = useState(2);
+  const [radiusKm, setRadiusKm] = useState(10);
   const [interests, setInterests] = useState<string[]>(["Food"]);
   const [includedCoords, setIncludedCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [submittingAction, setSubmittingAction] = useState<"draft" | "generate" | null>(null);
@@ -159,6 +165,7 @@ export function StrollCreateScreen({
         endDate,
         requestedStartTime,
         travellerCount,
+        radiusKm,
         interests,
         coords: includedCoords,
       });
@@ -179,6 +186,7 @@ export function StrollCreateScreen({
         seed: {
           name: payload.name,
           city: payload.city,
+          radiusKm: payload.radiusKm,
           startDate: payload.startDate ?? "",
           endDate: payload.endDate ?? "",
           requestedStartTime: payload.requestedStartTime ?? "",
@@ -275,6 +283,30 @@ export function StrollCreateScreen({
             />
           </label>
         </div>
+
+        <label className="wr-stroll-field">
+          <span>Distance radius</span>
+          <div className="wr-stroll-radius-field">
+            <div className="wr-stroll-radius-copy">
+              <strong>{radiusKm} km</strong>
+              <p>We will look for saved places around your selected start area within this radius.</p>
+            </div>
+            <input
+              type="range"
+              min={1}
+              max={100}
+              step={1}
+              value={radiusKm}
+              onChange={(event) => setRadiusKm(Math.max(1, Math.min(100, Number(event.target.value) || 10)))}
+              className="wr-stroll-radius-slider"
+              aria-label="Stroll distance radius in kilometers"
+            />
+            <div className="wr-stroll-radius-scale" aria-hidden="true">
+              <span>1 km</span>
+              <span>100 km</span>
+            </div>
+          </div>
+        </label>
 
         <div className="wr-stroll-field-grid">
           <label className="wr-stroll-field">

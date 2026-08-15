@@ -30,6 +30,7 @@ export type StrollSummary = {
   name: string;
   description: string | null;
   city: string;
+  radiusKm?: number | null;
   status: StrollStatus;
   source: StrollSource;
   startDate: string | null;

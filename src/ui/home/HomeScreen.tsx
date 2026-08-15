@@ -8,25 +8,18 @@ import { AddScreen } from "./AddScreen";
 import { FoodTrailScreen } from "./FoodTrailScreen";
 import { HeroStrollTransitionCoordinator } from "./HeroStrollTransitionCoordinator";
 import {
-  buildHeroStrollTransitionPlan,
-  captureHeroStrollTransitionSource,
   createHeroStrollTransitionCoordinator,
-  resolveReadyHeroStroll,
-  type HeroStrollTransitionSource,
   type HeroStrollTransitionRequest,
-  type HeroTransitionCardMode,
 } from "./heroStrollTransition";
 import {
   createFoodTrailDemoPlaces,
   FOOD_TRAIL_DEMO_QUERY_PARAM,
 } from "./foodTrailPlannerDemo";
-import { normalizeHeroCardContent } from "./heroCardContent";
-import { HeroCard } from "./HeroCard";
 import { LocationSelector } from "./LocationSelector";
 import { RecentlyAddedCarousel } from "./RecentlyAddedCarousel";
 import { WeekendPlannerScreen } from "./WeekendPlannerScreen";
 import { ConnectScreen } from "./ConnectScreen";
-import { StrollLibrarySection } from "./StrollLibrarySection";
+import { StrollHeroDeck } from "./StrollHeroDeck";
 import type { CategoryLabel, NavLabel } from "./home.data";
 import { runHomeDataChecks } from "./home.data";
 import { LoginProfileScreen } from "../profile/LoginProfileScreen";
@@ -61,12 +54,7 @@ import {
   type SavedPlaceApiItem,
   type SavedPlaceRecord,
 } from "./savedPlaces";
-import {
-  createLocalSavedPlacesPlannerDataSource,
-  resolveHeroCardPlannerSelection,
-} from "./heroCardPlannerData";
 import { filterPlacesByResolvedCity, resolveLocationContext } from "./locationContext";
-import { isWeekendPlannerAction } from "./weekendPlanner";
 import { createWeekendPlannerDemoPlaces } from "./weekendPlannerDemo";
 import {
   getStrollDetailRoute,
@@ -83,14 +71,11 @@ import {
   type StrollOnboardingDecision,
 } from "./strollOnboarding";
 import type { PersistentStrollSummary, StrollLibraryLoadState } from "./strollLibrary";
-import { deriveHeroCardKey, useHeroCard, type HeroCardData } from "./useHeroCard";
-import { useHeroBookmarks } from "./useHeroBookmarks";
 import { useDialogFocus } from "./useDialogFocus";
 import { useHomeGestures } from "./useHomeGestures";
 import { useHomeNavigation } from "./useHomeNavigation";
 import { useReadyNotifications } from "./useReadyNotifications";
 import { useStrollLibrary } from "./useStrollLibrary";
-import { fetchStrollDetail } from "./strollLibrary";
 import {
   completeCoinOnboarding,
   fetchCoinOnboarding,
@@ -104,7 +89,12 @@ import "./home.css";
 
 runHomeDataChecks();
 const NAV_ORDER: NavLabel[] = ["Discover", "Map", "Add", "Connect", "Login"];
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+const API_BASE_URL = (() => {
+  const configured = String(import.meta.env.VITE_API_BASE_URL || "").trim();
+  const isLocalDevUrl = /:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(configured);
+  if (import.meta.env.PROD) return configured && !isLocalDevUrl ? configured : "https://api.wandreel.com";
+  return configured || "http://localhost:8787";
+})();
 const ADD_INTELLIGENCE_TIMEOUT_MS = 120000;
 const IS_DEV = import.meta.env.DEV;
 const SCREEN_ANALYTICS_ANONYMOUS_ID_KEY = "wr_add_analytics_anonymous_id_v1";
@@ -114,7 +104,6 @@ const LazyStrollCreateScreen = lazy(() => import("./StrollCreateScreen").then((m
 const LazyStrollDraftEditorScreen = lazy(() => import("./StrollDraftEditorScreen").then((module) => ({ default: module.StrollDraftEditorScreen })));
 const LazyStrollDetailScreen = lazy(() => import("./StrollDetailScreen").then((module) => ({ default: module.StrollDetailScreen })));
 
-type HeroMode = "empty-memory" | "city-memory";
 type HeroNavigationContext = {
   filteredPlaceIds: string[] | null;
   filteredCity: string | null;
@@ -142,11 +131,6 @@ function DiscoverPage({
   onNotificationsClick,
   savedPlacesByCategory,
   recentSavedPlaces,
-  heroCard,
-  onHeroCta,
-  heroBookmarkKeys,
-  pendingHeroBookmarkCardKey,
-  onHeroBookmarkToggle,
   showStrollLibrary,
   strolls,
   strollLibraryState,
@@ -158,8 +142,6 @@ function DiscoverPage({
   onArchiveStroll,
   onOpenStroll,
   onStartStroll,
-  currentLocationLabel,
-  coinPricing,
 }: {
   activeCategory: CategoryLabel | null;
   onSelectCategory: (category: CategoryLabel) => void;
@@ -170,11 +152,6 @@ function DiscoverPage({
   onNotificationsClick: () => void;
   savedPlacesByCategory: Record<CategoryLabel, SavedPlaceRecord[]>;
   recentSavedPlaces: SavedPlaceRecord[];
-  heroCard: HeroCardData | null;
-  onHeroCta: (card: HeroCardData, source: HeroStrollTransitionSource | null, mode: HeroTransitionCardMode) => void;
-  heroBookmarkKeys: string[];
-  pendingHeroBookmarkCardKey: string | null;
-  onHeroBookmarkToggle: (card: HeroCardData) => void;
   showStrollLibrary: boolean;
   strolls: PersistentStrollSummary[];
   strollLibraryState: StrollLibraryLoadState;
@@ -186,16 +163,8 @@ function DiscoverPage({
   onArchiveStroll: (strollId: string) => void;
   onOpenStroll: (stroll: PersistentStrollSummary) => void;
   onStartStroll: (stroll: PersistentStrollSummary) => void;
-  currentLocationLabel: string;
-  coinPricing: CoinPricing;
 }) {
-  const heroCardRef = useRef<HTMLElement | null>(null);
   const counts = getSavedPlaceCounts(savedPlacesByCategory);
-  const displayHeroCard = heroCard ? normalizeHeroCardContent(heroCard, currentLocationLabel, flattenSavedPlaces(savedPlacesByCategory)) : null;
-  const displayHeroCardKey = displayHeroCard ? deriveHeroCardKey(displayHeroCard) : null;
-  const heroMode: HeroMode = heroCard?.metadata.rule === "fallback" || heroCard?.metadata.rule === "default"
-    ? "empty-memory"
-    : "city-memory";
 
   return (
     <>
@@ -232,34 +201,8 @@ function DiscoverPage({
         />
       ) : (
         <>
-          {displayHeroCard ? (
-            <HeroCard
-              mode={heroMode}
-              title={displayHeroCard.title}
-              subtitle={displayHeroCard.subtitle}
-              ctaLabel={displayHeroCard.ctaLabel}
-              onCtaClick={() => onHeroCta(
-                displayHeroCard,
-                captureHeroStrollTransitionSource({
-                  element: heroCardRef.current,
-                  mode: heroMode,
-                  card: displayHeroCard,
-                }),
-                heroMode,
-              )}
-              isBookmarked={displayHeroCardKey ? heroBookmarkKeys.includes(displayHeroCardKey) : false}
-              isBookmarkBusy={displayHeroCardKey ? pendingHeroBookmarkCardKey === displayHeroCardKey : false}
-              onBookmarkToggle={() => onHeroBookmarkToggle(displayHeroCard)}
-              containerRef={heroCardRef}
-            />
-          ) : null}
-          {displayHeroCard ? (
-            <p className="wr-discover-coin-cost-hint">
-              Costs {formatCoinRule(coinPricing.discoverSaveCoins)} coin · Community saves cost less
-            </p>
-          ) : null}
           {showStrollLibrary ? (
-            <StrollLibrarySection
+            <StrollHeroDeck
               strolls={strolls}
               loadState={strollLibraryState}
               error={strollLibraryError}
@@ -535,10 +478,10 @@ export function HomeScreen() {
     isDev: IS_DEV,
     foodTrailDemoQueryParam: FOOD_TRAIL_DEMO_QUERY_PARAM,
   });
-  const [foodTrailPlannerContext, setFoodTrailPlannerContext] = useState<FoodTrailPlannerContext>({
+  const [foodTrailPlannerContext] = useState<FoodTrailPlannerContext>({
     matchingPlaceIds: null,
   });
-  const [weekendPlannerContext, setWeekendPlannerContext] = useState<WeekendPlannerContext>({
+  const [weekendPlannerContext] = useState<WeekendPlannerContext>({
     matchingPlaceIds: null,
     cityName: null,
   });
@@ -625,13 +568,6 @@ export function HomeScreen() {
     refreshReadyNotifications,
     dismissNotification,
   } = useReadyNotifications();
-  const { heroCard } = useHeroCard({
-    apiBaseUrl: API_BASE_URL,
-    currentLocationLabel,
-    isAuthenticated,
-    userId: sessionUser?.userId ?? null,
-    visibleSavedPlaces,
-  });
   const [coinPricing, setCoinPricing] = useState<CoinPricing>(getDefaultCoinPricing);
   const [isCoinWelcomeOpen, setIsCoinWelcomeOpen] = useState(false);
   const [coinWelcomeError, setCoinWelcomeError] = useState("");
@@ -769,25 +705,6 @@ export function HomeScreen() {
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
-  const {
-    heroBookmarkKeys,
-    pendingHeroBookmarkCardKey,
-    handleHeroBookmarkToggle,
-  } = useHeroBookmarks<HeroCardData>({
-    apiBaseUrl: API_BASE_URL,
-    isAuthenticated,
-    userId: sessionUser?.userId ?? null,
-    showToast,
-    deriveCardKey: deriveHeroCardKey,
-    buildBookmarkPayload: (card, cardKey) => ({
-      cardKey,
-      heroType: card.type,
-      ctaAction: card.ctaAction,
-      title: card.title,
-      subtitle: card.subtitle,
-      metadata: card.metadata || {},
-    }),
-  });
   const {
     strolls,
     strollLibraryState,
@@ -1416,12 +1333,6 @@ export function HomeScreen() {
           onNotificationsClick={() => setIsReadySheetOpen(true)}
           savedPlacesByCategory={heroFilteredPlacesByCategory}
           recentSavedPlaces={recentSavedPlaces}
-          heroCard={heroCard}
-          currentLocationLabel={currentLocationLabel}
-          coinPricing={coinPricing}
-          heroBookmarkKeys={heroBookmarkKeys}
-          pendingHeroBookmarkCardKey={pendingHeroBookmarkCardKey}
-          onHeroBookmarkToggle={handleHeroBookmarkToggle}
           showStrollLibrary={showManualStrollEntry}
           strolls={strolls}
           strollLibraryState={strollLibraryState}
@@ -1433,146 +1344,6 @@ export function HomeScreen() {
           onArchiveStroll={handleArchiveStroll}
           onOpenStroll={handleOpenStroll}
           onStartStroll={handleStartStroll}
-          onHeroCta={(card, source) => {
-            console.info("[hero-card] selected action", card.ctaAction, card.metadata);
-            const plannerSelection = resolveHeroCardPlannerSelection(
-              card,
-              createLocalSavedPlacesPlannerDataSource(visibleSavedPlaces),
-            );
-            const openCategoryFromHero = (category: CategoryLabel, sourcePlaces: SavedPlaceRecord[]) => {
-              const categoryPlaces = sourcePlaces.filter((place) => place.category === category);
-              if (!categoryPlaces.length) {
-                showToast({ message: "No matching saved places found for this card yet.", variant: "info", durationMs: 2200 });
-                return;
-              }
-              setHeroNavigationContext({
-                filteredPlaceIds: categoryPlaces.map((place) => String(place.placeId || place.id || "").trim()),
-                filteredCity: plannerSelection.targetCity,
-                mapPlaces: null,
-                mapCategories: null,
-              });
-              setTransitionDirection(1);
-              setActiveTab("Discover");
-              setActiveCategory(category);
-            };
-
-            const openWeekendPlanFromHero = (sourcePlaces: SavedPlaceRecord[]) => {
-              if (!sourcePlaces.length) {
-                showToast({ message: "No matching saved places found for this city plan yet.", variant: "info", durationMs: 2200 });
-                return;
-              }
-              const sourcePlaceIds = sourcePlaces.map((place) => String(place.placeId || place.id || "").trim()).filter(Boolean);
-              const resolvedCityName = filterPlacesByResolvedCity(
-                sourcePlaces,
-                currentLocationLabel,
-                plannerSelection.targetCity,
-              ).cityName || plannerSelection.targetCity || null;
-              setWeekendPlannerContext({
-                matchingPlaceIds: sourcePlaceIds.length ? sourcePlaceIds : null,
-                cityName: resolvedCityName,
-              });
-              clearHeroNavigationContext();
-              setHeroStrollTransition(null);
-              setTransitionDirection(1);
-              setActiveCategory(null);
-              setActiveTab("Discover");
-              setPlannerPath("weekend-plan");
-            };
-
-            const runFallbackHeroAction = () => {
-              if (card.ctaAction === "add_first_place" || card.ctaAction === "grow_saved_places") {
-                setHeroStrollTransition(null);
-                clearHeroNavigationContext();
-                setTransitionDirection(1);
-                setActiveCategory(null);
-                setActiveTab("Add");
-                return;
-              }
-
-              if (
-                card.ctaAction === "build_food_trail" ||
-                card.ctaAction === "view_dominant_category" && plannerSelection.targetCategory === "Taste"
-              ) {
-                if (card.ctaAction === "build_food_trail") {
-                  const tastePlaces = plannerSelection.getCategoryPlaces("Taste");
-                  const tastePlaceIds = tastePlaces.map((place) => String(place.placeId || place.id || "").trim()).filter(Boolean);
-                  setFoodTrailPlannerContext({
-                    matchingPlaceIds: tastePlaceIds.length ? tastePlaceIds : null,
-                  });
-                  clearHeroNavigationContext();
-                  setHeroStrollTransition(null);
-                  setTransitionDirection(1);
-                  setActiveTab("Discover");
-                  setActiveCategory(null);
-                  setPlannerPath("food-trail");
-                  return;
-                }
-                openCategoryFromHero("Taste", plannerSelection.getCategoryPlaces("Taste"));
-                return;
-              }
-
-              if (isWeekendPlannerAction(card.ctaAction, plannerSelection.targetCategory)) {
-                openWeekendPlanFromHero(plannerSelection.getCityPlaces());
-                return;
-              }
-
-              if (card.ctaAction === "view_dominant_category" && plannerSelection.targetCategory) {
-                openCategoryFromHero(plannerSelection.targetCategory, plannerSelection.getCategoryPlaces(plannerSelection.targetCategory));
-                return;
-              }
-
-              showToast({ message: `${card.ctaLabel} coming soon`, variant: "success", durationMs: 1800 });
-            };
-
-            const attemptReadyHeroTransition = async () => {
-              const readyHeroStroll = await resolveReadyHeroStroll({
-                card,
-                strolls,
-                strollLibraryState,
-                verifyStroll: async (strollId) => {
-                  try {
-                    return await fetchStrollDetail(API_BASE_URL, strollId);
-                  } catch {
-                    return null;
-                  }
-                },
-              });
-              const heroReadyStrollPlan = readyHeroStroll
-                ? buildHeroStrollTransitionPlan({
-                    card,
-                    strolls: [readyHeroStroll],
-                    source,
-                    prefersReducedMotion: Boolean(prefersReducedMotion),
-                  })
-                : null;
-
-              if (!heroReadyStrollPlan) {
-                runFallbackHeroAction();
-                return;
-              }
-
-              clearHeroNavigationContext();
-              setTransitionDirection(1);
-              setActiveTab("Discover");
-              setActiveCategory(null);
-              setMapEntryMode("global");
-              setMapSourceCategory(null);
-              if (heroReadyStrollPlan.kind === "transition" && heroReadyStrollPlan.source) {
-                setHeroStrollTransition({
-                  key: `${heroReadyStrollPlan.strollId}:${Date.now()}`,
-                  strollId: heroReadyStrollPlan.strollId,
-                  source: heroReadyStrollPlan.source,
-                  durationMs: heroReadyStrollPlan.durationMs,
-                  reducedMotion: heroReadyStrollPlan.reducedMotion,
-                });
-              } else {
-                setHeroStrollTransition(null);
-              }
-              setPlannerPath(getStrollDetailRoute(heroReadyStrollPlan.strollId));
-            };
-
-            void attemptReadyHeroTransition();
-          }}
           onViewMap={(category) => {
             clearHeroNavigationContext();
             setTransitionDirection(1);
@@ -1648,12 +1419,9 @@ export function HomeScreen() {
     clearHeroNavigationContext,
     globalMapActiveCategories,
     heroFilteredPlacesByCategory,
-    heroCard,
-    heroBookmarkKeys,
     heroStrollTransition?.strollId,
     heroNavigationContext.mapCategories,
     heroNavigationContext.mapPlaces,
-    handleHeroBookmarkToggle,
     handleArchiveStroll,
     handleCreateStrollDraft,
     handleOpenStroll,
@@ -1662,7 +1430,6 @@ export function HomeScreen() {
     mapEntryMode,
     mapSourceCategory,
     openStrollCreate,
-    pendingHeroBookmarkCardKey,
     pendingDraftSeeds,
     pendingDraftSummaries,
     visibleReadyNotifications.length,

@@ -458,7 +458,7 @@
 }
 
 .wr-location-section { margin-top: 0; }
-.wr-location-pill { min-height: 56px; border-radius: 28px; border: 1px solid rgba(255,255,255,0.88); background: rgba(255,255,255,0.9); padding: 0 0.95rem; box-shadow: 0 8px 18px rgba(17,24,39,0.08); display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
+.wr-location-pill { min-height: 56px; border-radius: 16px; border: 1px solid rgba(255,255,255,0.88); background: rgba(255,255,255,0.9); padding: 0 0.95rem; box-shadow: 0 8px 18px rgba(17,24,39,0.08); display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; }
 .wr-location-section-inline { margin-top: 0; }
 .wr-location-section-inline .wr-location-pill { padding: 0 0.95rem; }
 .wr-location-main { display: flex; min-width: 0; align-items: center; gap: 0.58rem; }
@@ -633,6 +633,618 @@
   color: #047857;
   font-size: 0.68rem;
   font-weight: 900;
+}
+
+.wr-stroll-hero-deck {
+  position: relative;
+  z-index: 1;
+  margin-top: 8px;
+}
+
+.wr-stroll-hero-stage {
+  position: relative;
+  perspective: 1400px;
+  min-height: 236px;
+}
+
+.wr-stroll-hero-stage.is-stack {
+  overflow: visible;
+  padding: 0 0.2rem;
+}
+
+.wr-stroll-hero-stack-back,
+.wr-stroll-hero-stack-front {
+  width: 100%;
+}
+
+.wr-stroll-hero-stack-back {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.wr-stroll-hero-stack-front {
+  position: relative;
+  z-index: 1;
+  touch-action: pan-y;
+  cursor: grab;
+}
+
+.wr-stroll-hero-stack-front:active {
+  cursor: grabbing;
+}
+
+.wr-stroll-hero-stage.is-stack .wr-stroll-hero-card {
+  min-height: 236px;
+}
+
+.wr-stroll-hero-stage.is-stack .wr-stroll-hero-stack-back .wr-stroll-hero-card {
+  filter: saturate(0.94) brightness(0.98);
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.12);
+}
+
+.wr-stroll-hero-card {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  width: 100%;
+  min-height: 222px;
+  border-radius: 22px;
+  padding: 14px 14px 16px;
+  color: #fff;
+  box-shadow: 0 14px 28px rgba(15, 23, 42, 0.15);
+  transform-style: preserve-3d;
+  background-position: center, top right, center, center;
+  background-size: auto, auto, cover, cover;
+  background-repeat: no-repeat;
+}
+
+.wr-stroll-hero-card.is-interactive {
+  cursor: pointer;
+}
+
+.wr-stroll-hero-card h3 {
+  position: relative;
+  z-index: 1;
+  margin: 0.42rem 0 0;
+  max-width: 14rem;
+  font-size: 21px;
+  line-height: 1.08;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+.wr-stroll-hero-overlay {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(145deg, rgba(8, 18, 38, 0.06) 0%, rgba(8, 18, 38, 0.2) 100%),
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.28), transparent 32%);
+}
+
+.wr-stroll-hero-card.is-city {
+  background:
+    linear-gradient(135deg, #102a57 0%, #1f4b84 52%, #4f7eb8 100%);
+}
+
+.wr-stroll-hero-card.is-food {
+  background:
+    linear-gradient(135deg, #7a2d14 0%, #c2410c 52%, #f59e0b 100%);
+}
+
+.wr-stroll-hero-card.is-heritage {
+  background:
+    linear-gradient(135deg, #4b2e1f 0%, #8b5e34 44%, #d4a373 100%);
+}
+
+.wr-stroll-hero-card.is-nature {
+  background:
+    linear-gradient(135deg, #14532d 0%, #15803d 48%, #4ade80 100%);
+}
+
+.wr-stroll-hero-card.is-nightlife {
+  background:
+    linear-gradient(135deg, #312e81 0%, #5b21b6 44%, #a855f7 100%);
+}
+
+.wr-stroll-hero-card.is-create {
+  background:
+    radial-gradient(circle at 18% 20%, rgba(255, 255, 255, 0.6), transparent 22%),
+    radial-gradient(circle at 84% 76%, rgba(255, 153, 92, 0.24), transparent 28%),
+    linear-gradient(145deg, #fbf6ef 0%, #f4eadc 54%, #eadfcd 100%);
+}
+
+.wr-stroll-hero-create-shell {
+  position: relative;
+  z-index: 1;
+  min-height: 168px;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 0.9rem;
+  text-align: center;
+}
+
+.wr-stroll-hero-card.is-create::before {
+  content: "";
+  position: absolute;
+  inset: auto -12% -20% auto;
+  width: 180px;
+  height: 180px;
+  border-radius: 999px;
+  background: radial-gradient(circle, rgba(190, 117, 66, 0.18) 0%, rgba(255, 255, 255, 0) 72%);
+  filter: blur(10px);
+  pointer-events: none;
+}
+
+.wr-stroll-hero-card.is-create::after {
+  content: "";
+  position: absolute;
+  inset: 18% auto auto 8%;
+  width: 120px;
+  height: 120px;
+  border-radius: 28px;
+  border: 1px solid rgba(150, 113, 78, 0.14);
+  background: rgba(255, 255, 255, 0.28);
+  transform: rotate(-14deg);
+  pointer-events: none;
+}
+
+.wr-stroll-hero-create-plus {
+  width: 72px;
+  height: 72px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 24px;
+  border: 1px solid rgba(189, 122, 70, 0.22);
+  background: rgba(255, 251, 247, 0.88);
+  backdrop-filter: blur(14px);
+  box-shadow: 0 14px 26px rgba(115, 85, 57, 0.14);
+  color: #b45528;
+}
+
+.wr-stroll-hero-create-copy {
+  display: grid;
+  gap: 0.32rem;
+  justify-items: center;
+}
+
+.wr-stroll-hero-card.is-create h3 {
+  max-width: none;
+  margin-top: 0;
+  font-size: 18px;
+  line-height: 1.18;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  color: #173024;
+  text-shadow: none;
+}
+
+.wr-stroll-hero-card.is-create .wr-stroll-hero-body-copy {
+  max-width: 13rem;
+  min-height: 0;
+  margin: 0;
+}
+
+.wr-stroll-hero-card.is-ready .wr-stroll-hero-overlay {
+  background:
+    linear-gradient(145deg, rgba(4, 120, 87, 0.12) 0%, rgba(8, 18, 38, 0.22) 100%),
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.3), transparent 34%);
+}
+
+.wr-stroll-hero-card.is-working .wr-stroll-hero-overlay {
+  background:
+    linear-gradient(145deg, rgba(15, 118, 110, 0.16) 0%, rgba(8, 18, 38, 0.22) 100%),
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.3), transparent 34%);
+}
+
+.wr-stroll-hero-card.is-failed .wr-stroll-hero-overlay {
+  background:
+    linear-gradient(145deg, rgba(113, 43, 22, 0.08) 0%, rgba(8, 18, 38, 0.14) 100%),
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.14), transparent 34%);
+}
+
+.wr-stroll-hero-topline {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.wr-stroll-hero-kicker-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.24rem;
+}
+
+.wr-stroll-hero-kicker {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.18em;
+  color: rgba(255, 247, 237, 0.9);
+}
+
+.wr-stroll-hero-kicker-wrap {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.36rem;
+}
+
+.wr-stroll-hero-footprints {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 0.22rem;
+  transform: translateY(-1px);
+}
+
+.wr-stroll-hero-footprint {
+  position: relative;
+  width: 11px;
+  height: 16px;
+  display: inline-block;
+  opacity: 0.96;
+}
+
+.wr-stroll-hero-footprint.left {
+  transform: rotate(-16deg);
+}
+
+.wr-stroll-hero-footprint.right {
+  transform: rotate(12deg) translateY(1px);
+}
+
+.wr-stroll-hero-footprint-sole {
+  position: absolute;
+  left: 2px;
+  bottom: 0;
+  width: 7px;
+  height: 10px;
+  border-radius: 58% 58% 52% 52% / 64% 64% 38% 38%;
+  background: rgba(255, 247, 237, 0.94);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.wr-stroll-hero-footprint-toes {
+  position: absolute;
+  top: 0;
+  left: 1px;
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.wr-stroll-hero-footprint-toes span {
+  display: inline-block;
+  border-radius: 999px;
+  background: rgba(255, 247, 237, 0.94);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+.wr-stroll-hero-footprint-toes span:nth-child(1) {
+  width: 4px;
+  height: 4px;
+}
+
+.wr-stroll-hero-footprint-toes span:nth-child(2) {
+  width: 3px;
+  height: 3px;
+  transform: translateY(1px);
+}
+
+.wr-stroll-hero-footprint-toes span:nth-child(3) {
+  width: 3px;
+  height: 3px;
+  transform: translateY(2px);
+}
+
+.wr-stroll-hero-status {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.5rem;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.14);
+  color: #fff7ed;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.wr-stroll-hero-icon-actions {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.34rem;
+}
+
+.wr-stroll-hero-right-rail {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.34rem;
+}
+
+.wr-stroll-hero-inline-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.26rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(8, 18, 38, 0.16);
+  padding: 0.12rem 0.14rem;
+  backdrop-filter: blur(8px);
+}
+
+.wr-stroll-hero-inline-nav span {
+  min-width: 2.2rem;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 800;
+  color: #fff7ed;
+}
+
+.wr-stroll-hero-inline-nav-btn {
+  width: 1.45rem;
+  height: 1.45rem;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: #fff7ed;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.wr-stroll-hero-inline-nav-btn:disabled {
+  opacity: 0.34;
+}
+
+.wr-stroll-hero-icon-btn {
+  width: 1.85rem;
+  height: 1.85rem;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(8, 18, 38, 0.16);
+  color: #fff7ed;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(8px);
+}
+
+.wr-stroll-hero-icon-btn.is-danger {
+  background: rgba(127, 29, 29, 0.22);
+}
+
+.wr-stroll-hero-body-copy {
+  position: relative;
+  z-index: 1;
+  margin: 0.36rem 0 0;
+  max-width: 14.5rem;
+  font-size: 12px;
+  line-height: 1.38;
+  font-weight: 650;
+  color: rgba(255, 247, 237, 0.88);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.wr-stroll-hero-progress {
+  position: relative;
+  z-index: 1;
+  margin-top: 0.62rem;
+}
+
+.wr-stroll-hero-progress-bar {
+  height: 0.42rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.wr-stroll-hero-progress-fill {
+  display: block;
+  width: 42%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(255, 247, 237, 0.8), #ffffff, rgba(255, 247, 237, 0.8));
+  background-size: 180% 100%;
+  animation: wrHeroProgress 1.2s linear infinite;
+}
+
+.wr-stroll-hero-progress small {
+  display: block;
+  margin-top: 0.34rem;
+  font-size: 10.4px;
+  font-weight: 800;
+  line-height: 1.25;
+  color: rgba(255, 247, 237, 0.82);
+}
+
+.wr-stroll-hero-metric-row {
+  position: relative;
+  z-index: 1;
+  margin-top: 0.72rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.42rem;
+}
+
+.wr-stroll-hero-metric {
+  border-radius: 0.9rem;
+  padding: 0.56rem 0.62rem;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  backdrop-filter: blur(8px);
+}
+
+.wr-stroll-hero-metric svg {
+  color: rgba(255, 247, 237, 0.92);
+}
+
+.wr-stroll-hero-metric strong {
+  display: block;
+  margin-top: 0.34rem;
+  font-size: 12.2px;
+  line-height: 1.18;
+  font-weight: 800;
+  color: #fff;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.wr-stroll-hero-metric small {
+  display: block;
+  margin-top: 0.12rem;
+  font-size: 10px;
+  line-height: 1.32;
+  font-weight: 600;
+  color: rgba(255, 247, 237, 0.76);
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.wr-stroll-hero-card.is-minimal-failed {
+  box-shadow: 0 12px 24px rgba(15, 23, 42, 0.14);
+}
+
+.wr-stroll-hero-card.is-minimal-failed h3 {
+  max-width: 13rem;
+}
+
+.wr-stroll-hero-card.is-minimal-failed .wr-stroll-hero-metric-row {
+  margin-top: 0.64rem;
+}
+
+.wr-stroll-hero-actions {
+  position: relative;
+  z-index: 1;
+  margin-top: 0.72rem;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.46rem;
+}
+
+.wr-stroll-hero-primary,
+.wr-stroll-hero-secondary {
+  min-height: 2.7rem;
+  border-radius: 0.95rem;
+  padding: 0 0.92rem;
+  font-size: 12.4px;
+  font-weight: 900;
+  font-family: inherit;
+}
+
+.wr-stroll-hero-primary {
+  border: none;
+  background: rgba(255, 252, 248, 0.94);
+  color: #10213f;
+  box-shadow: 0 10px 18px rgba(8, 18, 38, 0.18);
+}
+
+.wr-stroll-hero-secondary {
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  background: rgba(8, 18, 38, 0.18);
+  color: #fff7ed;
+}
+
+.wr-stroll-hero-primary:disabled,
+.wr-stroll-hero-secondary:disabled,
+.wr-stroll-hero-dot:disabled {
+  opacity: 0.56;
+}
+
+.wr-stroll-hero-dots {
+  margin-top: 0.74rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.38rem;
+}
+
+.wr-stroll-hero-dot {
+  width: 0.48rem;
+  height: 0.48rem;
+  border: none;
+  border-radius: 999px;
+  background: rgba(16, 33, 63, 0.18);
+  transition: transform 180ms ease, background-color 180ms ease, width 180ms ease;
+}
+
+.wr-stroll-hero-dot.is-active {
+  width: 1.35rem;
+  background: #10213f;
+}
+
+.wr-stroll-hero-card.is-loading {
+  background: linear-gradient(135deg, #ebe3d6 0%, #f6f0e7 50%, #ebe3d6 100%);
+}
+
+.wr-stroll-hero-skeleton {
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(214, 204, 192, 0.8) 0%, rgba(255, 255, 255, 0.92) 50%, rgba(214, 204, 192, 0.8) 100%);
+  background-size: 200% 100%;
+  animation: wrAddSkeleton 1.15s linear infinite;
+}
+
+.wr-stroll-hero-skeleton.kicker { width: 5.5rem; height: 0.72rem; }
+.wr-stroll-hero-skeleton.title { width: 68%; height: 2.1rem; margin-top: 1rem; border-radius: 1rem; }
+.wr-stroll-hero-skeleton.line { width: 88%; height: 0.86rem; margin-top: 0.52rem; }
+.wr-stroll-hero-skeleton.line.short { width: 62%; }
+
+@keyframes wrHeroProgress {
+  0% { transform: translateX(-55%); }
+  100% { transform: translateX(215%); }
+}
+
+@media (max-width: 360px) {
+  .wr-stroll-hero-head {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .wr-stroll-hero-nav {
+    align-self: stretch;
+    justify-content: space-between;
+  }
+
+  .wr-stroll-hero-metric-row {
+    grid-template-columns: 1fr;
+  }
+
+  .wr-stroll-hero-card h3 {
+    font-size: 23px;
+  }
+
+  .wr-stroll-hero-stage,
+  .wr-stroll-hero-stage.is-stack .wr-stroll-hero-card {
+    min-height: 248px;
+  }
 }
 
 .wr-food-trail-page {
@@ -2210,9 +2822,31 @@
   color: #6b7280;
 }
 .wr-bucketlist-wrap { margin-top: var(--wr-section-gap); }
-.wr-section-title-row { margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
-.wr-section-title-row h3 { margin: 0; font-size: 27px; font-weight: 900; line-height: 1.08; }
-.wr-section-view-all { font-size: 16px; font-weight: 800; color: #c2410c; }
+.wr-section-title-row {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.wr-section-title-row h3 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 900;
+  line-height: 1.1;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #10213f;
+}
+
+.wr-section-view-all {
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #b45528;
+}
 
 .wr-bucketlist-card { position: relative; overflow: hidden; min-height: clamp(214px, 61vw, 238px); border-radius: var(--wr-card-radius-xl); background: linear-gradient(160deg, #0f264a 0%, #10213f 56%, #12384a 100%); padding: 17px 20px 19px; box-shadow: var(--wr-card-shadow); }
 .wr-bucket-glow { position: absolute; border-radius: 999px; filter: blur(22px); }
@@ -3212,6 +3846,48 @@
 .wr-stroll-location-opt button {
   flex-shrink: 0;
   padding: 0 0.72rem;
+}
+
+.wr-stroll-radius-field {
+  border-radius: 0.94rem;
+  border: 1px solid #e6ddd1;
+  background: linear-gradient(180deg, #fffdfa 0%, #fbf6ef 100%);
+  padding: 0.78rem 0.8rem 0.72rem;
+  display: grid;
+  gap: 0.62rem;
+}
+
+.wr-stroll-radius-copy {
+  display: grid;
+  gap: 0.16rem;
+}
+
+.wr-stroll-radius-copy strong {
+  color: #10213f;
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.wr-stroll-radius-copy p {
+  margin: 0;
+  color: #667085;
+  font-size: 11.5px;
+  line-height: 1.38;
+  font-weight: 760;
+}
+
+.wr-stroll-radius-slider {
+  width: 100%;
+  accent-color: #c2410c;
+}
+
+.wr-stroll-radius-scale {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #7b8794;
+  font-size: 10.8px;
+  font-weight: 800;
 }
 
 .wr-stroll-error {

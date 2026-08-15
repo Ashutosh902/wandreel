@@ -5,6 +5,7 @@ export const STROLL_CURATION_VERSION = "deterministic_saved_places_v1";
 const MIN_GENERATED_STOPS = 2;
 const TARGET_GENERATED_STOPS = 5;
 const MAX_GENERATED_STOPS = 7;
+const DEFAULT_STROLL_RADIUS_KM = 10;
 const MAX_CLUSTER_RADIUS_METERS = 35_000;
 const MAX_PAIRWISE_DISTANCE_METERS = 60_000;
 
@@ -185,6 +186,11 @@ function matchesRequestedCity(requestedCity: string, metadata: Record<string, un
   });
 }
 
+function requestedRadiusMeters(stroll: StrollSummary) {
+  const radiusKm = stroll.radiusKm ?? DEFAULT_STROLL_RADIUS_KM;
+  return Math.max(1, Math.min(100, radiusKm)) * 1000;
+}
+
 function metadataQuality(metadata: Record<string, unknown>, place: SavedPlaceForStrollCuration) {
   let score = 0;
   if (place.title.trim()) score += 0.2;
@@ -261,6 +267,7 @@ function buildCandidates(stroll: StrollSummary, savedPlaces: SavedPlaceForStroll
   const origin = stroll.latitude != null && stroll.longitude != null
     ? { latitude: stroll.latitude, longitude: stroll.longitude }
     : null;
+  const radiusMeters = requestedRadiusMeters(stroll);
   const seenPlaceIds = new Set<string>();
   const candidates: Candidate[] = [];
 
@@ -273,7 +280,10 @@ function buildCandidates(stroll: StrollSummary, savedPlaces: SavedPlaceForStroll
     const latitude = metadataNumber(metadata, "lat") ?? metadataNumber(metadata, "latitude");
     const longitude = metadataNumber(metadata, "lng") ?? metadataNumber(metadata, "longitude");
     if (latitude == null || longitude == null) continue;
-    if (!matchesRequestedCity(stroll.city, metadata)) continue;
+    const geographicDistance = origin ? haversineMeters({ latitude, longitude }, origin) : null;
+    const cityMatch = matchesRequestedCity(stroll.city, metadata);
+    const withinRadius = geographicDistance != null && geographicDistance <= radiusMeters;
+    if (!cityMatch && !withinRadius) continue;
 
     const baseCandidate = {
       place,
@@ -336,6 +346,7 @@ export function analyzeDeterministicStrollCandidates(
   const origin = stroll.latitude != null && stroll.longitude != null
     ? { latitude: stroll.latitude, longitude: stroll.longitude }
     : null;
+  const radiusMeters = requestedRadiusMeters(stroll);
   const seenPlaceIds = new Set<string>();
   const eligibleCandidates: Candidate[] = [];
   const decisions: DeterministicCandidateDecision[] = [];
@@ -370,7 +381,10 @@ export function analyzeDeterministicStrollCandidates(
       decisions.push(excluded("MISSING_COORDINATES"));
       continue;
     }
-    if (!matchesRequestedCity(stroll.city, metadata)) {
+    const geographicDistance = origin ? haversineMeters({ latitude, longitude }, origin) : null;
+    const cityMatch = matchesRequestedCity(stroll.city, metadata);
+    const withinRadius = geographicDistance != null && geographicDistance <= radiusMeters;
+    if (!cityMatch && !withinRadius) {
       decisions.push(excluded("WRONG_CITY"));
       continue;
     }

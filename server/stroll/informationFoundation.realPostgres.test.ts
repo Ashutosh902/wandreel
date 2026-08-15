@@ -258,6 +258,60 @@ test("shadow Stroll generation persists snapshots without changing visible stops
   assert.equal(userSnapshot.rows[0]?.user_context_snapshot_json?.preferences?.onboardingDecision, "accepted");
 });
 
+test("stroll generation falls back to canonical coordinates when saved-place metadata is sparse", { skip: !shouldRun }, async () => {
+  const userId = await createUser();
+  const sparsePlace = savedPlace({
+    id: randomUUID(),
+    placeId: "canonical-fallback-food",
+    title: "Canonical Fallback Cafe",
+  });
+  sparsePlace.metadata = {
+    city: "Dhanaut",
+    locality: "Dhanaut",
+    confidence: 0.91,
+    description: "Legacy saved place missing copied coordinates.",
+  };
+  const directPlace = savedPlace({
+    id: randomUUID(),
+    placeId: "direct-food",
+    title: "Direct Museum",
+    city: "Patna",
+    locality: "Patna",
+    lat: 25.613,
+    lng: 85.123,
+  });
+  await insertSavedPlace(userId, sparsePlace);
+  await insertSavedPlace(userId, directPlace);
+
+  const canonicalPlaceId = randomUUID();
+  await requirePool().query(
+    `insert into places (id, canonical_name, normalized_name, primary_category, latitude, longitude, city, locality, metadata_json, created_at, updated_at)
+     values ($1, $2, $3, 'Taste', $4, $5, $6, $7, '{}'::jsonb, now(), now())`,
+    [canonicalPlaceId, "Canonical Fallback Cafe", "canonical fallback cafe", 25.5988, 85.1452, "Patna", "Dhanaut"],
+  );
+  await requirePool().query(
+    `update user_saved_places
+     set canonical_place_id = $2
+     where id = $1`,
+    [sparsePlace.id, canonicalPlaceId],
+  );
+
+  const strollId = randomUUID();
+  await requirePool().query(
+    `insert into strolls (id, user_id, name, city, radius_km, status, source, requested_start_time, traveller_count, interests_json, latitude, longitude, created_at, updated_at)
+     values ($1, $2, 'Fallback Stroll', 'Dhanaut', 10, 'curating', 'manual', '10:00', 2, '["Food"]'::jsonb, 25.5941, 85.1376, now(), now())`,
+    [strollId, userId],
+  );
+
+  await generatePersistedStrollStopsFromSavedPlaces(userId, strollId);
+
+  const stops = await requirePool().query<{ place_id: string }>(
+    "select place_id from stroll_stops where stroll_id = $1 order by sequence",
+    [strollId],
+  );
+  assert.deepEqual(stops.rows.map((row) => row.place_id).sort(), ["canonical-fallback-food", "direct-food"]);
+});
+
 test("generation and candidate snapshots are immutable in PostgreSQL", { skip: !shouldRun }, async () => {
   const userId = await createUser();
   const strollId = randomUUID();

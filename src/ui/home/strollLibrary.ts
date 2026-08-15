@@ -6,6 +6,7 @@ export type PersistentStrollSummary = {
   name: string;
   description: string | null;
   city: string;
+  radiusKm?: number | null;
   status: StrollLibraryStatus;
   source: StrollLibrarySource;
   startDate: string | null;
@@ -201,6 +202,7 @@ export async function updateDraftStroll(apiBaseUrl: string, strollId: string, dr
   updatedAt?: string | null;
   name?: string;
   city?: string;
+  radiusKm?: number | null;
   startDate?: string | null;
   endDate?: string | null;
   requestedStartTime?: string | null;
