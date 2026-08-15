@@ -750,8 +750,9 @@
 
 .wr-stroll-hero-card.is-create {
   background:
-    radial-gradient(circle at 16% 18%, rgba(255, 255, 255, 0.5), transparent 20%),
-    linear-gradient(145deg, #faf5ee 0%, #f3ebdf 58%, #ede3d4 100%);
+    radial-gradient(circle at 18% 22%, rgba(255, 255, 255, 0.76), transparent 22%),
+    radial-gradient(circle at 82% 20%, rgba(255, 194, 149, 0.22), transparent 24%),
+    linear-gradient(135deg, #fbf5ec 0%, #f3eadc 48%, #ecdfce 100%);
 }
 
 .wr-stroll-hero-create-shell {
@@ -767,23 +768,48 @@
 
 .wr-stroll-hero-create-art {
   position: absolute;
-  right: -0.8rem;
-  bottom: -0.5rem;
-  width: 10rem;
-  height: 10rem;
+  right: -0.75rem;
+  bottom: -0.9rem;
+  width: 11.4rem;
+  height: 11.4rem;
   z-index: 0;
   background-position: center;
   background-repeat: no-repeat;
   background-size: contain;
-  opacity: 0.14;
-  filter: saturate(0.7) brightness(1.02);
-  transform: rotate(-10deg);
+  opacity: 0.36;
+  filter: saturate(0.82) brightness(1.01);
+  transform: rotate(-6deg);
   pointer-events: none;
+}
+
+.wr-stroll-hero-create-art::before {
+  content: "";
+  position: absolute;
+  inset: 0.8rem 0.2rem 0.8rem 2.1rem;
+  border-radius: 2rem 0 1.6rem 2.2rem;
+  background:
+    linear-gradient(160deg, rgba(17, 74, 98, 0.14) 0%, rgba(17, 74, 98, 0.04) 28%, rgba(255, 255, 255, 0) 29%),
+    linear-gradient(180deg, rgba(22, 63, 51, 0.12) 0%, rgba(22, 63, 51, 0.06) 100%);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28);
+}
+
+.wr-stroll-hero-create-art::after {
+  content: "";
+  position: absolute;
+  left: -4.5rem;
+  top: 1.65rem;
+  width: 8.4rem;
+  height: 4.4rem;
+  border-top: 2px dashed rgba(180, 130, 91, 0.24);
+  border-right: 2px dashed rgba(180, 130, 91, 0.18);
+  border-radius: 999px;
+  transform: rotate(12deg);
+  opacity: 0.9;
 }
 
 .wr-stroll-hero-card.is-create .wr-stroll-hero-overlay {
   background:
-    linear-gradient(145deg, rgba(255, 251, 247, 0.62) 0%, rgba(236, 225, 209, 0.18) 100%);
+    linear-gradient(110deg, rgba(255, 251, 247, 0.76) 0%, rgba(248, 240, 230, 0.58) 38%, rgba(236, 225, 209, 0.14) 62%, rgba(236, 225, 209, 0.02) 100%);
 }
 
 .wr-stroll-hero-create-plus {
@@ -794,8 +820,8 @@
   justify-content: center;
   border-radius: 20px;
   border: 1px solid rgba(180, 130, 91, 0.18);
-  background: rgba(255, 252, 248, 0.92);
-  box-shadow: 0 10px 20px rgba(115, 85, 57, 0.1);
+  background: rgba(255, 252, 248, 0.95);
+  box-shadow: 0 14px 28px rgba(115, 85, 57, 0.12);
   color: #b45528;
 }
 
@@ -808,12 +834,12 @@
 .wr-stroll-hero-card.is-create h3 {
   max-width: none;
   margin-top: 0;
-  font-size: 17px;
+  font-size: 18px;
   line-height: 1.18;
-  font-weight: 650;
+  font-weight: 700;
   letter-spacing: -0.01em;
   text-transform: none;
-  color: #173024;
+  color: #163f33;
   text-shadow: none;
 }
 

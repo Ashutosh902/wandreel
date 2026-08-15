@@ -139,7 +139,6 @@
   display: block;
   object-fit: contain;
   filter: drop-shadow(0 14px 24px rgba(16, 33, 63, 0.04));
-  mix-blend-mode: multiply;
 }
 
 .splash-image-mark {
