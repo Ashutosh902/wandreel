@@ -8,6 +8,7 @@ import {
 import { enrichWithTranscript } from "./transcript";
 import { runVisualFallback } from "./visualFallback";
 import { buildCombinedText } from "./combinedText";
+import { extractCaptionListEntities } from "../intelligence/captionListAugment";
 import { runIntelligencePipeline, runTinyCaptionIntelligence } from "../intelligence";
 import { buildTinyCaptionPromptPayload } from "../intelligence/prompts";
 import { extractVisionOcrFromScreenshots } from "./visionOcr";
@@ -367,7 +368,50 @@ function summarizeScreenshot(shot: ScreenshotAsset): Record<string, unknown> {
   };
 }
 
-function isWeakDescription(metadata: ExtractionResult["metadata"]): boolean {
+const CAPTION_VENUE_NAME_PATTERN = /\b([A-Z][A-Za-z0-9&'`.-]+(?:\s+[A-Z][A-Za-z0-9&'`.-]+){0,4})\s+(Cafe|Caf[eé]|Restaurant|Bakery|Bistro|Kitchen|Eatery|Dhaba|Bar|Diner|Hotel|Resort|Hostel|Homestay|Villa)\b/;
+const CAPTION_SCENIC_NAME_PATTERN = /\b([A-Z][A-Za-z0-9&'`.-]+(?:\s+[A-Z][A-Za-z0-9&'`.-]+){0,4})\s+(Falls|Waterfall|Lake|Beach|Temple|Fort|Park|Museum|Palace|Garden|Gardens|Canyon|Bridge|Peak|Hill|Hills|Viewpoint|Village|Cave|Island|Creek)\b/;
+const CAPTION_GENERIC_REGION_ONLY_PATTERN = /\b(itinerary|trip|tourism|travel|spots?|places?|rating|guide|hidden gems?)\b/;
+
+function getMeaningfulCaptionLines(description: string): string[] {
+  return description
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => Boolean(line) && !/^#/.test(line) && !/^[@.]+$/.test(line));
+}
+
+function hasConcreteCaptionEntitySignal(metadata: ExtractionResult["metadata"]): boolean {
+  const title = String(metadata.title || "").trim();
+  const description = String(metadata.description || "").trim();
+  const captionSignals = extractCaptionListEntities({
+    metadata,
+    transcript: null,
+    ocr: null,
+    visualFallback: null,
+    screenshots: [],
+    warnings: [],
+    debug: null,
+  } as any);
+  if (captionSignals.length > 0) return true;
+
+  const lines = getMeaningfulCaptionLines(description);
+  const candidates = [title, ...lines.slice(0, 5)];
+  for (const candidate of candidates) {
+    if (!candidate) continue;
+    if (/^location\s*:/i.test(candidate) && /[A-Za-z]{3,}/.test(candidate.replace(/^location\s*:/i, "").trim())) {
+      return true;
+    }
+    if (CAPTION_VENUE_NAME_PATTERN.test(candidate) || CAPTION_SCENIC_NAME_PATTERN.test(candidate)) {
+      return true;
+    }
+    if (/^([A-Z][A-Za-z0-9&'`.-]+(?:\s+[A-Z][A-Za-z0-9&'`.-]+){0,4})\s*[-,:]\s*[A-Z][A-Za-z]/.test(candidate)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+export function isWeakDescription(metadata: ExtractionResult["metadata"]): boolean {
   const title = String(metadata.title || "").trim();
   const description = String(metadata.description || "").trim();
   const combined = `${title}\n${description}`.replace(/\s+/g, " ").trim().toLowerCase();
@@ -376,6 +420,26 @@ function isWeakDescription(metadata: ExtractionResult["metadata"]): boolean {
   if (combined === "instagram") return true;
   if (combined.includes("create an account or log in to instagram")) return true;
   if (/^\s*(dm|comment|follow|save|share)\b/i.test(description)) return true;
+  if (metadata.platform === "instagram") {
+    const hasConcreteEntitySignal = hasConcreteCaptionEntitySignal(metadata);
+    if (hasConcreteEntitySignal) return false;
+    const hashtagCount = (description.match(/#[\p{L}\p{N}_]+/gu) || []).length;
+    const hasBoilerplateEngagementShell =
+      /\blikes?\b/.test(combined) ||
+      /\bcomments?\b/.test(combined) ||
+      /\bon instagram:/.test(combined);
+    const hasTravelCta =
+      /\bsave this before\b/.test(combined) ||
+      /\bplanning\s+[a-z]/.test(combined) ||
+      /\bperfect\s+[a-z]+\s+itinerary\b/.test(combined) ||
+      /\bwhich place deserves a higher rating\b/.test(combined) ||
+      /\brating\s+[a-z\s]+spots\b/.test(combined) ||
+      /\bdm\s+[“"'`]?[a-z]+/.test(combined);
+    const hasGenericRegionOnlyTravelCopy = CAPTION_GENERIC_REGION_ONLY_PATTERN.test(combined);
+    if (hasTravelCta) return true;
+    if (hasGenericRegionOnlyTravelCopy && hashtagCount >= 2) return true;
+    if (hasBoilerplateEngagementShell && hashtagCount >= 3) return true;
+  }
   return false;
 }
 
@@ -901,8 +965,16 @@ async function readTranscript(
   return { transcript, transcriptMs, transcriptTimeoutMs };
 }
 
-export function getTranscriptTimeoutMsForAttempt(attemptNumber: number): number {
+export function getTranscriptTimeoutMsForAttempt(
+  attemptNumber: number,
+  platform: ExtractionResult["metadata"]["platform"] = "web",
+): number {
   const configuredMs = getNumberEnv("EXTRACTION_TRANSCRIPT_BUDGET_MS", DEFAULT_TRANSCRIPT_BUDGET_MS);
+  if (platform === "instagram") {
+    if (attemptNumber <= 1) return Math.min(configuredMs, 45000);
+    if (attemptNumber === 2) return Math.min(configuredMs, 60000);
+    return Math.min(configuredMs, 90000);
+  }
   if (attemptNumber <= 1) return Math.min(configuredMs, ATTEMPT1_TRANSCRIPT_BUDGET_MS);
   if (attemptNumber === 2) return Math.min(configuredMs, ATTEMPT2_TRANSCRIPT_BUDGET_MS);
   return Math.min(configuredMs, ATTEMPT3_TRANSCRIPT_BUDGET_MS);
@@ -1641,7 +1713,7 @@ function buildResult(input: {
         commentsMs: input.commentsMs ?? 0,
         descriptionFastExtractorMs: input.descriptionProbeMs ?? 0,
         descriptionProbeMs: input.descriptionProbeMs ?? 0,
-        transcriptTimeoutMs: input.transcriptTimeoutMs ?? getTranscriptTimeoutMsForAttempt(input.attemptNumber),
+        transcriptTimeoutMs: input.transcriptTimeoutMs ?? getTranscriptTimeoutMsForAttempt(input.attemptNumber, input.metadata.platform),
         transcriptProbeMs: input.transcriptProbeMs ?? 0,
         transcriptMs: input.transcriptMs,
         frameExtractionMs: input.frameExtractionMs ?? 0,
@@ -1774,7 +1846,7 @@ export async function runExtractionPipeline(input: {
     memoryTracker,
   });
   await emitProgress(input.onProgress, totalStartedAt, attemptNumber, "metadata_done", "Metadata fetched.");
-  const transcriptTimeoutMs = getTranscriptTimeoutMsForAttempt(attemptNumber);
+  const transcriptTimeoutMs = getTranscriptTimeoutMsForAttempt(attemptNumber, metadata.platform);
 
   if (input.mode === "quick") {
     const orchestration = createTrace({
