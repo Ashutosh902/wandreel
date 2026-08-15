@@ -256,7 +256,14 @@ export function StrollHeroDeck({
       <div className="wr-stroll-hero-stage is-stack">
         {backgroundItem ? (
           <motion.div
+            key={`back-${backgroundItem.key}`}
             className="wr-stroll-hero-stack-back"
+            initial={prefersReducedMotion ? false : { opacity: 0.58, scale: 0.91, y: 12 }}
+            animate={prefersReducedMotion ? undefined : { opacity: 0.64, scale: 0.94, y: 8 }}
+            transition={prefersReducedMotion ? undefined : {
+              duration: 0.24,
+              ease: [0.22, 1, 0.36, 1],
+            }}
             style={{
               scale: prefersReducedMotion ? 0.94 : nextScale,
               opacity: prefersReducedMotion ? 0.64 : nextOpacity,
@@ -285,10 +292,19 @@ export function StrollHeroDeck({
 
         {activeItem ? (
           <motion.div
+            key={`front-${activeItem.key}`}
             className="wr-stroll-hero-stack-front"
             drag={prefersReducedMotion ? false : "x"}
             dragConstraints={{ left: 0, right: 0 }}
             dragElastic={0.12}
+            initial={prefersReducedMotion ? false : { scale: 0.965, y: 10 }}
+            animate={prefersReducedMotion ? undefined : { scale: 1, y: 0 }}
+            transition={prefersReducedMotion ? undefined : {
+              type: "spring",
+              stiffness: 260,
+              damping: 28,
+              mass: 0.92,
+            }}
             style={{
               x: dragX,
               rotate,
