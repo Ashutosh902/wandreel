@@ -456,7 +456,7 @@ function DeckCard({
   const isDraft = effectiveStatus === "draft";
   const isWorking = effectiveStatus === "queued" || effectiveStatus === "curating";
   const isFailed = effectiveStatus === "failed";
-  const canEditInputs = effectiveStatus === "failed";
+  const canEditInputs = effectiveStatus === "failed" || effectiveStatus === "ready";
   const openAction = getCardOpenAction(stroll, onOpenStroll, onStartStroll);
   const backgroundLayers = isFailed
     ? [
@@ -581,12 +581,20 @@ function DeckCard({
             </button>
           ) : null}
           {stroll.status === "ready" ? (
-            <button type="button" className="wr-stroll-hero-primary" onClick={(event) => {
-              event.stopPropagation();
-              onStartStroll(stroll);
-            }}>
-              Open stroll
-            </button>
+            <>
+              <button type="button" className="wr-stroll-hero-primary" onClick={(event) => {
+                event.stopPropagation();
+                onStartStroll(stroll);
+              }}>
+                Start stroll
+              </button>
+              <button type="button" className="wr-stroll-hero-secondary" onClick={(event) => {
+                event.stopPropagation();
+                onOpenStroll(stroll);
+              }}>
+                Edit details
+              </button>
+            </>
           ) : null}
         </div>
       ) : null}

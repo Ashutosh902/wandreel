@@ -146,7 +146,7 @@ export function getStrollStatusPresentation(status: StrollLibraryStatus): Stroll
       label: "Ready",
       tone: "ready",
       title: "Ready to begin",
-      description: "Your Stroll is set when you are.",
+      description: "Your route is ready to explore.",
     };
   }
   if (status === "failed") {

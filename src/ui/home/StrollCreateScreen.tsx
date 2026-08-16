@@ -11,6 +11,7 @@ import {
   type DraftStrollSummary,
 } from "./strollOnboarding";
 import { curateStroll } from "./strollLibrary";
+import { useUx } from "../layout/UxProvider";
 
 const API_BASE_URL = (() => {
   const configured = String(import.meta.env.VITE_API_BASE_URL || "").trim();
@@ -34,6 +35,10 @@ type LocationSuggestion = {
   secondaryText: string | null;
   description: string | null;
 };
+
+function normalizeCity(value: string) {
+  return value.trim().toLowerCase();
+}
 
 function formatInterestList(interests: string[]) {
   if (interests.length <= 1) return interests[0] ?? "";
@@ -59,6 +64,7 @@ export function StrollCreateScreen({
   onBack,
   onCreated,
 }: StrollCreateScreenProps) {
+  const { currentCoords } = useUx();
   const [city, setCity] = useState(() => getDefaultStrollCity(currentLocationLabel));
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -66,7 +72,7 @@ export function StrollCreateScreen({
   const [travellerCount, setTravellerCount] = useState(2);
   const [radiusKm, setRadiusKm] = useState(10);
   const [interests, setInterests] = useState<string[]>(["Food"]);
-  const [includedCoords, setIncludedCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [includedCoords, setIncludedCoords] = useState<{ lat: number; lng: number } | null>(() => currentCoords ?? null);
   const [submittingAction, setSubmittingAction] = useState<"draft" | "generate" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isCityMenuOpen, setIsCityMenuOpen] = useState(false);
@@ -81,12 +87,20 @@ export function StrollCreateScreen({
 
   const isSubmitting = submittingAction !== null;
   const submitEnabled = canSubmitDraftStroll({ city, isSubmitting });
+  const currentLocationCity = getDefaultStrollCity(currentLocationLabel);
+  const isCurrentLocationCity = normalizeCity(city) === normalizeCity(currentLocationCity);
 
   useEffect(() => {
     if (!isCityMenuOpen) {
       setCityQuery(city);
     }
   }, [city, isCityMenuOpen]);
+
+  useEffect(() => {
+    if (currentCoords && isCurrentLocationCity && !includedCoords) {
+      setIncludedCoords(currentCoords);
+    }
+  }, [currentCoords, includedCoords, isCurrentLocationCity]);
 
   useEffect(() => {
     if (!isCityMenuOpen) return;
@@ -150,6 +164,9 @@ export function StrollCreateScreen({
     const cityName = getDefaultStrollCity(label) || label.trim();
     setCity(cityName);
     setCityQuery(cityName);
+    if (normalizeCity(cityName) === normalizeCity(currentLocationCity) && currentCoords && !includedCoords) {
+      setIncludedCoords(currentCoords);
+    }
     setIsCityMenuOpen(false);
   };
 
@@ -158,6 +175,7 @@ export function StrollCreateScreen({
     setSubmittingAction(mode);
     setError(null);
     try {
+      const coordsForDraft = includedCoords ?? (isCurrentLocationCity ? currentCoords ?? null : null);
       const payload = buildDraftStrollPayload({
         clientRequestId: createStrollClientRequestId(),
         city,
@@ -167,7 +185,7 @@ export function StrollCreateScreen({
         travellerCount,
         radiusKm,
         interests,
-        coords: includedCoords,
+        coords: coordsForDraft,
       });
       const stroll = await createDraftStroll(API_BASE_URL, payload);
       let nextStroll = stroll;
@@ -230,8 +248,9 @@ export function StrollCreateScreen({
               onFocus={openCityMenu}
               onClick={openCityMenu}
               onChange={(event) => {
-                setCityQuery(event.target.value);
-                setCity(event.target.value);
+                const nextCity = event.target.value;
+                setCityQuery(nextCity);
+                setCity(nextCity);
                 setIsCityMenuOpen(true);
               }}
               placeholder="Patna"
@@ -362,7 +381,9 @@ export function StrollCreateScreen({
             <span>
               {includedCoords
                 ? `Included (${includedCoords.lat.toFixed(4)}, ${includedCoords.lng.toFixed(4)})`
-                : "Only added if you request it."}
+                : isCurrentLocationCity
+                  ? "Will use your current area when available."
+                  : "Add your current area if you want radius-based curation for a nearby locality."}
             </span>
           </div>
           {includedCoords ? (

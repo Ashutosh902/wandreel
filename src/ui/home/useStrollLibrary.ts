@@ -10,6 +10,32 @@ import {
   type StrollLibraryLoadState,
 } from "./strollLibrary";
 
+const STROLL_LIBRARY_CACHE_KEY = "wr_stroll_library_v1";
+
+function buildStrollLibraryCacheKey(userId: string | null) {
+  return userId ? `${STROLL_LIBRARY_CACHE_KEY}:${userId}` : STROLL_LIBRARY_CACHE_KEY;
+}
+
+function readCachedStrollLibrary(userId: string | null) {
+  if (!userId) return null;
+  try {
+    const raw = window.localStorage.getItem(buildStrollLibraryCacheKey(userId));
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed as PersistentStrollSummary[] : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeCachedStrollLibrary(userId: string | null, strolls: PersistentStrollSummary[]) {
+  if (!userId) return;
+  try {
+    window.localStorage.setItem(buildStrollLibraryCacheKey(userId), JSON.stringify(strolls));
+  } catch {
+    // Ignore cache persistence failures.
+  }
+}
+
 export function useStrollLibrary(options: {
   apiBaseUrl: string;
   isAuthenticated: boolean;
@@ -47,6 +73,7 @@ export function useStrollLibrary(options: {
     try {
       const nextStrolls = await fetchStrollLibrary(apiBaseUrl);
       setStrolls(nextStrolls);
+      writeCachedStrollLibrary(userId, nextStrolls);
       setStrollLibraryState("ready");
       setStrollLibraryError(null);
     } catch (error) {
@@ -55,7 +82,7 @@ export function useStrollLibrary(options: {
     } finally {
       isRefreshingStrollLibraryRef.current = false;
     }
-  }, [apiBaseUrl, isAuthenticated]);
+  }, [apiBaseUrl, isAuthenticated, userId]);
 
   const handleRetryStroll = useCallback(async (strollId: string) => {
     if (retryingStrollId) return;
@@ -88,10 +115,24 @@ export function useStrollLibrary(options: {
   }, [apiBaseUrl, archivingStrollId, showToast, strolls]);
 
   const mergeLocalStroll = useCallback((stroll: PersistentStrollSummary) => {
-    setStrolls((current) => mergePolledStroll(current, stroll));
+    setStrolls((current) => {
+      const next = mergePolledStroll(current, stroll);
+      writeCachedStrollLibrary(userId, next);
+      return next;
+    });
     setStrollLibraryState("ready");
     setStrollLibraryError(null);
-  }, []);
+  }, [userId]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const cachedStrolls = readCachedStrollLibrary(userId);
+    if (cachedStrolls?.length) {
+      setStrolls(cachedStrolls);
+      setStrollLibraryState("ready");
+      setStrollLibraryError(null);
+    }
+  }, [isAuthenticated, userId]);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => void refreshStrollLibrary(), 0);
@@ -116,10 +157,14 @@ export function useStrollLibrary(options: {
       );
 
       if (controller.signal.aborted) return;
-      setStrolls((current) => updates.reduce(
-        (nextStrolls, updated) => (updated ? mergePolledStroll(nextStrolls, updated) : nextStrolls),
-        current,
-      ));
+      setStrolls((current) => {
+        const next = updates.reduce(
+          (nextStrolls, updated) => (updated ? mergePolledStroll(nextStrolls, updated) : nextStrolls),
+          current,
+        );
+        writeCachedStrollLibrary(userId, next);
+        return next;
+      });
     };
 
     const onVisibilityChange = () => {
@@ -134,7 +179,12 @@ export function useStrollLibrary(options: {
       window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [apiBaseUrl, isAuthenticated, pendingStrollPollKey]);
+  }, [apiBaseUrl, isAuthenticated, pendingStrollPollKey, userId]);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    writeCachedStrollLibrary(userId, strolls);
+  }, [isAuthenticated, strolls, userId]);
 
   return {
     strolls,
