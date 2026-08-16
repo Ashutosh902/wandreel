@@ -126,6 +126,14 @@ type AnalysisRunOptions = {
   sharedUrl?: string | null;
 };
 
+type QueuedAnalysisRequest = {
+  id: string;
+  kind: "url" | "text";
+  value: string;
+  sharedTitle?: string | null;
+  sharedUrl?: string | null;
+};
+
 function boundedEvidenceText(value: unknown, maxLength = 8_000) {
   return String(value || "").split("\u0000").join("").trim().slice(0, maxLength);
 }
@@ -381,7 +389,7 @@ export function AddScreen() {
   const [isLocationSearching, setIsLocationSearching] = useState(false);
   const [isEditNameManuallyChanged, setIsEditNameManuallyChanged] = useState(false);
   const [pendingJobs, setPendingJobs] = useState<PendingDetectionJob[]>([]);
-  const [queuedSharedLink, setQueuedSharedLink] = useState<string | null>(null);
+  const [queuedAnalysisRequests, setQueuedAnalysisRequests] = useState<QueuedAnalysisRequest[]>([]);
   const [removingPlaceId, setRemovingPlaceId] = useState<string | null>(null);
   const [autoSelectFirstSuggestion, setAutoSelectFirstSuggestion] = useState(true);
   const [analysisStageCopy, setAnalysisStageCopy] = useState("Analyzing link...");
@@ -589,6 +597,7 @@ export function AddScreen() {
   const resetAddFlowState = (options?: { clearPersisted?: boolean; reason?: string }) => {
     runToastDeduperRef.current.resetAll();
     analyzeRunRef.current = Date.now();
+    analysisInFlightRef.current = null;
     if (analysisTimerRef.current) {
       window.clearInterval(analysisTimerRef.current);
       analysisTimerRef.current = null;
@@ -596,8 +605,9 @@ export function AddScreen() {
     streamAbortRef.current?.abort();
     streamAbortRef.current = null;
     analysisStartedAtRef.current = null;
+    setQueuedAnalysisRequests([]);
     setLinkInput("");
-    setIsAnalyzing(false);
+    setAnalyzingState(false);
     setAnalysisStageCopy("Analyzing link...");
     setHasAnalyzed(false);
     setSelectedDetectedCategory("Auto-detect");
@@ -991,12 +1001,29 @@ export function AddScreen() {
     return () => window.removeEventListener(AUTH_SESSION_UPDATED_EVENT, handleAuthReset);
   }, []);
 
+  const enqueueAnalysisRequest = (request: QueuedAnalysisRequest) => {
+    setQueuedAnalysisRequests((current) => {
+      if (current.some((item) => item.id === request.id)) return current;
+      return [...current, request];
+    });
+  };
+
   useEffect(() => {
-    if (isAnalyzing || !queuedSharedLink) return;
-    const nextSharedLink = queuedSharedLink;
-    setQueuedSharedLink(null);
-    void runAnalysis(nextSharedLink);
-  }, [isAnalyzing, queuedSharedLink]);
+    if (isAnalyzing || !queuedAnalysisRequests.length) return;
+    const [nextRequest, ...rest] = queuedAnalysisRequests;
+    setQueuedAnalysisRequests(rest);
+    if (nextRequest.kind === "text") {
+      void runTextOnlyAnalysis(nextRequest.value, {
+        sharedTitle: nextRequest.sharedTitle ?? null,
+        sharedUrl: nextRequest.sharedUrl ?? null,
+      });
+      return;
+    }
+    void runAnalysis(nextRequest.value, {
+      sharedTitle: nextRequest.sharedTitle ?? null,
+      sharedUrl: nextRequest.sharedUrl ?? null,
+    });
+  }, [isAnalyzing, queuedAnalysisRequests]);
 
   const sourceLabelFromPlatform = (platform?: string) => {
     if (platform === "instagram") return "Instagram Reel";
@@ -1426,6 +1453,30 @@ export function AddScreen() {
     return [sanitizeDetectedPlace(pendingJob.fallbackPlace).place];
   };
 
+  const shouldFallbackToNonStreamExtraction = (reason: string) =>
+    reason === "stream_unavailable" ||
+    reason === "stream_stalled" ||
+    reason === "stream_incomplete_no_useful_event" ||
+    reason === "stream_incomplete" ||
+    reason === "Failed to fetch" ||
+    /network|fetch|abort|terminated|disconnect|timeout/i.test(reason);
+
+  const clearStaleAnalyzeGuardsIfNeeded = () => {
+    if (!isAnalyzingRef.current) return false;
+    const activeRunId = analysisInFlightRef.current?.runId ?? analyzeRunRef.current;
+    const hasPendingWorkForActiveRun = pendingJobsRef.current.some((item) => item.runId === activeRunId);
+    const hasTrackedWork = Boolean(streamAbortRef.current) || Boolean(analysisInFlightRef.current) || hasPendingWorkForActiveRun;
+    if (hasTrackedWork) return false;
+    setAnalyzingState(false);
+    analysisInFlightRef.current = null;
+    stopAnalysisProgress();
+    logAddFlowEvent("add_busy_guard_cleared", {
+      clientRunId: String(activeRunId || ""),
+      reason: "stale_busy_without_tracked_work",
+    });
+    return true;
+  };
+
   const publishSavedToCategoryFeed = (place: DetectedPlace) => {
     const intent = resolveEntityIntent({
       category: place.category,
@@ -1633,10 +1684,27 @@ export function AddScreen() {
 
   const runAnalysis = async (sourceUrl: string, options?: AnalysisRunOptions) => {
     if (isAnalyzingRef.current) {
+      if (clearStaleAnalyzeGuardsIfNeeded()) {
+        return runAnalysis(sourceUrl, options);
+      }
       logExtractionClientEvent("blocked_busy", {
         routeType: "client_guard",
         urlHash: buildClientUrlHash(sourceUrl.trim()),
       });
+      if (!options?.isRetry) {
+        enqueueAnalysisRequest({
+          id: `manual-url:${buildAnalysisRequestKey({
+            normalizedSourceUrl: sourceUrl.trim(),
+            attemptNumber: 1,
+            triggerType: "initial",
+          })}`,
+          kind: "url",
+          value: sourceUrl.trim(),
+          sharedTitle: options?.sharedTitle ?? null,
+          sharedUrl: options?.sharedUrl ?? null,
+        });
+        showToast({ message: "Finishing the current link first. The next link is queued.", variant: "info" });
+      }
       return;
     }
     if (isOffline) {
@@ -1816,12 +1884,7 @@ export function AddScreen() {
         });
       } catch (error) {
         const reason = error instanceof Error ? error.message : "stream_failed";
-        const shouldFallbackToNonStream =
-          reason === "stream_unavailable" ||
-          reason === "stream_stalled" ||
-          reason === "stream_incomplete_no_useful_event" ||
-          reason === "stream_incomplete";
-        if (!shouldFallbackToNonStream) throw error;
+        if (!shouldFallbackToNonStreamExtraction(reason)) throw error;
         setAnalysisStageCopy("Almost there...");
         logExtractionClientEvent("request_start", {
           routeType: "non_stream",
@@ -1994,7 +2057,10 @@ export function AddScreen() {
       const preservedRunPlaces = pendingForRun
         ? getPreservedRunPlaces(detectedPlacesRef.current, pendingForRun)
         : [fallbackPlace];
-      const nextPendingJobs = pendingJobsRef.current.filter((item) => item.runId !== runId);
+      const shouldKeepPendingJob = Boolean(pendingForRun?.jobId);
+      const nextPendingJobs = shouldKeepPendingJob && pendingForRun
+        ? upsertPendingJob(pendingJobsRef.current, pendingForRun)
+        : pendingJobsRef.current.filter((item) => item.runId !== runId);
       syncDraftState(
         replaceRunPlaces(detectedPlacesRef.current, runId, preservedRunPlaces),
         nextPendingJobs,
@@ -2003,11 +2069,13 @@ export function AddScreen() {
       );
       releaseAnalysisInFlight(runId);
       setAnalyzingState(false);
-      if (preservedRunPlaces.length > 0) {
+      if (shouldKeepPendingJob) {
         showToastOnceForRun(runId, "stream_incomplete", {
           message: "Live updates disconnected. Keeping the latest card while analysis continues.",
           variant: "info",
         });
+      } else if (preservedRunPlaces.length > 0) {
+        showToast({ message: "We kept the latest card. Retry or edit it if the link is still incomplete.", variant: "info" });
       } else {
         showToast({ message: "This link could not be analyzed.", variant: "error" });
       }
@@ -2218,6 +2286,20 @@ export function AddScreen() {
           .trim();
         if (isAuthenticated && canAnalyzeTextOnlyInput(textFallback)) {
           if (processedSharedIntentIdRef.current === sharedIntent.intentId) return;
+          if (isAnalyzingRef.current && !clearStaleAnalyzeGuardsIfNeeded()) {
+            const consumedIntent = await consumePendingSharedIntent();
+            if (!consumedIntent || consumedIntent.intentId !== sharedIntent.intentId || cancelled) return;
+            processedSharedIntentIdRef.current = sharedIntent.intentId;
+            enqueueAnalysisRequest({
+              id: `shared-text:${sharedIntent.intentId}`,
+              kind: "text",
+              value: textFallback,
+              sharedTitle: sharedIntent.title ?? null,
+              sharedUrl: sharedIntent.url ?? null,
+            });
+            showToast({ message: "Current link is still processing. This share is queued next.", variant: "info" });
+            return;
+          }
           const consumedIntent = await consumePendingSharedIntent();
           if (!consumedIntent || consumedIntent.intentId !== sharedIntent.intentId || cancelled) return;
           processedSharedIntentIdRef.current = sharedIntent.intentId;
@@ -2244,7 +2326,17 @@ export function AddScreen() {
       });
 
       if (sharedIntentPlan === "wait_for_analysis") {
-        setQueuedSharedLink(sharedIntent.extractedUrl);
+        const consumedIntent = await consumePendingSharedIntent();
+        if (!consumedIntent || consumedIntent.intentId !== sharedIntent.intentId || cancelled) return;
+        processedSharedIntentIdRef.current = sharedIntent.intentId;
+        enqueueAnalysisRequest({
+          id: `shared-url:${sharedIntent.intentId}`,
+          kind: "url",
+          value: sharedIntent.extractedUrl,
+          sharedTitle: sharedIntent.title ?? null,
+          sharedUrl: sharedIntent.url ?? null,
+        });
+        showToast({ message: "Current link is still processing. This share is queued next.", variant: "info" });
         return;
       }
       if (sharedIntentPlan === "wait_for_auth") {
@@ -2277,8 +2369,22 @@ export function AddScreen() {
   }, [isAuthenticated, isAnalyzing, showToast]);
 
   const handleAnalyze = async () => {
-    if (!linkInput.trim()) return;
-    await runAnalysis(linkInput.trim());
+    const nextLink = linkInput.trim();
+    if (!nextLink) return;
+    if (isAnalyzingRef.current && !clearStaleAnalyzeGuardsIfNeeded()) {
+      enqueueAnalysisRequest({
+        id: `manual-url:${buildAnalysisRequestKey({
+          normalizedSourceUrl: nextLink,
+          attemptNumber: 1,
+          triggerType: "initial",
+        })}`,
+        kind: "url",
+        value: nextLink,
+      });
+      showToast({ message: "Finishing the current link first. The next link is queued.", variant: "info" });
+      return;
+    }
+    await runAnalysis(nextLink);
   };
 
   const handleCategorySelect = (next: "Auto-detect" | DetectedCategory) => {
