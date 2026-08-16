@@ -3060,9 +3060,34 @@ app.post("/api/auth/google/verify", async (req, res) => {
 
     const idToken = String(req.body?.idToken || "").trim();
     const accessToken = String(req.body?.accessToken || "").trim();
+    const configuredGoogleClientIds = getConfiguredGoogleClientIds();
+    const sessionHints = getClientSessionHints(req);
     if (!idToken && !accessToken) {
+      console.info("[google-auth-debug]", {
+        stage: "missing_token",
+        requestId: requestObs?.requestId ?? null,
+        hasIdToken: false,
+        hasAccessToken: false,
+        configuredClientIdCount: configuredGoogleClientIds.length,
+        configuredClientIdSuffixes: configuredGoogleClientIds.map((value) => value.slice(-12)),
+        clientPlatform: sessionHints.clientPlatform ?? null,
+        appVersion: sessionHints.appVersion ?? null,
+      });
       return res.status(400).json({ ok: false, error: "idToken or accessToken is required" });
     }
+
+    console.info("[google-auth-debug]", {
+      stage: "verify_started",
+      requestId: requestObs?.requestId ?? null,
+      verifyMode: idToken ? "id_token" : "access_token",
+      hasIdToken: Boolean(idToken),
+      hasAccessToken: Boolean(accessToken),
+      configuredClientIdCount: configuredGoogleClientIds.length,
+      configuredClientIdSuffixes: configuredGoogleClientIds.map((value) => value.slice(-12)),
+      clientPlatform: sessionHints.clientPlatform ?? null,
+      appVersion: sessionHints.appVersion ?? null,
+      hasAnonymousId: Boolean(req.body?.anonymousId),
+    });
 
     const googleProfile = idToken
       ? await verifyGoogleIdToken(idToken)
@@ -3075,8 +3100,19 @@ app.post("/api/auth/google/verify", async (req, res) => {
       avatarUrl: googleProfile.avatarUrl,
       providerId: googleProfile.providerId,
     });
-    const session = await createSession(user.userId, getClientSessionHints(req));
+    const session = await createSession(user.userId, sessionHints);
     res.setHeader("Set-Cookie", buildSessionCookie(session.rawToken));
+    console.info("[google-auth-debug]", {
+      stage: "verify_succeeded",
+      requestId: requestObs?.requestId ?? null,
+      verifyMode: idToken ? "id_token" : "access_token",
+      userId: user.userId,
+      emailDomain: googleProfile.email.includes("@") ? googleProfile.email.split("@")[1] : null,
+      emailVerified: googleProfile.emailVerified,
+      configuredClientIdCount: configuredGoogleClientIds.length,
+      clientPlatform: sessionHints.clientPlatform ?? null,
+      appVersion: sessionHints.appVersion ?? null,
+    });
     await bestEffortObservability(() => recordProductEvent(getPostgresDatabase(), {
       eventType: "login_succeeded",
       userId: user.userId,
@@ -3108,6 +3144,19 @@ app.post("/api/auth/google/verify", async (req, res) => {
       outcome: "failed",
       durationMs: elapsedFromRequest(req),
     }));
+    console.error("[google-auth-debug]", {
+      stage: "verify_failed",
+      requestId: requestObs?.requestId ?? null,
+      verifyMode: String(req.body?.idToken || "").trim() ? "id_token" : String(req.body?.accessToken || "").trim() ? "access_token" : "missing",
+      publicError: error instanceof PublicAuthError ? error.message : "Google authentication failed.",
+      httpStatus: error instanceof PublicAuthError ? error.status : 500,
+      internalMessage: error instanceof Error ? error.message : String(error),
+      configuredClientIdCount: getConfiguredGoogleClientIds().length,
+      configuredClientIdSuffixes: getConfiguredGoogleClientIds().map((value) => value.slice(-12)),
+      clientPlatform: getClientSessionHints(req).clientPlatform ?? null,
+      appVersion: getClientSessionHints(req).appVersion ?? null,
+      hasAnonymousId: Boolean(req.body?.anonymousId),
+    });
     if (error instanceof PublicAuthError) {
       return res.status(error.status).json({ ok: false, error: error.message });
     }
