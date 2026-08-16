@@ -29,16 +29,12 @@ export function RecentlyAddedCarousel({
         {recentPlaces.length ? recentPlaces.map((card) => (
           <article key={card.id} className="wr-recent-card">
             <div className="wr-recent-image">
-              {card.imageUrl ? (
-                <SafePlaceImage
-                  src={card.imageUrl}
-                  category={card.category}
-                  alt={card.title}
-                  className="wr-recent-image-photo"
-                />
-              ) : (
-                <div className="wr-recent-image-photo is-placeholder" aria-hidden="true" />
-              )}
+              <SafePlaceImage
+                src={card.imageUrl}
+                category={card.category}
+                alt={card.title}
+                className="wr-recent-image-photo"
+              />
             </div>
             <div className="wr-recent-body">
               <p className="wr-recent-title">{card.title}</p>

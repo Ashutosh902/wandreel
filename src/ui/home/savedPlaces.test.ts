@@ -125,6 +125,24 @@ test("saved place API mapping prefers alternate real image fields", () => {
   assert.equal(mapped?.imageUrl, "https://example.com/craft.jpg");
 });
 
+test("saved place API mapping falls back to nested identification evidence image fields", () => {
+  const mapped = mapSavedPlaceApiItem({
+    placeId: "taste-2",
+    title: "Roastery",
+    category: "Taste",
+    metadata: {
+      locality: "Boring Road",
+      identificationEvidence: {
+        placeResolution: {
+          photoUrl: "http://example.com/roastery.jpg",
+        },
+      },
+    } as never,
+  });
+
+  assert.equal(mapped?.imageUrl, "https://example.com/roastery.jpg");
+});
+
 test("saved place image persistence strips known placeholder art", () => {
   assert.equal(sanitizeSavedPlaceImageForPersistence(categoryFallbackImage.Taste), null);
   assert.equal(sanitizeSavedPlaceImageForPersistence("https://example.com/real-place.jpg"), "https://example.com/real-place.jpg");

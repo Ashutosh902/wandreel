@@ -1681,11 +1681,24 @@ function buildSavedPlaceMetadata(row: SavedPlaceRecord) {
   const metadata = toJsonRecord(row.metadata_json);
   const canonicalMetadata = toJsonRecord(row.canonical_metadata_json);
   const canonicalPlaceResolution = toJsonRecord(canonicalMetadata.placeResolution);
+  const savedPlaceResolution = toJsonRecord(metadata.placeResolution);
+  const identificationEvidence = toJsonRecord(metadata.identificationEvidence);
+  const identificationMetadata = toJsonRecord(identificationEvidence.metadata);
+  const identificationPlaceResolution = toJsonRecord(identificationEvidence.placeResolution);
   const fallbackImageUrl = firstTextValue(
     metadata.imageUrl,
     metadata.photoUrl,
     metadata.thumbnailUrl,
     metadata.latestImageUrl,
+    identificationMetadata.imageUrl,
+    identificationMetadata.photoUrl,
+    identificationMetadata.thumbnailUrl,
+    savedPlaceResolution.imageUrl,
+    savedPlaceResolution.photoUrl,
+    savedPlaceResolution.thumbnailUrl,
+    identificationPlaceResolution.imageUrl,
+    identificationPlaceResolution.photoUrl,
+    identificationPlaceResolution.thumbnailUrl,
     canonicalMetadata.imageUrl,
     canonicalMetadata.photoUrl,
     canonicalMetadata.thumbnailUrl,

@@ -107,14 +107,30 @@ function readSavedPlaceMetadataImage(metadata: SavedPlaceApiItem["metadata"]): s
   const placeResolution = record.placeResolution && typeof record.placeResolution === "object"
     ? record.placeResolution as Record<string, unknown>
     : null;
+  const identificationEvidence = record.identificationEvidence && typeof record.identificationEvidence === "object"
+    ? record.identificationEvidence as Record<string, unknown>
+    : null;
+  const evidenceMetadata = identificationEvidence?.metadata && typeof identificationEvidence.metadata === "object"
+    ? identificationEvidence.metadata as Record<string, unknown>
+    : null;
+  const evidencePlaceResolution =
+    identificationEvidence?.placeResolution && typeof identificationEvidence.placeResolution === "object"
+      ? identificationEvidence.placeResolution as Record<string, unknown>
+      : null;
   const candidates = [
     record.imageUrl,
     record.photoUrl,
     record.thumbnailUrl,
     record.latestImageUrl,
+    evidenceMetadata?.imageUrl,
+    evidenceMetadata?.photoUrl,
+    evidenceMetadata?.thumbnailUrl,
     placeResolution?.imageUrl,
     placeResolution?.photoUrl,
     placeResolution?.thumbnailUrl,
+    evidencePlaceResolution?.imageUrl,
+    evidencePlaceResolution?.photoUrl,
+    evidencePlaceResolution?.thumbnailUrl,
   ];
   for (const candidate of candidates) {
     const normalized = normalizeSavedPlaceImageUrl(typeof candidate === "string" ? candidate : null);
