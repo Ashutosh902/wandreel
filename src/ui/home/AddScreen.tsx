@@ -37,7 +37,12 @@ import { getSharedIntentPlan, shouldResetAddFlowForAuthStatus } from "./sharedIn
 import { notifyCoinWalletUpdated, type CoinWallet } from "../economy/coinWallet";
 import { fetchCoinPricing, formatCoinRule, getDefaultCoinPricing, type CoinPricing } from "../economy/coinEducation";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
+const API_BASE_URL = (() => {
+  const configured = String(import.meta.env.VITE_API_BASE_URL || "").trim();
+  const isLocalDevUrl = /:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(configured);
+  if (import.meta.env.PROD) return configured && !isLocalDevUrl ? configured : "https://api.wandreel.com";
+  return configured || "http://localhost:8787";
+})();
 const AUTH_SESSION_UPDATED_EVENT = "wr:auth-session-updated";
 const IS_DEV = import.meta.env.DEV;
 const ADD_INTELLIGENCE_TIMEOUT_MS = 120000;
@@ -112,6 +117,13 @@ type EditAnalyticsDiff = {
   field: "title" | "category" | "subtitle" | "placeId" | "finalPlaceId" | "lat" | "lng";
   before: string | number | null;
   after: string | number | null;
+};
+
+type AnalysisRunOptions = {
+  runId?: number;
+  isRetry?: boolean;
+  sharedTitle?: string | null;
+  sharedUrl?: string | null;
 };
 
 function boundedEvidenceText(value: unknown, maxLength = 8_000) {
@@ -1129,6 +1141,234 @@ export function AddScreen() {
     };
   };
 
+  const canAnalyzeTextOnlyInput = (value: string) => {
+    const trimmed = value.trim();
+    if (trimmed.length < 24) return false;
+    const wordCount = trimmed.split(/\s+/).filter(Boolean).length;
+    return wordCount >= 4 && /[a-z]/i.test(trimmed);
+  };
+
+  const buildTextOnlyExtraction = (input: {
+    text: string;
+    title?: string | null;
+    sourceUrl?: string | null;
+    attemptNumber: number;
+  }): ExtractionApiResponse => ({
+    ok: true,
+    metadata: {
+      platform: "web",
+      sourceUrl: input.sourceUrl || undefined,
+      canonicalUrl: input.sourceUrl || undefined,
+      title: input.title?.trim() || "Shared post",
+      description: input.text.trim(),
+      siteName: "Shared text",
+      imageUrl: null,
+      fetchedAtIso: new Date().toISOString(),
+      provider: "shared_text_fallback",
+    },
+    transcript: null,
+    ocr: null,
+    visualFallback: null,
+    attemptInfo: { attemptNumber: input.attemptNumber },
+    debug: { orchestration: { acceptedAfter: "description" } },
+  });
+
+  const runTextOnlyAnalysis = async (sourceText: string, options?: AnalysisRunOptions) => {
+    const normalizedSourceText = sourceText.trim();
+    if (!normalizedSourceText) {
+      showToast({ message: "This share could not be analyzed.", variant: "error" });
+      return;
+    }
+
+    const runId = options?.runId ?? createAnalysisRunId();
+    if (!options?.runId) {
+      runToastDeduperRef.current.resetAll();
+    }
+
+    const existingPlacesForRun = detectedPlacesRef.current.filter((item) => item.runId === runId);
+    const existingPlace = existingPlacesForRun[0] ?? null;
+    const existingPendingForRun = pendingJobsRef.current.find((item) => item.runId === runId) ?? null;
+    const existingRetryCount = Math.max(
+      existingPendingForRun?.retryCount ?? 0,
+      ...existingPlacesForRun.map((item) => item.retryCount ?? 0),
+      existingPlace?.retryCount ?? 0,
+    );
+    const retryCount = options?.isRetry ? existingRetryCount + 1 : existingRetryCount;
+    if (options?.isRetry && retryCount > MAX_PREVIEW_RETRIES) {
+      showToast({ message: "Please edit the details manually from here.", variant: "info" });
+      return;
+    }
+
+    const attemptNumber = retryCount + 1;
+    const triggerType = options?.isRetry ? "retry" : "initial";
+    const requestKey = buildAnalysisRequestKey({
+      normalizedSourceUrl: normalizedSourceText,
+      attemptNumber,
+      triggerType,
+    });
+    const existingInFlight = analysisInFlightRef.current;
+    if (existingInFlight?.key === requestKey) {
+      setActivePreviewKey(`pending-${existingInFlight.runId}`);
+      showToast({ message: "This share is already being analyzed.", variant: "info" });
+      return;
+    }
+
+    analysisInFlightRef.current = { key: requestKey, runId };
+    const fallbackCategory = inferDraftCategory(`${options?.sharedTitle || ""} ${normalizedSourceText}`);
+    const fallbackPlace: DetectedPlace =
+      existingPlace ?? {
+        id: `fallback-${runId}`,
+        runId,
+        sourceUrl: normalizedSourceText,
+        retryCount,
+        name: inferDraftName(options?.sharedTitle || "", normalizedSourceText),
+        category: fallbackCategory,
+        locality: "Unknown locality",
+        source: "Shared post",
+        imageUrl: categoryFallbackImage[fallbackCategory],
+        fullAddress: "Unknown locality",
+        videoUrl: options?.sharedUrl?.trim() || "",
+        confidence: null,
+        evidenceText: null,
+        intent: null,
+        placeId: null,
+        lat: null,
+        lng: null,
+        city: null,
+        state: null,
+        country: null,
+      };
+
+    analyzeRunRef.current = runId;
+    window.dispatchEvent(new CustomEvent(ADD_PROCESSING_STARTED_EVENT));
+    setAnalyzingState(true);
+    startAnalysisProgress("Reading the shared post...");
+    setSaveMessage("");
+    setSelectedDetectedCategory("Auto-detect");
+    setActivePreviewKey(`pending-${runId}`);
+
+    const pendingDraft: PendingDetectionJob = {
+      runId,
+      jobId: "",
+      startedAtMs: Date.now(),
+      sourceUrl: normalizedSourceText,
+      retryCount,
+      isRetrying: Boolean(options?.isRetry),
+      source: "Shared post",
+      imageUrl: fallbackPlace.imageUrl,
+      videoUrl: options?.sharedUrl?.trim() || "",
+      fallbackPlace,
+      draftPlaces: [],
+    };
+
+    const nextDraftPlaces = replaceRunPlaces(detectedPlacesRef.current, runId);
+    const nextDraftPendingJobs = upsertPendingJob(pendingJobsRef.current, pendingDraft);
+    syncDraftState(nextDraftPlaces, nextDraftPendingJobs, "", "shared_text_analysis_start");
+    setLinkInput("");
+
+    try {
+      const extraction = buildTextOnlyExtraction({
+        text: normalizedSourceText,
+        title: options?.sharedTitle ?? null,
+        sourceUrl: options?.sharedUrl ?? null,
+        attemptNumber,
+      });
+      const draftPlace = toDraftPlace(extraction, runId, normalizedSourceText, retryCount);
+      const extractionPendingJob: PendingDetectionJob = {
+        ...pendingDraft,
+        imageUrl: draftPlace.imageUrl,
+        fallbackPlace: {
+          ...draftPlace,
+          source: "Shared post",
+        },
+      };
+      syncDraftState(
+        replaceRunPlaces(detectedPlacesRef.current, runId),
+        upsertPendingJob(pendingJobsRef.current, extractionPendingJob),
+        "",
+        "shared_text_placeholder_ready",
+      );
+
+      const intelligenceResponse = await fetch(`${API_BASE_URL}/api/intelligence/extract`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: extraction,
+          mode: "draft_async",
+          analytics: {
+            clientRunId: String(runId),
+            anonymousId: getAnalyticsAnonymousId(),
+            attemptNumber,
+            triggerType,
+          },
+        }),
+      });
+      const intelligence = (await intelligenceResponse.json()) as IntelligenceApiResponse;
+      if (analyzeRunRef.current !== runId) return;
+      if (!intelligenceResponse.ok || !intelligence?.ok) throw new Error("intelligence_failed");
+
+      const entities = intelligence.output?.structuredEntities ?? [];
+      const resolvedPlaces = mapEntitiesToPlaces(
+        entities,
+        {
+          source: "Shared post",
+          imageUrl: draftPlace.imageUrl,
+          videoUrl: options?.sharedUrl?.trim() || "",
+          sourceUrl: normalizedSourceText,
+          retryCount,
+          identificationEvidence: buildIdentificationEvidenceSnapshot(extraction),
+        },
+        runId,
+      );
+      const visibleImmediatePlaces = shouldShowImmediateDraftPlaces(
+        resolvedPlaces,
+        intelligence.output?.status ?? null,
+      );
+
+      const jobId = intelligence.jobId || null;
+      if (!jobId) {
+        const finalizedPlaces = resolvedPlaces.length ? resolvedPlaces : [draftPlace];
+        syncDraftState(
+          replaceRunPlaces(detectedPlacesRef.current, runId, finalizedPlaces),
+          pendingJobsRef.current.filter((item) => item.runId !== runId),
+          "",
+          "shared_text_final_sync_result",
+        );
+        releaseAnalysisInFlight(runId);
+        setAnalyzingState(false);
+        showToast({ message: "Shared post analyzed", variant: "success" });
+        return;
+      }
+
+      const queuedPendingJob: PendingDetectionJob = {
+        ...extractionPendingJob,
+        jobId,
+        draftPlaces: visibleImmediatePlaces,
+      };
+      const nextVisiblePlaces = visibleImmediatePlaces.length ? visibleImmediatePlaces : [];
+      syncDraftState(
+        replaceRunPlaces(detectedPlacesRef.current, runId, nextVisiblePlaces),
+        upsertPendingJob(pendingJobsRef.current, queuedPendingJob),
+        "",
+        "shared_text_async_job_queued",
+      );
+      releaseAnalysisInFlight(runId);
+      setAnalyzingState(false);
+    } catch {
+      const preservedRunPlaces = [fallbackPlace];
+      const nextPendingJobs = pendingJobsRef.current.filter((item) => item.runId !== runId);
+      syncDraftState(
+        replaceRunPlaces(detectedPlacesRef.current, runId, preservedRunPlaces),
+        nextPendingJobs,
+        "",
+        "shared_text_analysis_error_preserve_visible",
+      );
+      releaseAnalysisInFlight(runId);
+      setAnalyzingState(false);
+      showToast({ message: "We couldn't read the reel link, so we kept a draft from the shared text.", variant: "info" });
+    }
+  };
+
   const syncDraftState = (
     nextPlaces: DetectedPlace[],
     nextPendingJobs: PendingDetectionJob[],
@@ -1391,7 +1631,7 @@ export function AddScreen() {
     return resolvedResult;
   };
 
-  const runAnalysis = async (sourceUrl: string, options?: { runId?: number; isRetry?: boolean }) => {
+  const runAnalysis = async (sourceUrl: string, options?: AnalysisRunOptions) => {
     if (isAnalyzingRef.current) {
       logExtractionClientEvent("blocked_busy", {
         routeType: "client_guard",
@@ -1408,10 +1648,18 @@ export function AddScreen() {
     try {
       parsedUrl = new URL(sourceUrl.trim());
     } catch {
+      if (canAnalyzeTextOnlyInput(sourceUrl)) {
+        await runTextOnlyAnalysis(sourceUrl, options);
+        return;
+      }
       showToast({ message: "This link could not be analyzed.", variant: "error" });
       return;
     }
     if (!/^https?:$/i.test(parsedUrl.protocol)) {
+      if (canAnalyzeTextOnlyInput(sourceUrl)) {
+        await runTextOnlyAnalysis(sourceUrl, options);
+        return;
+      }
       showToast({ message: "This link could not be analyzed.", variant: "error" });
       return;
     }
@@ -1964,6 +2212,21 @@ export function AddScreen() {
       }
 
       if (!sharedIntent.extractedUrl) {
+        const textFallback = [sharedIntent.title, sharedIntent.text, sharedIntent.url]
+          .filter((value): value is string => Boolean(String(value || "").trim()))
+          .join("\n")
+          .trim();
+        if (isAuthenticated && canAnalyzeTextOnlyInput(textFallback)) {
+          if (processedSharedIntentIdRef.current === sharedIntent.intentId) return;
+          const consumedIntent = await consumePendingSharedIntent();
+          if (!consumedIntent || consumedIntent.intentId !== sharedIntent.intentId || cancelled) return;
+          processedSharedIntentIdRef.current = sharedIntent.intentId;
+          void runTextOnlyAnalysis(textFallback, {
+            sharedTitle: sharedIntent.title ?? null,
+            sharedUrl: sharedIntent.url ?? null,
+          });
+          return;
+        }
         if (isAuthenticated) {
           await clearPendingSharedIntent();
           processedSharedIntentIdRef.current = sharedIntent.intentId;

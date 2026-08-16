@@ -580,22 +580,6 @@ function DeckCard({
               Continue editing
             </button>
           ) : null}
-          {stroll.status === "ready" ? (
-            <>
-              <button type="button" className="wr-stroll-hero-primary" onClick={(event) => {
-                event.stopPropagation();
-                onStartStroll(stroll);
-              }}>
-                Start stroll
-              </button>
-              <button type="button" className="wr-stroll-hero-secondary" onClick={(event) => {
-                event.stopPropagation();
-                onOpenStroll(stroll);
-              }}>
-                Edit details
-              </button>
-            </>
-          ) : null}
         </div>
       ) : null}
     </article>
