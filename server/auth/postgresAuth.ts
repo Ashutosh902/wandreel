@@ -43,6 +43,7 @@ type SavedPlaceRecord = {
   category: string | null;
   metadata_json: unknown;
   canonical_place_id?: string | null;
+  canonical_google_place_id?: string | null;
   canonical_metadata_json?: unknown;
   canonical_city?: string | null;
   canonical_locality?: string | null;
@@ -1670,6 +1671,39 @@ function readTextRecordValue(record: Record<string, unknown>, key: string) {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
+async function getPlacePhotoUrlByGooglePlaceId(placeId: string): Promise<string | null> {
+  const normalizedPlaceId = String(placeId || "").trim();
+  if (!normalizedPlaceId) return null;
+  const apiKey = String(process.env.GOOGLE_MAPS_API_KEY || process.env.GOOGLE_PLACES_API_KEY || "").trim();
+  if (!apiKey) return null;
+
+  try {
+    const detailsUrl = new URL("https://maps.googleapis.com/maps/api/place/details/json");
+    detailsUrl.searchParams.set("place_id", normalizedPlaceId);
+    detailsUrl.searchParams.set("fields", "photo");
+    detailsUrl.searchParams.set("key", apiKey);
+
+    const detailsResponse = await fetch(detailsUrl.toString());
+    if (!detailsResponse.ok) return null;
+    const detailsData = (await detailsResponse.json()) as {
+      result?: { photos?: Array<{ photo_reference?: string }> };
+    };
+    const photoRef = detailsData.result?.photos?.[0]?.photo_reference;
+    if (!photoRef || typeof photoRef !== "string") return null;
+
+    const photoUrl = new URL("https://maps.googleapis.com/maps/api/place/photo");
+    photoUrl.searchParams.set("maxwidth", "1200");
+    photoUrl.searchParams.set("photo_reference", photoRef);
+    photoUrl.searchParams.set("key", apiKey);
+
+    const photoResponse = await fetch(photoUrl.toString(), { redirect: "manual" });
+    const location = photoResponse.headers.get("location");
+    return location && location.trim() ? location.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 function firstTextValue(...values: Array<unknown>) {
   for (const value of values) {
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -1723,13 +1757,25 @@ function buildSavedPlaceMetadata(row: SavedPlaceRecord) {
   };
 }
 
-function toSavedPlaceDTO(row: SavedPlaceRecord) {
+async function toSavedPlaceDTO(row: SavedPlaceRecord) {
+  const metadata = buildSavedPlaceMetadata(row);
+  const hasUsableImage = firstTextValue(
+    metadata.imageUrl,
+    metadata.photoUrl,
+    metadata.thumbnailUrl,
+    metadata.latestImageUrl,
+  );
+  const recoveredPhotoUrl =
+    hasUsableImage || !row.canonical_google_place_id
+      ? null
+      : await getPlacePhotoUrlByGooglePlaceId(row.canonical_google_place_id);
+
   return {
     id: row.id,
     placeId: row.place_id,
     title: row.title,
     category: row.category,
-    metadata: buildSavedPlaceMetadata(row),
+    metadata: recoveredPhotoUrl ? { ...metadata, imageUrl: recoveredPhotoUrl, photoUrl: recoveredPhotoUrl } : metadata,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1740,6 +1786,7 @@ export async function listSavedPlaces(userId: string) {
     `select
        usp.*,
        usp.canonical_place_id::text as canonical_place_id,
+       p.google_place_id as canonical_google_place_id,
        p.metadata_json as canonical_metadata_json,
        p.city as canonical_city,
        p.locality as canonical_locality
@@ -1749,7 +1796,7 @@ export async function listSavedPlaces(userId: string) {
      order by usp.created_at desc`,
     [userId],
   );
-  return result.rows.map(toSavedPlaceDTO);
+  return Promise.all(result.rows.map((row) => toSavedPlaceDTO(row)));
 }
 
 export async function findSavedPlaceByUserAndPlaceId(userId: string, placeIdRaw: string) {
@@ -1759,6 +1806,7 @@ export async function findSavedPlaceByUserAndPlaceId(userId: string, placeIdRaw:
     `select
        usp.*,
        usp.canonical_place_id::text as canonical_place_id,
+       p.google_place_id as canonical_google_place_id,
        p.metadata_json as canonical_metadata_json,
        p.city as canonical_city,
        p.locality as canonical_locality
