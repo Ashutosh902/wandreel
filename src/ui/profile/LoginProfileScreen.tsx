@@ -52,7 +52,7 @@ type GoogleOauthClient = {
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const GOOGLE_OAUTH_SCOPE = "openid email profile";
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8787";
-const GOOGLE_NATIVE_SCOPES = ["email", "profile"];
+const GOOGLE_NATIVE_SCOPES = ["openid", "email", "profile"];
 const GOOGLE_NATIVE_WEB_CLIENT_ID =
   String(import.meta.env.VITE_GOOGLE_WEB_CLIENT_ID || import.meta.env.VITE_GOOGLE_CLIENT_ID || "").trim();
 
@@ -233,6 +233,13 @@ function getNativeGoogleAccessToken(result: GoogleLoginResponse | null | undefin
         : "";
 
   return rawAccessToken.trim();
+}
+
+function getNativeGoogleIdToken(result: GoogleLoginResponse | null | undefined) {
+  if (!result || !("idToken" in result) || typeof result.idToken !== "string") {
+    return "";
+  }
+  return result.idToken.trim();
 }
 
 async function apiFetch(path: string, init?: RequestInit) {
@@ -552,29 +559,27 @@ export function LoginProfileScreen({ openSheetOnMount = true, onOpenWallet }: Lo
             Boolean((accessTokenValue as { token?: unknown }).token),
           hasIdToken: typeof loginResultObject?.idToken === "string" && loginResultObject.idToken.trim().length > 0,
         });
-        const idToken =
-          loginResult && "idToken" in loginResult && typeof loginResult.idToken === "string"
-            ? loginResult.idToken.trim()
-            : "";
+        const idToken = getNativeGoogleIdToken(loginResult);
         const accessToken = getNativeGoogleAccessToken(loginResult);
 
-        if (!accessToken) {
-          console.error("[google-login] native result missing usable access token", {
+        if (!idToken && !accessToken) {
+          console.error("[google-login] native result missing usable Google token", {
             hasIdToken: idToken.length > 0,
+            hasAccessToken: accessToken.length > 0,
             metadata: toGoogleNativeResultMetadata(loginResult),
           });
-          throw new Error("Google sign-in did not return a usable access token.");
+          throw new Error("Google sign-in did not return a usable token.");
         }
 
         logGoogleDevInfo("[google-login] native verify payload shape", {
-          usesIdToken: false,
+          usesIdToken: idToken.length > 0,
           usesAccessToken: accessToken.length > 0,
-          selectedField: "accessToken",
+          selectedField: idToken.length > 0 ? "idToken" : "accessToken",
         });
         payload = await apiFetch("/api/auth/google/verify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ accessToken }),
+          body: JSON.stringify(idToken ? { idToken } : { accessToken }),
         });
       } else {
         logGoogleDevInfo("[google-login] selected browser web path");
