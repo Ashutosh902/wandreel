@@ -42,6 +42,10 @@ type SavedPlaceRecord = {
   title: string;
   category: string | null;
   metadata_json: unknown;
+  canonical_place_id?: string | null;
+  canonical_metadata_json?: unknown;
+  canonical_city?: string | null;
+  canonical_locality?: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -1657,13 +1661,62 @@ export function buildClearSessionCookie() {
   return `${SESSION_COOKIE_NAME}=; ${buildSessionCookieAttributes(0)}`;
 }
 
+function toJsonRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function readTextRecordValue(record: Record<string, unknown>, key: string) {
+  const value = record[key];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function firstTextValue(...values: Array<unknown>) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return null;
+}
+
+function buildSavedPlaceMetadata(row: SavedPlaceRecord) {
+  const metadata = toJsonRecord(row.metadata_json);
+  const canonicalMetadata = toJsonRecord(row.canonical_metadata_json);
+  const canonicalPlaceResolution = toJsonRecord(canonicalMetadata.placeResolution);
+  const fallbackImageUrl = firstTextValue(
+    metadata.imageUrl,
+    metadata.photoUrl,
+    metadata.thumbnailUrl,
+    metadata.latestImageUrl,
+    canonicalMetadata.imageUrl,
+    canonicalMetadata.photoUrl,
+    canonicalMetadata.thumbnailUrl,
+    canonicalMetadata.latestImageUrl,
+    canonicalPlaceResolution.imageUrl,
+    canonicalPlaceResolution.photoUrl,
+    canonicalPlaceResolution.thumbnailUrl,
+  );
+
+  return {
+    ...canonicalMetadata,
+    ...metadata,
+    ...(fallbackImageUrl && !readTextRecordValue(metadata, "imageUrl")
+      ? { imageUrl: fallbackImageUrl }
+      : {}),
+    ...(row.canonical_locality && !readTextRecordValue(metadata, "locality")
+      ? { locality: row.canonical_locality }
+      : {}),
+    ...(row.canonical_city && !readTextRecordValue(metadata, "city")
+      ? { city: row.canonical_city }
+      : {}),
+  };
+}
+
 function toSavedPlaceDTO(row: SavedPlaceRecord) {
   return {
     id: row.id,
     placeId: row.place_id,
     title: row.title,
     category: row.category,
-    metadata: row.metadata_json,
+    metadata: buildSavedPlaceMetadata(row),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -1671,7 +1724,16 @@ function toSavedPlaceDTO(row: SavedPlaceRecord) {
 
 export async function listSavedPlaces(userId: string) {
   const result = await database.query<SavedPlaceRecord>(
-    "select * from user_saved_places where user_id = $1 order by created_at desc",
+    `select
+       usp.*,
+       usp.canonical_place_id::text as canonical_place_id,
+       p.metadata_json as canonical_metadata_json,
+       p.city as canonical_city,
+       p.locality as canonical_locality
+     from user_saved_places usp
+     left join places p on p.id = usp.canonical_place_id
+     where usp.user_id = $1
+     order by usp.created_at desc`,
     [userId],
   );
   return result.rows.map(toSavedPlaceDTO);
@@ -1681,7 +1743,16 @@ export async function findSavedPlaceByUserAndPlaceId(userId: string, placeIdRaw:
   const placeId = String(placeIdRaw || "").trim();
   if (!placeId) return null;
   const result = await database.query<SavedPlaceRecord>(
-    "select * from user_saved_places where user_id = $1 and place_id = $2 limit 1",
+    `select
+       usp.*,
+       usp.canonical_place_id::text as canonical_place_id,
+       p.metadata_json as canonical_metadata_json,
+       p.city as canonical_city,
+       p.locality as canonical_locality
+     from user_saved_places usp
+     left join places p on p.id = usp.canonical_place_id
+     where usp.user_id = $1 and usp.place_id = $2
+     limit 1`,
     [userId, placeId],
   );
   const row = result.rows[0];
